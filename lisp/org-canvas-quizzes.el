@@ -106,6 +106,7 @@
      :doc "The kind of quiz")
     (:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether item is visible (default: true)")
+    ,org-canvas--no-module-property-spec
     (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
      :doc "Randomize answer order")
     (:org-prop "TIME_LIMIT" :data-key :time_limit :type number

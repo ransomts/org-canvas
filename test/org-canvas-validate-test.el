@@ -4196,4 +4196,191 @@ Syllabus text.
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
 
+(describe "org-canvas--validate-module-coverage (issue #413)"
+  (defun test-validate-413-write (dir files)
+    "Write FILES, an alist of (NAME . TEXT), into DIR; create the rest empty."
+    (test-validate-create-empty-files dir (mapcar #'car files))
+    (dolist (f files)
+      (with-temp-file (expand-file-name (car f) dir) (insert (cdr f)))))
+
+  (defun test-validate-413-headings (dir)
+    "Return the headings the module check warns about, killing DIR's buffers."
+    (unwind-protect
+        (mapcar (lambda (i) (plist-get i :heading))
+                (org-canvas--validate-module-coverage))
+      (dolist (buf (buffer-list))
+        (when (and (buffer-file-name buf)
+                   (string-prefix-p (file-truename dir)
+                                    (file-truename (buffer-file-name buf))))
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf)))))
+
+  (defconst test-validate-413-modules
+    "* Week 1\n** [[file:assignments.org::*Journal 01][Journal 01]]\n** [[file:pages.org::*Syllabus][Syllabus]]\n** Readings\n"
+    "A module holding one assignment and one page, and a SubHeader.")
+
+  (it "warns on a published assignment no module item links to, and only on it"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org" . "* Journal 01\n* Journal 07\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n")
+             ("pages.org" . "* Syllabus\n")))
+      (let ((issues (org-canvas--validate-module-coverage)))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :heading) :to-equal "Journal 07")
+        (expect (plist-get (car issues) :severity) :to-be 'note)
+        (expect (plist-get (car issues) :line) :to-equal 2)
+        (expect (plist-get (car issues) :message) :to-match "in no module")
+        (expect (plist-get (car issues) :push-only) :to-be nil))
+      (test-validate-413-headings dir)))
+
+  (it "leaves out unpublished, NO_MODULE, deleted and front-page headings"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org"
+              . ,(concat "* Journal 01\n"
+                         "* Journal 14\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+                         "* Extra Credit\n:PROPERTIES:\n:NO_MODULE: true\n:END:\n"
+                         "* Gone\n:PROPERTIES:\n:CANVAS_ID: 9\n:CANVAS_DELETED: [2026-09-01 Tue]\n:END:\n"))
+             ("pages.org" . "* Syllabus\n* Home\n:PROPERTIES:\n:FRONT_PAGE: true\n:END:\n")))
+      (expect (test-validate-413-headings dir) :to-be nil)))
+
+  (it "checks classic quizzes and discussions, not announcements"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org" . "* Journal 01\n")
+             ("pages.org" . "* Syllabus\n")
+             ("quizzes.org" . "* Quiz 1\n** Question\n")
+             ("discussions.org" . "* Introductions\n")
+             ("announcements.org" . "* Welcome\n")))
+      (expect (test-validate-413-headings dir)
+              :to-equal '("Quiz 1" "Introductions"))))
+
+  (it "says nothing when the modules file links to nothing"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir '(("modules.org" . "* Week 1\n** Readings\n")
+             ("assignments.org" . "* Journal 07\n")))
+      (expect (test-validate-413-headings dir) :to-be nil)))
+
+  (it "says nothing without a modules file, or with the check turned off"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org" . "* Journal 07\n")))
+      (let ((org-canvas-validate-module-coverage nil))
+        (expect (org-canvas--validate-module-coverage) :to-be nil))
+      (delete-file (expand-file-name "modules.org" dir))
+      (expect (test-validate-413-headings dir) :to-be nil)))
+
+  (it "does not count an item Canvas deleted, or one under a deleted module"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org"
+              . ,(concat "* Week 1\n"
+                         "** [[file:assignments.org::*Journal 01][Journal 01]]\n"
+                         ":PROPERTIES:\n:CANVAS_DELETED: [2026-09-01 Tue]\n:END:\n"
+                         "** [[file:pages.org::*Syllabus][Syllabus]]\n"
+                         "* Week 2\n:PROPERTIES:\n:CANVAS_DELETED: [2026-09-01 Tue]\n:END:\n"
+                         "** [[file:assignments.org::*Journal 02][Journal 02]]\n"))
+             ("assignments.org" . "* Journal 01\n* Journal 02\n")
+             ("pages.org" . "* Syllabus\n")))
+      (expect (test-validate-413-headings dir)
+              :to-equal '("Journal 01" "Journal 02"))))
+
+  (it "follows a link whose directory is wrong to the file beside modules.org"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir '(("modules.org"
+              . "* Week 1\n** [[file:../elsewhere/assignments.org::*Journal \\[01\\]][Journal 01]]\n")
+             ("assignments.org" . "* Journal [01]\n* Journal 02\n")))
+      (expect (test-validate-413-headings dir) :to-equal '("Journal 02"))))
+
+  (it "checks files only when asked, by heading link or by the file's own path"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org"
+              . ,(concat "* Week 1\n"
+                         "** [[file:content/a.pdf][a.pdf]]\n"
+                         "** [[file:files.org::*[[file:content/b.pdf\\][b.pdf\\]]][b.pdf]]\n"))
+             ("files.org"
+              . ,(concat "* content\n"
+                         "** [[file:content/a.pdf][a.pdf]]\n"
+                         "** [[file:content/b.pdf][b.pdf]]\n"
+                         "** [[file:content/c.pdf][c.pdf]]\n"
+                         "** [[file:content/d.png][d.png]]\n:PROPERTIES:\n:HIDDEN: true\n:END:\n"
+                         "** [[file:content/e.pdf][e.pdf]]\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"))))
+      (expect (test-validate-413-headings dir) :to-be nil)
+      (let ((org-canvas-validate-module-coverage '(org-canvas-files-file)))
+        (expect (test-validate-413-headings dir) :to-equal '("[[file:content/c.pdf][c.pdf]]")))))
+
+  (it "joins the validation run"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org" . "* Journal 01\n* Journal 07\n")
+             ("pages.org" . "* Syllabus\n")))
+      (unwind-protect
+          (expect (cl-count-if
+                   (lambda (i) (string-match-p "in no module" (plist-get i :message)))
+                   (plist-get (org-canvas--validate-run-all-specs) :issues))
+                  :to-equal 1)
+        (test-validate-413-headings dir))))
+
+  (it "reports notes last, counts them apart, and fails no batch run"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org"
+              . "* Journal 01\n* Journal 07\n* Bad\n:PROPERTIES:\n:PUBLISHED: maybe\n:NO_MODULE: true\n:END:\n")
+             ("pages.org" . "* Syllabus\n")))
+      (unwind-protect
+          (let ((errors (org-canvas-validate))
+                (content (with-current-buffer "*canvas-validate*" (buffer-string))))
+            (expect errors :to-equal 1)
+            (expect content :to-match "1 error(s), [0-9]+ warning(s), 1 note(s) across")
+            (expect (string-match-p ": error: " content) :to-be-truthy)
+            (expect (< (string-match ": error: " content)
+                       (string-match ": note: 'Journal 07' is published" content))
+                    :to-be t))
+        (test-validate-413-headings dir))))
+
+  (it "names notes in the echo-area summary only when there are some"
+    (expect (org-canvas--validate-format-summary 0 0 2)
+            :to-equal "Validation: no errors or warnings, 2 note(s)")
+    (expect (org-canvas--validate-format-summary 1 2 3)
+            :to-equal "Validation: 1 error(s), 2 warning(s), 3 note(s)")
+    (expect (org-canvas--validate-format-summary 0 1 1)
+            :to-equal "Validation: 1 warning(s), no errors, 1 note(s)")
+    (expect (org-canvas--validate-format-summary 0 0 0)
+            :to-equal "Validation passed: no issues found"))
+
+  (it "moves notes after errors and warnings, keeping each group's order"
+    (let ((n1 '(:severity note :message "n1")) (w '(:severity warning :message "w"))
+          (n2 '(:severity note :message "n2")) (e '(:severity error :message "e")))
+      (expect (org-canvas--validate-notes-last (list n1 w n2 e))
+              :to-equal (list w e n1 n2))))
+
+  (it "lets next-error visit a note at info level"
+    (with-temp-buffer
+      (org-canvas-validate-mode)
+      (let ((rule (assq 'org-canvas-validate-note compilation-error-regexp-alist)))
+        (expect (nth 5 rule) :to-equal 0)
+        (expect (string-match-p (nth 1 rule) "/tmp/a.org:3: note: x") :to-be-truthy))))
+
+  (it "registers NO_MODULE as a local-only boolean on each checked type"
+    (dolist (feature '("assignments" "pages" "quizzes" "discussions" "files"))
+      (let* ((props (plist-get (gethash feature org-canvas--property-registry)
+                               :properties))
+             (spec (cl-find "NO_MODULE" props
+                            :key (lambda (p) (plist-get p :org-prop))
+                            :test #'equal))
+             ;; Bound outside `expect': Emacs 29's oclosure shadows :type.
+             (spec-type (plist-get spec :type)))
+        (expect (plist-get spec :local-only) :to-be t)
+        (expect spec-type :to-be 'boolean)
+        (expect (plist-get spec :api-key) :to-be nil)))))
+
 ;;; org-canvas-validate-test.el ends here

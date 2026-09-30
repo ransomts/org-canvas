@@ -1,0 +1,12 @@
+* Added
+- #413 =org-canvas-validate= has a third level beside errors and
+  warnings: a /note/, for a course that works as written but may not be
+  laid out as a student needs.  Notes are listed after the rest, counted
+  apart (=1 error(s), 3 warning(s), 9 note(s)=), and never fail
+  =org-canvas-validate-batch=.
+- #413 =org-canvas-validate= notes every published heading in
+  =assignments.org=, =pages.org=, =quizzes.org= and =discussions.org=
+  that no =modules.org= item links to.  Unpublished headings, the front
+  page, deleted headings and headings marked =NO_MODULE: t= are left
+  out.  =org-canvas-validate-module-coverage= names the files checked
+  (add =org-canvas-files-file= for files, or nil to turn it off).

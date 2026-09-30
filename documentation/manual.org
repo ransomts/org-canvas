@@ -1378,6 +1378,31 @@ Avoid it in new courses — the link-in-link search target is brittle
 (bracket escaping, Org version differences) and pulls will rewrite the
 item to the direct form anyway.
 
+*** Items No Module Holds
+
+Students reach a course through its modules, so =org-canvas-validate=
+notes every published heading in =assignments.org=, =pages.org=,
+=quizzes.org= and =discussions.org= that no item in =modules.org=
+links to:
+
+#+begin_example
+assignments.org:212: note: 'Journal 07' is published but in no module: no modules.org item links to it (add one, or set NO_MODULE: t if it is kept out on purpose)
+#+end_example
+
+Unpublished headings, the front page, headings Canvas deleted and
+headings carrying =NO_MODULE: t= are left out, so a column parked
+unpublished, or a page reached only from another page, validates
+silently.  =NO_MODULE= is local: it is never pushed, pulled or
+compared.  An item under a deleted module, or deleted itself, holds
+nothing.
+
+The check reads only the Org files and makes no request.  It is off
+for a course whose =modules.org= is missing or links to nothing.
+=org-canvas-validate-module-coverage= lists the files it reads: add
+=org-canvas-files-file= to check file headings too (a direct file link
+and a =files.org= heading link both count, a hidden file is left out),
+or set it to nil to turn the check off.
+
 *** Example
 
 #+begin_src org
@@ -3209,7 +3234,15 @@ Wire that into cron and have it mail you the output on a non-zero exit.
 =org-canvas-validate-batch= is its offline twin, and the cheaper of the two:
 validation contacts no API and so needs no token, which makes it the natural
 pre-commit hook or CI step over a course directory.  It exits non-zero when
-the report holds any *error* — warnings alone are not a failure.
+the report holds any *error* — warnings and notes alone are not a failure.
+
+The report has three levels.  An *error* is a push that would fail or
+send something wrong.  A *warning* is the file or the course out of step
+in a way that breaks something: a past date, a stale id, a link that
+404s for students.  A *note* is a course that works as written but may
+not be laid out as a student needs, such as an item no module holds (see
+[[*Items No Module Holds][Items No Module Holds]]).  Notes are listed
+after the rest and counted apart: =1 error(s), 3 warning(s), 9 note(s)=.
 
 #+begin_src sh
 emacs --batch -l /path/to/org-canvas.el -f org-canvas-validate-batch
@@ -4674,6 +4707,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =POINTS= | number |  |  | Points possible |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
+| =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
 | =POST_POLICY= | enum | automatic, manual |  | Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit |
 | =POST_GRADES_AT= | timestamp |  |  | When Canvas posts the grades (needs POST_COMMENTS_AT and manual posting); omit to keep Canvas's schedule |
 | =POST_COMMENTS_AT= | timestamp |  |  | When Canvas posts the comments, no later than POST_GRADES_AT; omit to keep Canvas's schedule |
@@ -4733,6 +4767,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether the discussion is visible to students (default: true) |
+| =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
 | =DISCUSSION_TYPE= | enum | side_comment, threaded |  | side_comment, threaded |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | points, percent (for graded) |
 | =POINTS= | number |  |  | Points possible (for graded) |
@@ -4758,6 +4793,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether the file is published to students (false sets locked) |
+| =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
 | =HIDDEN= | boolean | true, false |  | Published but unlisted: reachable only by direct link |
 | =UNLOCK_AT= | timestamp |  |  | Date to make file available |
 | =LOCK_AT= | timestamp |  |  | Date to hide file |
@@ -4868,6 +4904,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true); not sent when PUBLISH_AT is set |
+| =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
 | =PUBLISH_AT= | timestamp |  |  | Canvas publishes the page at this time (needs Scheduled Page Publication) |
 | =FRONT_PAGE= | boolean | true, false |  | Set as course front page |
 | =EDITING_ROLES= | csv-enum | teachers, students, members, public |  | Who can edit (teachers, students) |
@@ -4916,6 +4953,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  | The kind of quiz |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
+| =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
 | =ALLOWED_ATTEMPTS= | number |  |  | Max attempts (-1 = unlimited) |

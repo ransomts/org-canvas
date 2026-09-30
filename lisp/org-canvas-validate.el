@@ -21,8 +21,16 @@
 ;;;; 1. Issue Structure
 ;;
 ;; Each issue is a plist:
-;; (:severity error|warning :file PATH :line NUM :heading TITLE
+;; (:severity error|warning|note :file PATH :line NUM :heading TITLE
 ;;  :property PROP :message MSG)
+;;
+;; The severity says what the finding is about (issue #413):
+;;   error   - the push fails or sends something wrong
+;;   warning - the file or the course is out of step in a way that
+;;             breaks something (a past date, a stale id, a dead link)
+;;   note    - nothing breaks and no value is wrong, but the course may
+;;             not be laid out as a student needs (an item in no module)
+;; Only errors fail `org-canvas-validate-batch'.
 
 (defun org-canvas--validate-format-issue (issue)
   "Format ISSUE plist as a `compilation-mode' compatible string."
@@ -32,10 +40,15 @@
           (symbol-name (plist-get issue :severity))
           (plist-get issue :message)))
 
+(defun org-canvas--validate-severity (issue)
+  "Return the severity of ISSUE: `error', `warning' or `note'."
+  (plist-get issue :severity))
+
 (defun org-canvas--validate-make-issue (severity loc property message
                                                  &optional pending-sync)
   "Create a validation issue plist.
-SEVERITY is `error' or `warning'.  LOC is a plist (:file F :line N :heading H).
+SEVERITY is `error', `warning' or `note'.  LOC is a plist
+\(:file F :line N :heading H).
 PROPERTY and MESSAGE describe the problem.  PENDING-SYNC marks the
 issue as expected pre-first-sync state (a link target that simply has
 no CANVAS_ID yet); the report collapses these into a summary line."
@@ -1462,6 +1475,166 @@ whatever happens next.  Nothing is changed."
         t 'file)))
     (nreverse issues)))
 
+;;;; 5f. Items No Module Holds (issue #413)
+
+(defvar org-canvas-modules-file)
+
+(defcustom org-canvas-validate-module-coverage
+  '(org-canvas-assignments-file org-canvas-pages-file
+    org-canvas-quizzes-file org-canvas-discussions-file)
+  "Course files whose published headings validate expects a module to hold.
+Students reach a course through its modules, so a published heading
+no `org-canvas-modules-file' item links to is a note.  Unpublished
+headings, the front page, hidden files and headings marked NO_MODULE
+are left out.  Add `org-canvas-files-file' to check files too: left
+out by default, since most files are images a page embeds.  Nil turns
+the check off; it never runs when the modules file holds no item."
+  :type '(repeat variable)
+  :group 'org-canvas)
+
+(defun org-canvas--validate-module-link-target (raw dir)
+  "Return what the module item link in heading text RAW names, or nil.
+DIR is the modules file's directory.  The answer is (heading FILE
+HEADING) for a link to an Org heading, or (path FILE) for a link
+straight at a file, FILE absolute.  An Org file that is missing falls
+back to its basename in DIR, as the sync's resolver does."
+  (let* ((org-link (string-match "\\[\\[file:\\([^]]+\\)::\\*\\(.+\\)\\]\\[" raw))
+         (path (and (or org-link (string-match "\\[\\[file:\\([^]]+\\)\\]\\[" raw))
+                    (match-string 1 raw)))
+         (heading (and org-link (match-string 2 raw))))
+    (cond
+     (heading
+      (let ((file (expand-file-name path dir)))
+        (unless (file-exists-p file)
+          (setq file (expand-file-name (file-name-nondirectory path) dir)))
+        (list 'heading file
+              (replace-regexp-in-string
+               "\\\\[][]" (lambda (m) (substring m 1)) heading))))
+     (path (list 'path (expand-file-name path dir))))))
+
+(defun org-canvas--validate-heading-key (file pos)
+  "Return the key naming the heading at POS in FILE."
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (save-excursion
+      (goto-char pos)
+      (org-back-to-heading t)
+      (format "%s:%d" (file-truename file) (point)))))
+
+(defun org-canvas--validate-module-link-key (target)
+  "Return the key of what TARGET, from the link reader, names, or nil."
+  (let ((file (nth 1 target)))
+    (if (eq (car target) 'path)
+        (file-truename file)
+      (when-let* ((pos (org-canvas--find-heading-in-file file (nth 2 target))))
+        (org-canvas--validate-heading-key file pos)))))
+
+(defun org-canvas--validate-module-linked-keys (modules-file)
+  "Return a hash of what MODULES-FILE's items link to, or nil if none do.
+Keys are `org-canvas--validate-heading-key' strings for a heading and
+truenames for a file linked straight at.  An item Canvas deleted, or
+one under a module it deleted, holds nothing (issue #402)."
+  (let ((dir (file-name-directory modules-file))
+        (raws nil)
+        (keys (make-hash-table :test 'equal)))
+    (with-current-buffer (org-canvas--find-file-noselect modules-file)
+      (org-with-wide-buffer
+       (org-map-entries
+        (lambda ()
+          (when (and (not (org-canvas--sync-deleted-stamp))
+                     (looking-at org-complex-heading-regexp)
+                     (match-string-no-properties 4))
+            (push (match-string-no-properties 4) raws)))
+        "LEVEL=2" 'file)))
+    (dolist (raw raws)
+      (when-let* ((target (org-canvas--validate-module-link-target raw dir))
+                  (key (org-canvas--validate-module-link-key target)))
+        (puthash key t keys)))
+    (and (> (hash-table-count keys) 0) keys)))
+
+(defun org-canvas--validate-module-exempt-p ()
+  "Return non-nil when the heading at point needs no module.
+It is unpublished, the front page, a hidden file, marked NO_MODULE,
+or deleted on Canvas."
+  (or (equal (org-entry-get (point) "PUBLISHED") "false")
+      (equal (org-entry-get (point) "FRONT_PAGE") "true")
+      (equal (org-entry-get (point) "HIDDEN") "true")
+      (equal (org-entry-get (point) "NO_MODULE") "true")
+      (org-canvas--sync-deleted-stamp)))
+
+(defun org-canvas--validate-module-entry-key (file files-p)
+  "Return the key a module link to the heading at point in FILE would have.
+FILES-P says FILE is the files file, whose file headings are links to
+the file itself, which a module item may name directly; a folder
+heading, with no link, answers nil."
+  (if files-p
+      (when (looking-at org-complex-heading-regexp)
+        (when-let* ((heading (match-string-no-properties 4))
+                    ((string-match "\\[\\[file:\\([^]]+\\)\\]" heading)))
+          (file-truename (expand-file-name (match-string 1 heading)
+                                           (file-name-directory file)))))
+    (format "%s:%d" (file-truename file) (point))))
+
+(defun org-canvas--validate-module-query (file-var)
+  "Return the heading query of the validate spec for FILE-VAR's file."
+  (or (plist-get (cl-find file-var (org-canvas--validate-specs)
+                          :key (lambda (spec) (plist-get spec :file)))
+                 :query)
+      "LEVEL=1"))
+
+(defun org-canvas--validate-module-orphans (file-var keys)
+  "Return a note per published heading in FILE-VAR's file KEYS lacks.
+For a file heading, a module link to the heading or to the file it
+names both count."
+  (let* ((file (expand-file-name (symbol-value file-var)))
+         (files-p (eq file-var 'org-canvas-files-file))
+         (issues nil))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (org-with-wide-buffer
+       (org-map-entries
+        (lambda ()
+          (let ((key (org-canvas--validate-module-entry-key file files-p)))
+            (unless (or (null key)
+                        (org-canvas--validate-module-exempt-p)
+                        (gethash key keys)
+                        (and files-p (gethash (org-canvas--validate-heading-key
+                                               file (point))
+                                              keys)))
+              (let ((heading (org-get-heading t t t t)))
+                (push (org-canvas--validate-make-issue
+                       'note
+                       (list :file file :line (line-number-at-pos)
+                             :heading heading)
+                       nil
+                       (format "'%s' is published but in no module: no modules.org item links to it (add one, or set NO_MODULE: t if it is kept out on purpose)"
+                               heading))
+                      issues)))))
+        (org-canvas--validate-module-query file-var) 'file)))
+    (nreverse issues)))
+
+(defun org-canvas--validate-module-coverage ()
+  "Return a note per published heading that no module item links to.
+The files `org-canvas-validate-module-coverage' names are read against
+the links in `org-canvas-modules-file'.  A published column that no
+module holds is dated and graded and still missing from the Modules
+page, and nothing else reports it (issue #413).  A note, not a
+warning: nothing breaks and no value is wrong.  Nothing is returned
+when the course keeps no modules file or its items link to nothing.
+A finding about the course, never push-only; no request is made."
+  (let* ((modules-file (and (boundp 'org-canvas-modules-file)
+                            org-canvas-modules-file
+                            (expand-file-name org-canvas-modules-file)))
+         (keys (and org-canvas-validate-module-coverage
+                    modules-file (file-exists-p modules-file)
+                    (org-canvas--validate-module-linked-keys modules-file)))
+         (issues nil))
+    (when keys
+      (dolist (var org-canvas-validate-module-coverage)
+        (when (and (boundp var) (symbol-value var)
+                   (file-exists-p (expand-file-name (symbol-value var))))
+          (setq issues (nconc issues
+                              (org-canvas--validate-module-orphans var keys))))))
+    issues))
+
 ;;;; 6. Validation Engine
 
 (defun org-canvas--validate-check-canvas-owned (value property loc)
@@ -1636,6 +1809,7 @@ headings the query selected (issue #164)."
 (defvar org-canvas-validate-mode-font-lock-keywords
   '(("^\\(.+\\):\\([0-9]+\\): \\(error\\): " (3 'compilation-error))
     ("^\\(.+\\):\\([0-9]+\\): \\(warning\\): " (3 'compilation-warning))
+    ("^\\(.+\\):\\([0-9]+\\): \\(note\\): " (3 'compilation-info))
     ("^Validation complete:" . 'compilation-info)
     ("^=+$" . 'shadow)
     ("^Validating " . 'font-lock-function-name-face))
@@ -1649,7 +1823,9 @@ Use \\[next-error] and \\[previous-error] to navigate issues."
               '((org-canvas-validate
                  "^\\(.+\\):\\([0-9]+\\): error: " 1 2 nil 2)
                 (org-canvas-validate-warn
-                 "^\\(.+\\):\\([0-9]+\\): warning: " 1 2 nil 1)))
+                 "^\\(.+\\):\\([0-9]+\\): warning: " 1 2 nil 1)
+                (org-canvas-validate-note
+                 "^\\(.+\\):\\([0-9]+\\): note: " 1 2 nil 0)))
   (setq-local font-lock-defaults
               '(org-canvas-validate-mode-font-lock-keywords t)))
 
@@ -1662,6 +1838,8 @@ once per spec: two features can register the same file (modules and
 module items both name modules.org), and the scan reads the whole file
 either way, so a per-spec call would report every foreign link twice
 \(issue #172).
+The module check reads the modules file against the content files
+once, after the specs (issue #413).
 Returns a plist (:issues ISSUES :checked N :skipped N)."
   (let ((all-issues nil)
         (files-checked 0)
@@ -1683,23 +1861,43 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
                              (org-canvas--validate-cross-course-links file)
                              (org-canvas--validate-body-fragments file)))))
           (setq files-skipped (1+ files-skipped)))))
+    (setq all-issues (nconc all-issues (org-canvas--validate-module-coverage)))
     (list :issues all-issues :checked files-checked :skipped files-skipped)))
 
-(defun org-canvas--validate-format-summary (error-count warning-count)
-  "Return a summary message string for ERROR-COUNT and WARNING-COUNT."
-  (cond
-   ((> error-count 0)
-    (format "Validation: %d error(s), %d warning(s)" error-count warning-count))
-   ((> warning-count 0)
-    (format "Validation: %d warning(s), no errors" warning-count))
-   (t
-    "Validation passed: no issues found")))
+(defun org-canvas--validate-format-notes (note-count)
+  "Return \", N note(s)\" for a positive NOTE-COUNT, else the empty string."
+  (if (and note-count (> note-count 0))
+      (format ", %d note(s)" note-count)
+    ""))
+
+(defun org-canvas--validate-format-summary (error-count warning-count
+                                                        &optional note-count)
+  "Return a summary message string for ERROR-COUNT and WARNING-COUNT.
+NOTE-COUNT, when positive, is named after them."
+  (let ((notes (org-canvas--validate-format-notes note-count)))
+    (cond
+     ((> error-count 0)
+      (format "Validation: %d error(s), %d warning(s)%s"
+              error-count warning-count notes))
+     ((> warning-count 0)
+      (format "Validation: %d warning(s), no errors%s" warning-count notes))
+     ((> (or note-count 0) 0)
+      (format "Validation: no errors or warnings%s" notes))
+     (t
+      "Validation passed: no issues found"))))
+
+(defun org-canvas--validate-notes-last (issues)
+  "Return ISSUES with the notes moved after everything else.
+Each group keeps the order its findings were made in."
+  (let ((note-p (lambda (i) (eq (org-canvas--validate-severity i) 'note))))
+    (append (cl-remove-if note-p issues) (cl-remove-if-not note-p issues))))
 
 (defun org-canvas--validate-insert-report (listed pending verbose stats)
   "Insert the validation report into the current buffer.
 LISTED are the issues printed individually, PENDING the pre-first-sync
-link warnings, collapsed into one line unless VERBOSE.  STATS is a
-plist (:errors :warnings :checked :skipped :suppressed); a non-zero
+link warnings, collapsed into one line unless VERBOSE.  Notes are
+listed after the errors and warnings.  STATS is a plist (:errors
+:warnings :notes :checked :skipped :suppressed); a non-zero
 :suppressed count is named in a line of its own, so that holding push-only
 findings back on a read-only course is visible rather than silent.
 Cross-course links are listed individually and then grouped by the
@@ -1710,7 +1908,8 @@ course-copy residue (issue #172)."
   (insert "\n\n")
   (if (or listed pending)
       (progn
-        (dolist (issue listed)
+        ;; Notes after errors and warnings, each group in the order found.
+        (dolist (issue (org-canvas--validate-notes-last listed))
           (insert (org-canvas--validate-format-issue issue))
           (insert "\n"))
         (when pending
@@ -1731,8 +1930,9 @@ course-copy residue (issue #172)."
   (insert "\n")
   (insert (make-string 60 ?=))
   (insert "\n")
-  (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
+  (insert (format "Validation complete: %d error(s), %d warning(s)%s across %d file(s)"
                   (plist-get stats :errors) (plist-get stats :warnings)
+                  (org-canvas--validate-format-notes (plist-get stats :notes))
                   (plist-get stats :checked)))
   (when pending
     (insert (format " (%d pending first sync)" (length pending))))
@@ -1775,9 +1975,10 @@ it; see `org-canvas-validate-batch'."
                           (lambda (i) (plist-get i :pending-sync)) all-issues))
          (listed-issues (cl-remove-if
                          (lambda (i) (plist-get i :pending-sync)) all-issues))
-         (error-count (cl-count 'error all-issues :key (lambda (i) (plist-get i :severity))))
-         (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity))))
-         (stats (list :errors error-count :warnings warning-count
+         (error-count (cl-count 'error all-issues :key #'org-canvas--validate-severity))
+         (warning-count (cl-count 'warning all-issues :key #'org-canvas--validate-severity))
+         (note-count (cl-count 'note all-issues :key #'org-canvas--validate-severity))
+         (stats (list :errors error-count :warnings warning-count :notes note-count
                       :checked (plist-get result :checked)
                       :skipped (plist-get result :skipped)
                       :suppressed suppressed-count)))
@@ -1787,7 +1988,8 @@ it; see `org-canvas-validate-batch'."
        (org-canvas--validate-insert-report
         listed-issues pending-issues verbose stats))
      #'org-canvas-validate-mode)
-    (message "%s" (org-canvas--validate-format-summary error-count warning-count))
+    (message "%s" (org-canvas--validate-format-summary
+                   error-count warning-count note-count))
     error-count))
 
 ;;;###autoload

@@ -108,6 +108,7 @@ uses (issue #50)."
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :remote-fn org-canvas--file-remote-published
      :doc "Whether the file is published to students (false sets locked)")
+    ,org-canvas--no-module-property-spec
     (:org-prop "HIDDEN" :data-key :hidden :type boolean
      :doc "Published but unlisted: reachable only by direct link")
     (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp

@@ -1015,6 +1015,13 @@ whose own read answers 404: when that pull first found it gone.  The
 heading and its text stay; a push skips it, validation warns, and a
 later pull that lists the item again removes it (issue #392).")
 
+(defconst org-canvas--no-module-property-spec
+  '(:org-prop "NO_MODULE" :data-key :no_module :type boolean :local-only t
+    :doc "Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent")
+  "Property spec exempting a heading from validate's module check.
+Spliced into the registry of every content type a module item can
+link to (issue #413).  Local-only: never pulled, pushed or compared.")
+
 (defconst org-canvas--prop-last-synced "LAST_SYNCED"
   "Legacy per-entry sync-timestamp property name.
 Superseded by the file-level \"#+LAST_SYNCED:\" header; still read for
