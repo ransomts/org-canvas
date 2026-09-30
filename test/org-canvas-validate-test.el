@@ -4376,9 +4376,11 @@ Syllabus text.
                                :properties))
              (spec (cl-find "NO_MODULE" props
                             :key (lambda (p) (plist-get p :org-prop))
-                            :test #'equal)))
+                            :test #'equal))
+             ;; Bound outside `expect': Emacs 29's oclosure shadows :type.
+             (spec-type (plist-get spec :type)))
         (expect (plist-get spec :local-only) :to-be t)
-        (expect (plist-get spec :type) :to-be 'boolean)
+        (expect spec-type :to-be 'boolean)
         (expect (plist-get spec :api-key) :to-be nil)))))
 
 ;;; org-canvas-validate-test.el ends here
