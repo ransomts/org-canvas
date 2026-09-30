@@ -191,6 +191,12 @@ its baseline in each heading's CANVAS_SCORE property instead.")
 (defvar-local org-canvas-submissions--source-file nil
   "Grading file a read-only summary buffer was derived from.")
 
+(defvar-local org-canvas-submissions--last-refresh nil
+  "The line saying what the last render of this grading file changed.
+Nil after a first pull, which has nothing to compare, and in a summary
+buffer.  Kept so a caller that pulled several columns can report each
+one's changes after the echo area has moved on (issue #415).")
+
 ;;;; Minor Mode
 
 (defvar org-canvas-submissions-mode-map
@@ -2230,7 +2236,8 @@ reports nothing), SUBMISSIONS the fetched ones and CARRY the work
 carried over.  Resubmissions on graded rows are marked on their
 headings, every change is logged per student, and the counts go to
 the echo area.  With ASSIGNMENT-ID each resubmission also names the
-attempt its score was given on (`org-canvas--submissions-report-attempts')."
+attempt its score was given on (`org-canvas--submissions-report-attempts').
+Return the summary line, or nil on a first pull."
   (when previous
     (let ((changes (org-canvas--submissions-changes-since previous submissions carry)))
       (org-canvas--submissions-mark-resubmitted (plist-get changes :resubmitted) submissions)
@@ -2238,7 +2245,9 @@ attempt its score was given on (`org-canvas--submissions-report-attempts')."
       (when assignment-id
         (org-canvas--submissions-report-attempts
          assignment-id (plist-get changes :resubmitted)))
-      (message "%s" (org-canvas--submissions-describe-refresh name previous changes)))))
+      (let ((line (org-canvas--submissions-describe-refresh name previous changes)))
+        (message "%s" line)
+        line))))
 
 ;;;; Attempt History (issue #352)
 
@@ -3252,7 +3261,8 @@ drafted comments, Rubric rows and typed scores already in the file are
 carried over to the
 new render, a departed student's heading stays when it holds any of
 them, and what changed since the last render is reported
-\(`org-canvas--submissions-report-changes').  Return the buffer."
+\(`org-canvas--submissions-report-changes') and kept in
+`org-canvas-submissions--last-refresh'.  Return the buffer."
   (let ((buf (if (eq view 'detail)
                  (org-canvas--submissions-grading-buffer assignment-name)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
@@ -3263,7 +3273,8 @@ them, and what changed since the last render is reported
              (detail (eq view 'detail))
              (previous (and detail (org-canvas--submissions-collect-previous)))
              (carry (and detail (org-canvas--submissions-collect-carryover)))
-             (bank (and detail (org-canvas--submissions-bank-carryover))))
+             (bank (and detail (org-canvas--submissions-bank-carryover)))
+             (changed nil))
         (if (not detail)
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
@@ -3275,13 +3286,15 @@ them, and what changed since the last render is reported
           (when bank
             (org-canvas--submissions-restore-bank bank))
           (org-canvas--submissions-restore-carryover carry)
-          (org-canvas--submissions-report-changes
-           assignment-name previous submissions carry assignment-id))
+          (setq changed (org-canvas--submissions-report-changes
+                         assignment-name previous submissions carry
+                         assignment-id)))
         (goto-char (point-min))
         (setq-local org-canvas-submissions--assignment-name assignment-name)
         (setq-local org-canvas-submissions--assignment-id assignment-id)
         (setq-local org-canvas-submissions--data submissions)
         (setq-local org-canvas-submissions--current-view view)
+        (setq-local org-canvas-submissions--last-refresh changed)
         (setq-local org-canvas-submissions--original-scores
                     (org-canvas--submissions-snapshot-scores submissions))
         (org-canvas-submissions-mode 1)

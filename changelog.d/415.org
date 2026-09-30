@@ -1,0 +1,8 @@
+* Added
+- #415 =org-canvas-submissions-pull-queue= (transient =U=) pulls every
+  column the grading queue marks =pull= or =refresh= into its grading
+  file, attachments included, and reports what each pull changed, one
+  line per column; under =emacs --batch= the report is printed.
+  =org-canvas-submissions-status-rows= returns the queue's rows as
+  plists (=:name=, =:id=, =:next=, ...), so a script need not parse the
+  table.
