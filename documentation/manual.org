@@ -100,6 +100,80 @@ On failure, specific error messages indicate the cause:
 
 This prints your course name if the connection is successful.
 
+* Running from the Shell
+
+A course run from =emacs --batch= needs the same few lines before any
+command: org-canvas's dependencies on =load-path=, =(require 'org-canvas)=,
+the course's =org-canvas-credentials.el= loaded.  =scripts/org-canvas=
+does that once and takes a subcommand (#416):
+
+#+begin_src sh
+cd ~/courses/ethics
+~/src/org-canvas/scripts/org-canvas status                 # the grading queue
+~/src/org-canvas/scripts/org-canvas -C ~/courses/ethics diff
+#+end_src
+
+The course directory is the current one unless =-C DIR= (=--course DIR=)
+names another.  The script runs =emacs --batch -l lisp/org-canvas-batch.el
+-f org-canvas-batch -- ARGS=, which is also the line to use without it.
+
+| Command                       | Runs                                               | Exits 1 when       |
+|-------------------------------+----------------------------------------------------+--------------------|
+| =status=                      | =org-canvas-submissions-status=                    |                    |
+| =overview=                    | =org-canvas-status= (local, no API call)           |                    |
+| =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
+| =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
+| =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
+| =push FEATURE:TITLE...=       | =org-canvas-sync-headings=                         | any heading failed |
+| =diff=                        | =org-canvas-diff=                                  | anything drifted   |
+| =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
+| =sync=                        | =org-canvas-sync=                                  | any item failed    |
+
+Two kinds of "pull" are kept apart by name.  =grades= takes assignments,
+by exact name or Canvas id, and writes their grading files (always the
+detail view, never the summary table); =--download= fetches every
+student's attachments beside the file.  =pull= and =push= take course
+headings, written =FEATURE:TITLE= for a heading by its exact title or
+=FEATURE#ID= for one by its Canvas id — =assignment:R5: Framework
+Strengths=, =page:Week 05 objectives=, =assignment#2563805=.  The
+feature is a module's name, singular or plural, and ends at the first
+colon or hash sign, so a title may hold either.  =--dry-run= (=-n=)
+before the command makes =push= and =sync= send nothing.  =pull-queue=
+needs a version of org-canvas that defines
+=org-canvas-submissions-pull-queue= (#415), and says so otherwise.
+
+The exit status is 0 when the command succeeded, 1 as the table says,
+2 for a command line it could not read and 3 when an error stopped it
+(an expired token, a missing course directory).  An error's text is
+redacted before it is printed, as everywhere else.
+
+The script finds org-canvas's dependencies itself: the directories in
+=ORG_CANVAS_LOAD_PATH= (separated by colons) first; then, if =plz=
+still cannot be found, package.el's installed packages; then every
+directory under =~/.emacs.d/straight/build= and =~/.emacs.d/elpa=.
+=EMACS= names the Emacs to run and =ORG_CANVAS_LISP= the directory
+holding =org-canvas-batch.el=, if the script has been copied away from
+the checkout.
+
+A script that still wants Lisp calls =org-canvas-batch-setup= instead of
+the bootstrap:
+
+#+begin_src sh
+emacs --batch -l ~/src/org-canvas/lisp/org-canvas-batch.el \
+  --eval '(org-canvas-batch-setup "~/courses/ethics")' \
+  --eval '(org-canvas-pull-submissions "Essay 1")'
+#+end_src
+
+It loads the directory's credentials file without printing it, points
+=org-canvas-directory= at the directory unless the file says otherwise,
+and sets =find-file-visit-truename=, so a script that opens a course file
+itself shares org-canvas's buffer for it (#97).  It does not set
+=revert-without-query=: org-canvas opens every course file through its
+own guard, which in batch rereads a file changed on disk or restores
+one a sync client rolled back, without asking (#121, #249), and a
+blanket =revert-without-query= would reread the rolled-back copy
+silently.
+
 * Course Structure
 
 ** Directory Layout
@@ -3230,6 +3304,8 @@ emacs --batch -l /path/to/org-canvas.el -f org-canvas-diff-batch
 #+end_src
 
 Wire that into cron and have it mail you the output on a non-zero exit.
+=scripts/org-canvas diff= does the same with the course's credentials
+loaded for you (see [[*Running from the Shell][Running from the Shell]]).
 
 =org-canvas-validate-batch= is its offline twin, and the cheaper of the two:
 validation contacts no API and so needs no token, which makes it the natural
@@ -4221,6 +4297,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-version=              | Show the org-canvas version                   |
 | =org-canvas-submit-bug-report=    | Open a buffer of diagnostic information for a bug report (the token redacted) |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
+| =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
 | =org-canvas-unpublish-module=     | The reverse                                   |

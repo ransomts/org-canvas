@@ -145,13 +145,16 @@
                 ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-quiz-accommodations) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
-        (org-canvas-sync)
-        (let ((found nil))
+        (let ((counters (org-canvas-sync))
+              (found nil))
           (dolist (call (spy-calls-all-args 'message))
             (when (and (stringp (car call))
                        (string-match-p "Sync complete:.*synced.*skipped.*failed" (car call)))
               (setq found t)))
-          (expect found :to-be-truthy)))))
+          (expect found :to-be-truthy)
+          ;; The counters come back for a batch caller's exit status (#416).
+          (expect (plist-get counters :fail) :to-equal 0)
+          (expect (plist-member counters :success) :to-be-truthy)))))
 
   (it "renders the per-type table and deferred count when features record stats"
     (with-sync-test-env

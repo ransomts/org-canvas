@@ -260,7 +260,9 @@ of through a global (issue #141)."
 
 ;;;###autoload
 (defun org-canvas-sync ()
-  "Sync all enabled Canvas features."
+  "Sync all enabled Canvas features.
+Return the run's counters, a plist of :success, :skip, :fail, :dry-run
+and :deferred, so a batch caller can set its exit status."
   (interactive)
   (when org-canvas--sync-in-progress
     (user-error "A sync is already in progress.  Please wait for it to finish"))
@@ -314,26 +316,31 @@ of through a global (issue #141)."
     (org-canvas--log-info org-canvas--logger "========================================")
     ;; Clear session-scoped caches
     (setq org-canvas--image-cache nil)
-    (if (> (plist-get org-canvas--sync-global-counters :dry-run) 0)
-        (message "Dry-run complete: %d would sync, %d skipped. See *canvas-log* for details."
-                 (plist-get org-canvas--sync-global-counters :dry-run)
-                 (plist-get org-canvas--sync-global-counters :skip))
-      (let ((fail-count (plist-get org-canvas--sync-global-counters :fail))
-            (deferred-count (or (plist-get org-canvas--sync-global-counters
-                                           :deferred)
-                                0)))
-        (message "%sSync complete: %d synced, %d skipped, %d failed.%s%s"
-                 (if (> fail-count 0) "WARNING: " "")
-                 (plist-get org-canvas--sync-global-counters :success)
-                 (plist-get org-canvas--sync-global-counters :skip)
-                 fail-count
-                 (if (> deferred-count 0)
-                     (format " %d deferred (will apply on a future sync)."
-                             deferred-count)
-                   "")
-                 (if (> fail-count 0)
-                     " Check *canvas-log* for error details."
-                   ""))))))
+    (org-canvas--sync-report-global-counters)
+    (copy-sequence org-canvas--sync-global-counters)))
+
+(defun org-canvas--sync-report-global-counters ()
+  "Say in the echo area how the run `org-canvas-sync' made came out."
+  (if (> (plist-get org-canvas--sync-global-counters :dry-run) 0)
+      (message "Dry-run complete: %d would sync, %d skipped. See *canvas-log* for details."
+               (plist-get org-canvas--sync-global-counters :dry-run)
+               (plist-get org-canvas--sync-global-counters :skip))
+    (let ((fail-count (plist-get org-canvas--sync-global-counters :fail))
+          (deferred-count (or (plist-get org-canvas--sync-global-counters
+                                         :deferred)
+                              0)))
+      (message "%sSync complete: %d synced, %d skipped, %d failed.%s%s"
+               (if (> fail-count 0) "WARNING: " "")
+               (plist-get org-canvas--sync-global-counters :success)
+               (plist-get org-canvas--sync-global-counters :skip)
+               fail-count
+               (if (> deferred-count 0)
+                   (format " %d deferred (will apply on a future sync)."
+                           deferred-count)
+                 "")
+               (if (> fail-count 0)
+                   " Check *canvas-log* for error details."
+                 "")))))
 
 ;; Delete in REVERSE dependency order:
 ;;   Tier 2:  Modules (reference all content types)

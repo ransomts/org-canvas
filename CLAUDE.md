@@ -45,6 +45,7 @@ lisp/
 ├── org-canvas-orphans.el        # org-canvas-cleanup-orphans
 ├── org-canvas-browse.el         # org-canvas-browse-at-point: open the heading's Canvas web page (no API)
 ├── org-canvas-search.el         # org-canvas-search-live and -dates: grep the live course's text (read-only)
+├── org-canvas-batch.el          # Batch entry point (scripts/org-canvas): org-canvas-batch-setup, subcommands; requires org-canvas
 ├── org-canvas-core.el           # Meta-require for all core-* files
 ├── org-canvas-core-config.el    # Config, constants, enum values, property and feature registries
 ├── org-canvas-core-log.el       # In-tree logger (org-canvas--log-*), secret redaction
@@ -87,6 +88,7 @@ lisp/
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
 - Command files (status, publish, adopt, orphans, browse, search, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status and submissions-window require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table); no feature module may require a command file
+- batch.el sits above everything: it requires `org-canvas` itself (after putting the dependencies on `load-path`) and nothing requires it; a batch Emacs loads it with `-l` (#416)
 - diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
 
