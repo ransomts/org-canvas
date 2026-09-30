@@ -627,5 +627,151 @@ Bounded by the number of lines; the match's end is read before
     (expect (org-canvas--submissions-status-score-cell 'none 'median)
             :to-equal "-")))
 
+;;;; The queue as data, and pulling it (issue #415)
+
+(defun test-sstatus--queue-course ()
+  "Return the assignments and submissions of a course with every Next."
+  (list (list (test-sstatus--assignment 1 "Done")
+              (test-sstatus--assignment 3 "To grade")
+              (test-sstatus--assignment 4 "To refresh")
+              (test-sstatus--assignment 5 "Closer: To pull"))
+        (list (cons 1 (list (test-sstatus--submission
+                             '(submitted_at . "2026-09-01T00:00:00Z") '(score . 1)
+                             '(posted_at . "2026-09-02T00:00:00Z"))))
+              (cons 3 (list (test-sstatus--submission
+                             '(submitted_at . "2026-09-01T00:00:00Z"))))
+              (cons 4 (list (test-sstatus--submission
+                             '(submitted_at . "2026-09-16T00:00:00Z"))))
+              (cons 5 (list (test-sstatus--submission
+                             '(submitted_at . "2026-09-01T00:00:00Z")))))))
+
+(defmacro test-sstatus--with-queue-course (&rest body)
+  "Run BODY in `test-sstatus--queue-course', three columns already pulled."
+  (declare (indent 0))
+  `(let ((course (test-sstatus--queue-course)))
+     (test-sstatus--with-course (car course) (cadr course)
+       (dolist (name '("Done" "To grade" "To refresh"))
+         (test-sstatus--write-grading-file name "<2026-09-12 Sat 10:30>"))
+       ,@body)))
+
+(defvar test-sstatus--pulled nil
+  "Arguments the fake `org-canvas-pull-submissions' was called with, newest first.")
+
+(defun test-sstatus--fake-pull (id download)
+  "Pretend to pull ID with DOWNLOAD; return a buffer as a pull leaves one.
+Column 4 was refreshed and says so; column 9 fails with a token in
+its message; any other is a first pull of two rows."
+  (push (list id download) test-sstatus--pulled)
+  (when (eql id 9)
+    (signal 'org-canvas-api-error (list "500: Bearer sekrit-token")))
+  (with-current-buffer (get-buffer-create (format " *test-pull-queue-%s*" id))
+    (setq-local org-canvas-submissions--last-refresh
+                (and (eql id 4) "Refreshed To refresh: 1 new"))
+    (setq-local org-canvas-submissions--data '(a b))
+    (current-buffer)))
+
+(defmacro test-sstatus--with-fake-pull (&rest body)
+  "Run BODY with `org-canvas-pull-submissions' faked, its buffers killed after."
+  (declare (indent 0))
+  `(let ((test-sstatus--pulled nil))
+     (unwind-protect
+         (cl-letf (((symbol-function 'org-canvas-pull-submissions)
+                    #'test-sstatus--fake-pull))
+           ,@body)
+       (dolist (buf (buffer-list))
+         (when (string-prefix-p " *test-pull-queue-" (buffer-name buf))
+           (kill-buffer buf))))))
+
+(describe "org-canvas-submissions-status-rows"
+  (it "returns the queue's rows as plists naming each column's id and Next"
+    (test-sstatus--with-queue-course
+      (let* ((rows (org-canvas-submissions-status-rows))
+             (first (car rows)))
+        (expect (mapcar (lambda (r) (plist-get r :id)) rows) :to-equal '(5 4 3 1))
+        (expect (plist-get first :name) :to-equal "Closer: To pull")
+        (expect (plist-get first :next) :to-equal '("pull"))
+        (expect (plist-get (nth 1 rows) :next) :to-equal '("refresh" 1))
+        (expect (length test-sstatus--statistics-calls) :to-equal 1)
+        (expect test-sstatus--graphql-calls :to-be-truthy))))
+
+  (it "reads neither statistics nor reports when asked for counts only"
+    (test-sstatus--with-queue-course
+      (let ((rows (org-canvas-submissions-status-rows t)))
+        (expect (mapcar (lambda (r) (car (plist-get r :next))) rows)
+                :to-equal '("pull" "refresh" "grade" "-"))
+        (expect (cl-some (lambda (r) (plist-get r :reports)) rows) :to-be nil)
+        (expect test-sstatus--statistics-calls :to-be nil)
+        (expect test-sstatus--graphql-calls :to-be nil))))
+
+  (it "is what the grading queue renders"
+    (test-sstatus--with-queue-course
+      (expect (mapcar (lambda (r) (plist-get r :id)) (org-canvas-submissions-status))
+              :to-equal '(5 4 3 1)))))
+
+(describe "org-canvas-submissions-pull-queue"
+  (it "is an interactive command in the Submissions group of the menu"
+    (expect (commandp 'org-canvas-submissions-pull-queue) :to-be-truthy)
+    (expect (test-org-canvas-transient-has-command-p
+             'org-canvas-dispatch 'org-canvas-submissions-pull-queue)
+            :to-be-truthy))
+
+  (it "pulls every column to pull or refresh by id with attachments, and prints each change"
+    (test-sstatus--with-queue-course
+      (test-sstatus--with-fake-pull
+        (let* ((printed nil)
+               (org-canvas-read-only t)
+               (outcomes (cl-letf (((symbol-function 'princ)
+                                    (lambda (text &optional _) (push text printed))))
+                           (org-canvas-submissions-pull-queue)))
+               (text (car printed)))
+          (expect (reverse test-sstatus--pulled) :to-equal '((5 t) (4 t)))
+          (expect (mapcar (lambda (o) (plist-get o :summary)) outcomes)
+                  :to-equal '("Pulled Closer: To pull: 2 row(s), a new grading file"
+                              "Refreshed To refresh: 1 new"))
+          (expect (cl-some (lambda (o) (plist-get o :failed)) outcomes) :to-be nil)
+          (expect text :to-match "2 column(s) pulled, 0 failed")
+          (expect text :to-match "^- \\[pull\\] Pulled Closer: To pull: 2 row(s)")
+          (expect text :to-match "^- \\[refresh\\] Refreshed To refresh: 1 new")
+          (expect test-sstatus--statistics-calls :to-be nil)
+          (expect test-sstatus--graphql-calls :to-be nil)))))
+
+  (it "names a column that fails, redacted, logs it once, and pulls the rest"
+    (let ((warnings nil))
+      (test-sstatus--with-fake-pull
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings)))
+                  ((symbol-function 'message) #'ignore)
+                  ((symbol-function 'princ) #'ignore))
+          (let* ((outcomes (org-canvas-submissions-pull-queue
+                            (list (list :name "Broken" :id 9 :next '("pull"))
+                                  (list :name "Graded" :id 3 :next '("grade" 1))
+                                  (list :name "Fine" :id 7 :next '("refresh" 2)))))
+                 (failed (car outcomes)))
+            (expect (reverse test-sstatus--pulled) :to-equal '((9 t) (7 t)))
+            (expect (plist-get failed :failed) :to-be-truthy)
+            (expect (plist-get failed :summary) :to-match "\\`Failed Broken: ")
+            (expect (plist-get failed :summary) :not :to-match "sekrit")
+            (expect (plist-get (cadr outcomes) :failed) :to-be nil)
+            (expect (length warnings) :to-equal 1)
+            (expect (car warnings) :not :to-match "sekrit")
+            (expect (with-current-buffer
+                        org-canvas--submissions-pull-queue-buffer-name
+                      (buffer-string))
+                    :to-match "1 column(s) pulled, 1 failed"))))))
+
+  (it "pulls nothing and says so when no column has new work"
+    (test-sstatus--with-fake-pull
+      (let ((printed nil))
+        (cl-letf (((symbol-function 'princ)
+                   (lambda (text &optional _) (push text printed)))
+                  ((symbol-function 'message) #'ignore))
+          (expect (org-canvas-submissions-pull-queue
+                   (list (list :name "Graded" :id 3 :next '("post" 1))
+                         (list :name "Locked" :id 6 :next '("?"))))
+                  :to-be nil))
+        (expect test-sstatus--pulled :to-be nil)
+        (expect (car printed) :to-match "Nothing to pull")))))
+
 (provide 'org-canvas-submissions-status-test)
 ;;; org-canvas-submissions-status-test.el ends here

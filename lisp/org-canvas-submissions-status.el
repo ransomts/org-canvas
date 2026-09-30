@@ -34,6 +34,12 @@
 ;; Under `noninteractive' it is printed to standard output, which is
 ;; where the hand script used to print.
 ;;
+;; The rows are data as well (`org-canvas-submissions-status-rows'), and
+;; `org-canvas-submissions-pull-queue' acts on them: it pulls every
+;; column whose Next is pull or refresh, attachments included, and
+;; reports what each pull changed (issue #415).  That command writes
+;; grading files, as any pull does, and sends nothing to Canvas.
+;;
 ;; API NOTES
 ;; =========
 ;;   GET /courses/:id/assignments?order_by=position
@@ -297,15 +303,19 @@ no report or the read failed."
     (org-canvas--submissions-map-report-counts
      (org-canvas--submissions-fetch-reports (alist-get 'id assignment)))))
 
-(defun org-canvas--submissions-status-column (assignment &optional statistics)
+(defun org-canvas--submissions-status-column (assignment &optional statistics
+                                                           counts-only)
   "Return the report row for ASSIGNMENT as a plist.
-The keys are :name, :due (an ISO timestamp or nil), :pulled-at (the
+The keys are :name, :id (the Canvas assignment id, an integer),
+:due (an ISO timestamp or nil), :pulled-at (the
 grading file's PULLED_AT string or nil), :counts (see
 `org-canvas--submissions-status-counts', nil when unreadable),
 :next (see `org-canvas--submissions-status-next'; (\"?\") when
 unreadable), :reports (see `org-canvas--submissions-status-reports')
 and :statistic, the column's entry in STATISTICS (see
-`org-canvas--submissions-status-statistic')."
+`org-canvas--submissions-status-statistic').  With COUNTS-ONLY
+non-nil the document processor reports are not read and :reports is
+nil: Next never depends on them, and each costs a request."
   (let* ((name (or (alist-get 'name assignment) ""))
          (pulled-at (org-canvas--submissions-status-pulled-at name))
          (submissions (org-canvas--submissions-status-read-column assignment))
@@ -314,10 +324,12 @@ and :statistic, the column's entry in STATISTICS (see
                     submissions
                     (org-canvas--submissions-status-parse-pulled-at pulled-at)))))
     (list :name name
+          :id (alist-get 'id assignment)
           :due (org-canvas--alist-get-non-null 'due_at assignment)
           :pulled-at pulled-at
           :counts counts
-          :reports (org-canvas--submissions-status-reports assignment counts)
+          :reports (unless counts-only
+                     (org-canvas--submissions-status-reports assignment counts))
           :statistic (org-canvas--submissions-status-statistic
                       assignment statistics)
           :next (if counts
@@ -330,15 +342,18 @@ and :statistic, the column's entry in STATISTICS (see
                org-canvas--submissions-status-next-order
                :test #'equal))
 
-(defun org-canvas--submissions-status-columns (assignments &optional statistics)
+(defun org-canvas--submissions-status-columns (assignments &optional statistics
+                                                            counts-only)
   "Return one report row per assignment in ASSIGNMENTS, work first.
 STATISTICS, the hash of `org-canvas--submissions-status-fetch-statistics'
-or nil, gives each row its score statistic.  The rows are sorted by
+or nil, gives each row its score statistic, and COUNTS-ONLY is passed
+to `org-canvas--submissions-status-column'.  The rows are sorted by
 their next action in the order of
 `org-canvas--submissions-status-next-order', and within one action
 they keep Canvas's order, since `sort' is stable."
   (sort (mapcar (lambda (assignment)
-                  (org-canvas--submissions-status-column assignment statistics))
+                  (org-canvas--submissions-status-column
+                   assignment statistics counts-only))
                 assignments)
         (lambda (a b)
           (< (org-canvas--submissions-status-rank a)
@@ -474,6 +489,25 @@ grader acts on before grading."
 
 ;;;; Entry Point
 
+(defun org-canvas-submissions-status-rows (&optional counts-only)
+  "Return the grading queue's rows as data, the columns with work first.
+One plist per published, graded assignment, as
+`org-canvas--submissions-status-column' describes: :name and :id
+name the column, :next is (VERB COUNT) with VERB one of pull,
+refresh, grade, post, - or ? (unreadable), and :counts, :due,
+:pulled-at, :statistic and :reports carry the rest of its table row.
+This is what `org-canvas-submissions-status' renders, so a caller
+need never parse the table (issue #415).  With COUNTS-ONLY non-nil
+the score statistics and document processor reports are not read,
+which leaves every row's Next as it would be and saves a request per
+column submitted to.  Reads only."
+  (let ((assignments (org-canvas--submissions-status-fetch-assignments)))
+    (org-canvas--submissions-status-columns
+     assignments
+     (and assignments (not counts-only)
+          (org-canvas--submissions-status-fetch-statistics))
+     counts-only)))
+
 ;;;###autoload
 (defun org-canvas-submissions-status ()
   "Report which columns need pulling, grading or posting, one table.
@@ -484,11 +518,7 @@ pulled and how many submissions arrived since, and the next thing to
 do; the columns with work to do come first.  Reads only.  Under
 `noninteractive' the table is printed to standard output."
   (interactive)
-  (let* ((assignments (org-canvas--submissions-status-fetch-assignments))
-         (columns (org-canvas--submissions-status-columns
-                   assignments
-                   (and assignments
-                        (org-canvas--submissions-status-fetch-statistics))))
+  (let* ((columns (org-canvas-submissions-status-rows))
          (summary (org-canvas--submissions-status-summary columns)))
     (org-canvas--report-display
      org-canvas--submissions-status-buffer-name
@@ -499,6 +529,90 @@ do; the columns with work to do come first.  Reads only.  Under
         "[Submissions status] %s" reports))
     (message "Grading queue: %s" summary)
     columns))
+
+;;;; Pulling the Queue (issue #415)
+
+;; The queue names the columns with new work, pull or refresh, and the
+;; first step of every grading sitting is to pull exactly those.  The
+;; command below takes the rows as data and pulls each column by id
+;; (never by name: names repeat, and carry colons a script mistypes),
+;; attachments included, as `org-canvas-pull-submissions' does with its
+;; DOWNLOAD argument.  Each pull is a read and a local write, so a
+;; read-only course pulls the same and a dry run has nothing to guard.
+
+(defconst org-canvas--submissions-pull-queue-buffer-name "*canvas-pull-queue*"
+  "Name of the buffer the pull queue's outcome is rendered in.")
+
+(defconst org-canvas--submissions-pull-queue-verbs '("pull" "refresh")
+  "The Next verbs whose columns `org-canvas-submissions-pull-queue' pulls.")
+
+(defun org-canvas--submissions-pull-queue-p (row)
+  "Return non-nil when ROW, a queue row, has new work to pull."
+  (member (car (plist-get row :next)) org-canvas--submissions-pull-queue-verbs))
+
+(defun org-canvas--submissions-pull-queue-first-line (name)
+  "Return the outcome line of NAME's first pull, in its grading buffer."
+  (format "Pulled %s: %d row(s), a new grading file"
+          name (length org-canvas-submissions--data)))
+
+(defun org-canvas--submissions-pull-queue-one (row)
+  "Pull ROW's column with its attachments and return its outcome.
+The outcome is a plist of :name, :next (ROW's verb), :summary (the
+refresh's change line, or the first pull's row count) and :failed,
+non-nil when the pull signalled; a failure is logged, redacted into
+:summary, and the queue goes on to the next column."
+  (let ((name (plist-get row :name))
+        (verb (car (plist-get row :next))))
+    (condition-case err
+        (with-current-buffer (org-canvas-pull-submissions (plist-get row :id) t)
+          (list :name name :next verb
+                :summary (or org-canvas-submissions--last-refresh
+                             (org-canvas--submissions-pull-queue-first-line name))))
+      (error
+       (let ((reason (org-canvas--log-redact (error-message-string err))))
+         (org-canvas--log-warning org-canvas--logger
+           "[Pull queue] Could not pull '%s': %s" name reason)
+         (list :name name :next verb :failed t
+               :summary (format "Failed %s: %s" name reason)))))))
+
+(defun org-canvas--submissions-pull-queue-tally (outcomes)
+  "Return the one-line count of OUTCOMES: how many pulled, how many failed."
+  (let ((failed (cl-count-if (lambda (o) (plist-get o :failed)) outcomes)))
+    (format "%d column(s) pulled, %d failed" (- (length outcomes) failed) failed)))
+
+(defun org-canvas--submissions-pull-queue-render (outcomes)
+  "Render the pull queue's OUTCOMES into the current buffer."
+  (insert (format "Pull queue for course %s, run %s\n\n" org-canvas-course-id
+                  (format-time-string "<%Y-%m-%d %a %H:%M>")))
+  (if (null outcomes)
+      (insert "Nothing to pull: no column has work in without a grading file,"
+              " or work handed in since its PULLED_AT.\n")
+    (insert (org-canvas--submissions-pull-queue-tally outcomes) "\n\n")
+    (dolist (outcome outcomes)
+      (insert (format "- [%s] %s\n" (plist-get outcome :next)
+                      (plist-get outcome :summary))))))
+
+;;;###autoload
+(defun org-canvas-submissions-pull-queue (&optional rows)
+  "Pull each column with new work in the grading queue.
+ROWS are queue rows as `org-canvas-submissions-status-rows' returns
+them; nil reads them, without the statistics and reports Next does
+not need.  Each column whose Next is pull or refresh is pulled by id
+into its grading file with its attachments, as
+\(org-canvas-pull-submissions ID t) does, and what each pull changed
+is reported, one line per column.  A column that fails is named and
+the rest are pulled.  Under `noninteractive' the report is printed to
+standard output.  Return the outcomes, plists of :name, :next,
+:summary and :failed."
+  (interactive)
+  (let* ((queue (seq-filter #'org-canvas--submissions-pull-queue-p
+                            (or rows (org-canvas-submissions-status-rows t))))
+         (outcomes (mapcar #'org-canvas--submissions-pull-queue-one queue)))
+    (org-canvas--report-display
+     org-canvas--submissions-pull-queue-buffer-name
+     (lambda () (org-canvas--submissions-pull-queue-render outcomes)))
+    (message "Pull queue: %s" (org-canvas--submissions-pull-queue-tally outcomes))
+    outcomes))
 
 (provide 'org-canvas-submissions-status)
 ;;; org-canvas-submissions-status.el ends here

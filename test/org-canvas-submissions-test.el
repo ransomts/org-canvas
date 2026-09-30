@@ -1910,6 +1910,19 @@ and `test-refresh--log'; a prompt fails."
         (test-refresh--run (list (test-org-canvas-make-submission)))
         (expect (test-refresh--summary) :to-be nil)
         (expect (buffer-string) :to-match "^\\* Adams, Alice"))))
+  (it "keeps the Refreshed line in the buffer, and nil after a first pull (issue #415)"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":STATUS: graded\n:SCORE: 92\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"))
+        (test-refresh--run (list (test-refresh--bob '((posted_at . "2026-02-20T10:00:00Z")))))
+        (expect org-canvas-submissions--last-refresh :to-equal "Refreshed HW: 1 posted")))
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (setq-local org-canvas-submissions--last-refresh "stale")
+        (test-refresh--run (list (test-org-canvas-make-submission)))
+        (expect org-canvas-submissions--last-refresh :to-be nil))))
   (it "drops a departed student with nothing under their heading, and says so"
     (with-org-canvas-test-config
       (with-grading-file (concat test-grading-file-header
