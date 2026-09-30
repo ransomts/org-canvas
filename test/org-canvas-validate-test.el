@@ -4228,7 +4228,7 @@ Syllabus text.
       (let ((issues (org-canvas--validate-module-coverage)))
         (expect (length issues) :to-equal 1)
         (expect (plist-get (car issues) :heading) :to-equal "Journal 07")
-        (expect (plist-get (car issues) :severity) :to-be 'warning)
+        (expect (plist-get (car issues) :severity) :to-be 'note)
         (expect (plist-get (car issues) :line) :to-equal 2)
         (expect (plist-get (car issues) :message) :to-match "in no module")
         (expect (plist-get (car issues) :push-only) :to-be nil))
@@ -4328,6 +4328,47 @@ Syllabus text.
                    (plist-get (org-canvas--validate-run-all-specs) :issues))
                   :to-equal 1)
         (test-validate-413-headings dir))))
+
+  (it "reports notes last, counts them apart, and fails no batch run"
+    (with-validate-test-dir dir
+      (test-validate-413-write
+       dir `(("modules.org" . ,test-validate-413-modules)
+             ("assignments.org"
+              . "* Journal 01\n* Journal 07\n* Bad\n:PROPERTIES:\n:PUBLISHED: maybe\n:NO_MODULE: true\n:END:\n")
+             ("pages.org" . "* Syllabus\n")))
+      (unwind-protect
+          (let ((errors (org-canvas-validate))
+                (content (with-current-buffer "*canvas-validate*" (buffer-string))))
+            (expect errors :to-equal 1)
+            (expect content :to-match "1 error(s), [0-9]+ warning(s), 1 note(s) across")
+            (expect (string-match-p ": error: " content) :to-be-truthy)
+            (expect (< (string-match ": error: " content)
+                       (string-match ": note: 'Journal 07' is published" content))
+                    :to-be t))
+        (test-validate-413-headings dir))))
+
+  (it "names notes in the echo-area summary only when there are some"
+    (expect (org-canvas--validate-format-summary 0 0 2)
+            :to-equal "Validation: no errors or warnings, 2 note(s)")
+    (expect (org-canvas--validate-format-summary 1 2 3)
+            :to-equal "Validation: 1 error(s), 2 warning(s), 3 note(s)")
+    (expect (org-canvas--validate-format-summary 0 1 1)
+            :to-equal "Validation: 1 warning(s), no errors, 1 note(s)")
+    (expect (org-canvas--validate-format-summary 0 0 0)
+            :to-equal "Validation passed: no issues found"))
+
+  (it "moves notes after errors and warnings, keeping each group's order"
+    (let ((n1 '(:severity note :message "n1")) (w '(:severity warning :message "w"))
+          (n2 '(:severity note :message "n2")) (e '(:severity error :message "e")))
+      (expect (org-canvas--validate-notes-last (list n1 w n2 e))
+              :to-equal (list w e n1 n2))))
+
+  (it "lets next-error visit a note at info level"
+    (with-temp-buffer
+      (org-canvas-validate-mode)
+      (let ((rule (assq 'org-canvas-validate-note compilation-error-regexp-alist)))
+        (expect (nth 5 rule) :to-equal 0)
+        (expect (string-match-p (nth 1 rule) "/tmp/a.org:3: note: x") :to-be-truthy))))
 
   (it "registers NO_MODULE as a local-only boolean on each checked type"
     (dolist (feature '("assignments" "pages" "quizzes" "discussions" "files"))

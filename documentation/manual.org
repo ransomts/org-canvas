@@ -1381,12 +1381,12 @@ item to the direct form anyway.
 *** Items No Module Holds
 
 Students reach a course through its modules, so =org-canvas-validate=
-warns about every published heading in =assignments.org=, =pages.org=,
+notes every published heading in =assignments.org=, =pages.org=,
 =quizzes.org= and =discussions.org= that no item in =modules.org=
 links to:
 
 #+begin_example
-assignments.org:212: warning: 'Journal 07' is published but in no module: no modules.org item links to it (add one, or set NO_MODULE: t if it is kept out on purpose)
+assignments.org:212: note: 'Journal 07' is published but in no module: no modules.org item links to it (add one, or set NO_MODULE: t if it is kept out on purpose)
 #+end_example
 
 Unpublished headings, the front page, headings Canvas deleted and
@@ -3234,7 +3234,15 @@ Wire that into cron and have it mail you the output on a non-zero exit.
 =org-canvas-validate-batch= is its offline twin, and the cheaper of the two:
 validation contacts no API and so needs no token, which makes it the natural
 pre-commit hook or CI step over a course directory.  It exits non-zero when
-the report holds any *error* — warnings alone are not a failure.
+the report holds any *error* — warnings and notes alone are not a failure.
+
+The report has three levels.  An *error* is a push that would fail or
+send something wrong.  A *warning* is the file or the course out of step
+in a way that breaks something: a past date, a stale id, a link that
+404s for students.  A *note* is a course that works as written but may
+not be laid out as a student needs, such as an item no module holds (see
+[[*Items No Module Holds][Items No Module Holds]]).  Notes are listed
+after the rest and counted apart: =1 error(s), 3 warning(s), 9 note(s)=.
 
 #+begin_src sh
 emacs --batch -l /path/to/org-canvas.el -f org-canvas-validate-batch
