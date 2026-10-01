@@ -291,6 +291,110 @@ pushes (issue #163)."
                 #'test-org-canvas-mock-api-request))
        ,@body)))
 
+(defconst test-org-canvas--sync-fn-labels
+  '((settings . org-canvas-sync-settings)
+    (outcomes . org-canvas-sync-outcomes)
+    (rubrics . org-canvas-sync-rubrics)
+    (assignment-groups . org-canvas-sync-assignment-groups)
+    (group-categories . org-canvas-sync-group-categories)
+    (sections . org-canvas-pull-sections)
+    (grading-periods . org-canvas-pull-grading-periods)
+    (grading-schemes . org-canvas-pull-grading-schemes)
+    (people . org-canvas-pull-people)
+    (gradebook . org-canvas-pull-gradebook)
+    (rubric-results . org-canvas-pull-rubric-results)
+    (quiz-results . org-canvas-pull-quiz-results)
+    (files . org-canvas-sync-files)
+    (pages . org-canvas-sync-pages)
+    (discussions . org-canvas-sync-discussions)
+    (announcements . org-canvas-sync-announcements)
+    (sync-grading-schemes . org-canvas-sync-grading-schemes)
+    (calendar-events . org-canvas-sync-calendar-events)
+    (quizzes . org-canvas-sync-quizzes)
+    (new-quizzes . org-canvas-sync-new-quizzes)
+    (assignments . org-canvas-sync-assignments)
+    (overrides . org-canvas-sync-overrides)
+    (quiz-accommodations . org-canvas-sync-quiz-accommodations)
+    (modules . org-canvas-sync-modules))
+  "The tier functions `org-canvas-sync' drives, one (LABEL . FN) each.
+LABEL is the short name the orchestration specs record and assert on;
+the list is the sync order, so a spec checking it reads the macro's
+own order (#433).")
+
+(defun test-org-canvas--mocked-sync-binding (pair record error overrides)
+  "Return one cl-letf binding for the sync fn PAIR.
+RECORD is the caller's list variable or nil; ERROR a LABEL whose
+function signals; OVERRIDES an alist of (LABEL . LAMBDA) escapes."
+  (let* ((label (car pair))
+         (fn (cdr pair))
+         (override (cdr (assq label overrides))))
+    `((symbol-function ',fn)
+      ,(cond (override)
+             ((memq label (if (listp error) error (list error)))
+              '(lambda () (error "Mocked sync failure")))
+             (record `(lambda () (push ',label ,record)))
+             (t '(lambda () nil))))))
+
+(cl-defmacro with-mocked-sync-fns ((&key record error overrides) &rest body)
+  "Run BODY with every tier sync function `org-canvas-sync' drives mocked.
+Each one is a no-op by default, and `org-canvas--preflight-check'
+answers nil.  RECORD, a list variable the caller binds, makes every
+function push its LABEL there in the order it ran instead.  ERROR, a
+LABEL or list of them from `test-org-canvas--sync-fn-labels', makes
+those functions signal — the cascading-failure shape, where the sync
+must carry on.  OVERRIDES, an alist of (LABEL . LAMBDA), replaces that
+LABEL's mock outright: a spec making one tier record feature stats, or
+watch a preflight, says so there.  The mock blocks the orchestration
+specs hand-wrote were this macro, verbatim, eight times over (#433)."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+             ,@(mapcar (lambda (pair)
+                         (test-org-canvas--mocked-sync-binding
+                          pair record error overrides))
+                       test-org-canvas--sync-fn-labels))
+     ,@body))
+
+(defconst test-org-canvas--pull-fn-labels
+  '((settings . org-canvas-pull-settings)
+    (sections . org-canvas-pull-sections)
+    (grading-periods . org-canvas-pull-grading-periods)
+    (grading-schemes . org-canvas-pull-grading-schemes)
+    (people . org-canvas-pull-people)
+    (gradebook . org-canvas-pull-gradebook)
+    (rubric-results . org-canvas-pull-rubric-results)
+    (quiz-results . org-canvas-pull-quiz-results)
+    (assignment-groups . org-canvas-pull-assignment-groups)
+    (group-categories . org-canvas-pull-group-categories)
+    (groups . org-canvas-pull-groups)
+    (outcomes . org-canvas-pull-outcomes)
+    (rubrics . org-canvas-pull-rubrics)
+    (pages . org-canvas-pull-pages)
+    (files . org-canvas-pull-files)
+    (discussions . org-canvas-pull-discussions)
+    (discussion-replies . org-canvas-pull-discussion-replies)
+    (announcements . org-canvas-pull-announcements)
+    (calendar-events . org-canvas-pull-calendar-events)
+    (assignments . org-canvas-pull-assignments)
+    (quizzes . org-canvas-pull-quizzes)
+    (new-quizzes . org-canvas-pull-new-quizzes)
+    (modules . org-canvas-pull-modules))
+  "The pull functions `org-canvas-pull-all' drives, one (LABEL . FN) each.
+In pull order; a spec checking the order reads the macro's own (#433).")
+
+(cl-defmacro with-mocked-pull-fns ((&key record error overrides) &rest body)
+  "Run BODY with every pull function `org-canvas-pull-all' drives mocked.
+RECORD, ERROR and OVERRIDES are as `with-mocked-sync-fns' names, over
+`test-org-canvas--pull-fn-labels'.  `org-canvas--preflight-check'
+answers nil; `executable-find' and `yes-or-no-p' stay the spec's own,
+since the pandoc and abort specs answer them differently."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+             ,@(mapcar (lambda (pair)
+                         (test-org-canvas--mocked-sync-binding
+                          pair record error overrides))
+                       test-org-canvas--pull-fn-labels))
+     ,@body))
+
 (defmacro with-temp-org-buffer (content &rest body)
   "Create a temp buffer with CONTENT in Org mode, then execute BODY.
 Ensures proper org-mode initialization for consistent behavior
