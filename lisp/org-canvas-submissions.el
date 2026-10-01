@@ -2739,8 +2739,10 @@ the text Canvas stored, which becomes its baseline."
 
 (defun org-canvas--submissions-apply-comment-edit (assignment-id edit)
   "Send EDIT to ASSIGNMENT-ID and record it; return the count it falls under.
-The count is :edited, :deleted, :dry-run, or :failed for a request
-Canvas refused, which is one warning and leaves the item pending."
+The count is :edited, :deleted, :dry-run, :failed for a request
+Canvas refused or did not answer, or :errored for an error in Emacs,
+which is not Canvas's doing (`org-canvas--api-failure-p', issue #443).
+Either is one warning and leaves the item pending."
   (condition-case err
       (let ((reply (org-canvas--submissions-send-comment-edit assignment-id edit)))
         (if (eq reply 'dry-run)
@@ -2748,17 +2750,20 @@ Canvas refused, which is one warning and leaves the item pending."
           (org-canvas--submissions-record-comment-edit edit reply)
           (if (eq reply 'deleted) :deleted :edited)))
     (error
-     (org-canvas--log-warning org-canvas--logger
-       "[Submissions] Could not %s comment %s on %s: %s"
-       (if (plist-get edit :delete) "delete" "edit")
-       (plist-get edit :id) (plist-get edit :name) (error-message-string err))
-     :failed)))
+     (let ((canvas (org-canvas--api-failure-p err)))
+       (org-canvas--log-warning org-canvas--logger
+         "[Submissions] Could not %s comment %s on %s%s: %s"
+         (if (plist-get edit :delete) "delete" "edit")
+         (plist-get edit :id) (plist-get edit :name)
+         (if canvas "" " (an error in Emacs, not from Canvas)")
+         (error-message-string err))
+       (if canvas :failed :errored)))))
 
 (defun org-canvas--submissions-apply-comment-edits (assignment-id edits)
   "Send each of EDITS to ASSIGNMENT-ID; return the counts, or nil without any.
-The plist has :edited, :deleted, :dry-run and :failed."
+The plist has :edited, :deleted, :dry-run, :failed and :errored."
   (when edits
-    (let ((counts (list :edited 0 :deleted 0 :dry-run 0 :failed 0)))
+    (let ((counts (list :edited 0 :deleted 0 :dry-run 0 :failed 0 :errored 0)))
       (dolist (edit edits)
         (let ((key (org-canvas--submissions-apply-comment-edit assignment-id edit)))
           (plist-put counts key (1+ (plist-get counts key)))))
@@ -2791,6 +2796,11 @@ The plist has :edited, :deleted, :dry-run and :failed."
       (format "; %d comment change(s) not sent (see the log)" (length refused))
     ""))
 
+(defun org-canvas--submissions-count-note (counts key words)
+  "Return \", N WORDS (see the log)\" for KEY's count N in COUNTS, or \"\"."
+  (let ((n (or (plist-get counts key) 0)))
+    (if (> n 0) (format ", %d %s (see the log)" n words) "")))
+
 (defun org-canvas--submissions-comment-edits-note (counts refused)
   "Return the push message's note on sent comments, from COUNTS and REFUSED.
 COUNTS is what `org-canvas--submissions-apply-comment-edits' returned."
@@ -2798,11 +2808,12 @@ COUNTS is what `org-canvas--submissions-apply-comment-edits' returned."
    (cond ((null counts) "")
          ((> (plist-get counts :dry-run) 0)
           (format "; dry run: would change %d sent comment(s)" (plist-get counts :dry-run)))
-         (t (format "; %d sent comment(s) edited, %d deleted%s"
+         (t (format "; %d sent comment(s) edited, %d deleted%s%s"
                     (plist-get counts :edited) (plist-get counts :deleted)
-                    (if (> (plist-get counts :failed) 0)
-                        (format ", %d refused by Canvas (see the log)" (plist-get counts :failed))
-                      ""))))
+                    (org-canvas--submissions-count-note
+                     counts :failed "failed at Canvas")
+                    (org-canvas--submissions-count-note
+                     counts :errored "failed in Emacs, not at Canvas"))))
    (org-canvas--submissions-refused-note refused)))
 
 (defun org-canvas--submissions-comment-edit-result (counts comments)
@@ -2810,13 +2821,15 @@ COUNTS is what `org-canvas--submissions-apply-comment-edits' returned."
 COUNTS is what `org-canvas--submissions-apply-comment-edits' returned
 and COMMENTS the (SENDABLE . REFUSED) it was given.  The plist has
 :edited, :deleted, :refused (not sent, see
-`org-canvas--submissions-comment-refusal'), :failed (refused by Canvas)
-and :dry-run."
+`org-canvas--submissions-comment-refusal'), :failed (refused by
+Canvas, or not answered), :errored (an error in Emacs, issue #443) and
+:dry-run."
   (list :edited (or (plist-get counts :edited) 0)
         :deleted (or (plist-get counts :deleted) 0)
         :refused (length (cdr comments))
         :failed (or (plist-get counts :failed) 0)
-        :dry-run (or (plist-get counts :dry-run) 0)))
+        :dry-run (or (plist-get counts :dry-run) 0)
+        :errored (or (plist-get counts :errored) 0)))
 
 (defun org-canvas--submissions-restore-comment (edit)
   "Put EDIT, a sent comment changed here, back into the fresh entry at point.
@@ -4459,8 +4472,9 @@ grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
 nil when no grade was sent) with :message its reason; :late,
 :comments and :conflicts, the late statuses set, the comments posted
 and the changes skipped as conflicts; :edited, :deleted, :refused,
-:failed and :dry-run, the sent comments rewritten, deleted, not sent,
-refused by Canvas and only shown (issue #419); :posted, non-nil when
+:failed, :errored and :dry-run, the sent comments rewritten, deleted,
+not sent, refused by Canvas, failed in Emacs (issue #443) and only
+shown (issue #419); :posted, non-nil when
 the grades were posted.  A script that pushes a column by id and posts
 it calls
 
@@ -4544,7 +4558,8 @@ assignment id or a grading file's path or name, as
 `org-canvas-push-submission-grades' takes it, and nil elsewhere asks
 for the file.  Return nil when declined, else a plist: :edited and
 :deleted, the comments rewritten and deleted; :refused, the changes
-not sent; :failed, those Canvas refused; :dry-run, those a dry run
+not sent; :failed, those Canvas refused; :errored, those an error in
+Emacs stopped (issue #443); :dry-run, those a dry run
 only showed.  A script calls
 
   (org-canvas-push-submission-comment-edits \"2573836\")"

@@ -185,6 +185,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 **`api-interaction.org`**
 
+- a log write never takes a lock nor fails its caller, and an error in Emacs is never counted as Canvas's (#443)
 - a role refusal is a skip (#155), for a body file link (#390) and a settings sub-read (#397) too
 - conflict baseline and strategy rules (#48, #72, #86, #104, #124)
 - copy-pasteable curl commands for debugging
@@ -317,6 +318,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - Secrets never reach logs: every line passes through `org-canvas--log-redact` (Bearer tokens, session/csrf/token cookie or query values); plz-error structs are scrubbed by `org-canvas--scrub-plz-error` before entering signal data
 - Secrets never reach the *user* either: a message carrying text the package did not write itself (`error-message-string` above all) goes through `org-canvas--user-message`, never a bare `message`, and `org-canvas--pull-summary-record` masks its `:error` on the way in (#154). The echo area, `*Messages*` and batch stderr are shared sinks too
 - Secrets never reach *backtraces* either: a backtrace prints function arguments verbatim, so the token is never one. `org-canvas--api-request-headers` resolves the Authorization header inside the transport function (`org-canvas--api-execute-request`, `org-canvas--api-curl-patch-config`), which also re-signals whatever plz raises so plz's own frames are gone before an error escapes (#178) — api-interaction.org, "Redaction Cannot Reach a Backtrace"
+- A log handler never signals: the file is appended unvisited and unlocked, a failure noted once (#443)
 - `org-canvas--save-buffer` is a no-op on unmodified buffers; each sync command clears the log unless `org-canvas--inhibit-log-clear` is bound (the master sync binds it)
 
 ### JSON/API

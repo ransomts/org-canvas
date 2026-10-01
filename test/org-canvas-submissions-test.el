@@ -5163,6 +5163,31 @@ ITEMS is the text of the Comments section.  MORE follows the student."
                       "\\`\\[Submissions\\] Could not edit comment 22 on Adams, Alice: .*HTTP 403 Forbidden")))
           (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 1)))))
 
+  (it "counts an error in Emacs apart from a Canvas refusal (#443)"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (let ((said nil) (result nil))
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (&rest _)
+                         (signal 'file-error
+                                 '("org-canvas.log" "Cannot resolve lock conflict in batch mode"))))
+                      ((symbol-function 'org-canvas--user-message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+              (let ((warnings (test-sent--collecting-warnings
+                               (setq result (org-canvas-push-submission-comment-edits)))))
+                (expect (car warnings) :to-match "an error in Emacs, not from Canvas")))
+            (expect (plist-get result :failed) :to-equal 0)
+            (expect (plist-get result :errored) :to-equal 1)
+            (expect (car said) :to-match "1 failed in Emacs, not at Canvas")
+            (expect (car said) :not :to-match "refused\\|failed at Canvas"))
+          (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 1)))))
+
+  (it "words a Canvas failure as one in the closing note (#443)"
+    (expect (org-canvas--submissions-comment-edits-note
+             '(:edited 0 :deleted 0 :dry-run 0 :failed 2 :errored 0) nil)
+            :to-equal "; 0 sent comment(s) edited, 0 deleted, 2 failed at Canvas (see the log)"))
+
   (it "reports the counts to a script"
     (with-org-canvas-test-config
       (with-mock-api
@@ -5210,7 +5235,7 @@ ITEMS is the text of the Comments section.  MORE follows the student."
                              (test-sent-only--push))))
               (expect (cdr pushed) :to-equal "Push 1 comment edit(s)? ")
               (expect (car pushed) :to-equal
-                      '(:edited 1 :deleted 0 :refused 0 :failed 0 :dry-run 0))
+                      '(:edited 1 :deleted 0 :refused 0 :failed 0 :dry-run 0 :errored 0))
               (expect mutations :to-be nil))
             (expect (mapcar (lambda (c) (list (car c) (cadr c))) test-org-canvas-api-calls)
                     :to-equal
@@ -5240,7 +5265,7 @@ ITEMS is the text of the Comments section.  MORE follows the student."
               (expect (cdr pushed) :to-equal
                       "Push 1 comment deletion(s), leaving 1 comment change(s) unsent? ")
               (expect (car pushed) :to-equal
-                      '(:edited 0 :deleted 1 :refused 1 :failed 0 :dry-run 0)))
+                      '(:edited 0 :deleted 1 :refused 1 :failed 0 :dry-run 0 :errored 0)))
             (expect (test-org-canvas-api-call-count) :to-equal 1)
             (expect (buffer-string) :to-match "\\[21\\] :: Theirs, rewritten\\."))))))
 
@@ -5255,7 +5280,7 @@ ITEMS is the text of the Comments section.  MORE follows the student."
                   (org-canvas-read-only t)
                   (before (buffer-string)))
               (expect (car (test-sent-only--push)) :to-equal
-                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 2))
+                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 2 :errored 0))
               (expect (test-org-canvas-api-call-count) :to-equal 0)
               (expect (buffer-string) :to-equal before)
               (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 2)))))))
@@ -5291,7 +5316,7 @@ ITEMS is the text of the Comments section.  MORE follows the student."
                        (lambda (fmt &rest args) (push (apply #'format fmt args) shown)))
                       ((symbol-function 'org-canvas--confirm) (lambda (_) (error "must not ask"))))
               (expect (org-canvas-push-submission-comment-edits) :to-equal
-                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 0)))
+                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 0 :errored 0)))
             (expect (car shown) :to-equal "No sent comment to change")
             (expect (test-org-canvas-api-call-count) :to-equal 0))))))
 
@@ -5331,7 +5356,7 @@ ITEMS is the text of the Comments section.  MORE follows the student."
                          (lambda (&rest _) (error "must not prompt"))))
                 (with-temp-buffer
                   (expect (org-canvas-push-submission-comment-edits "HW") :to-equal
-                          '(:edited 1 :deleted 1 :refused 0 :failed 0 :dry-run 0))))
+                          '(:edited 1 :deleted 1 :refused 0 :failed 0 :dry-run 0 :errored 0))))
               (expect (buffer-local-value 'org-canvas-submissions--current-view grading)
                       :to-equal 'detail)
               (expect (test-org-canvas-api-call-count) :to-equal 2)
