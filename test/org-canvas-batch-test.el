@@ -483,6 +483,43 @@
         (expect (test-batch--run '("push-comments" "Essay")) :to-equal 1)
         (expect calls :to-equal '(("Essay" nil))))))
 
+  (it "pushes a grading file's named rows, printing what a dry run would send (#441)"
+    (let ((calls nil) (out nil) (status nil)
+          (result (list :state 'dry-run :conflicts 0 :refused 0 :failed 0
+                        :would-send '((:user-id 5001 :line "Adams, Alice: {\"posted_grade\":\"95\"}")))))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-push-submission-grades)
+                 (lambda (assignment post only)
+                   (push (list assignment post only org-canvas--dry-run) calls)
+                   result)))
+        (setq out (with-output-to-string
+                    (setq status (org-canvas-batch-main
+                                  '("push-grades" "2573836" "--only" "5001, 5002" "--dry-run")))))
+        (expect status :to-equal 0)
+        (expect out :to-equal "Adams, Alice: {\"posted_grade\":\"95\"}\n")
+        (expect calls :to-equal '(("2573836" nil ("5001" "5002") t)))
+        (setq calls nil)
+        (expect (test-batch--run '("-n" "push-grades" "HW")) :to-equal 0)
+        (expect calls :to-equal '(("HW" nil nil t)))
+        (dolist (left '((:unchanged (5003)) (:missing (9)) (:conflicts 1) (:state failed)))
+          (setq result (append left (list :state 'completed :conflicts 0 :refused 0 :failed 0)))
+          (expect (test-batch--run '("push-grades" "HW" "--only" "5003")) :to-equal 1)))))
+
+  (it "refuses a malformed push-grades line"
+    (let (messages)
+      (cl-letf (((symbol-function 'org-canvas-push-submission-grades)
+                 (lambda (&rest _) (error "Must not push"))))
+        (test-batch--quietly messages
+          (dolist (args '(("push-grades" "HW" "--only")
+                          ("push-grades" "HW" "--only" "5001,abc")
+                          ("push-grades" "HW" "Other")
+                          ("push-grades" "--only" "5001")
+                          ("push-grades" "HW" "--post")))
+            (expect (test-batch--run args) :to-equal 2))))
+      (expect (seq-filter (lambda (m) (string-match-p "push-grades takes\\|--only takes" m))
+                          messages)
+              :not :to-be nil)))
+
   (it "exits with the drift report's verdict"
     (let ((total 0))
       (cl-letf (((symbol-function 'org-canvas-diff) (lambda () total)))

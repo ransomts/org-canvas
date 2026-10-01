@@ -226,6 +226,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a push compares what Canvas stored with what it sent, and a new survey says whether it is anonymous (#349)
 - a push of one assignment heading, at point or by name, reconciles that heading's overrides table through `:after-heading` and reports the counts; an override already carrying its row's dates is not PUT (#380); a heading that had drifted is restamped after the writes when the assignment read back agrees with the payload the push built (`:heading-payload`, the #349 echo check), so an override-only drift does not read as CHANGED forever (#410); an override Canvas holds that the table lacks is deleted only after asking, and kept in batch, a fourth count (#411)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
+- a push takes some rows of a grading file: `s` at point or `org-canvas-push-submission-grades`'s ONLY, the full push restricted by one plan (`org-canvas--submissions-push-plan`), no Comment Bank or posting with it, ids with no row or nothing to send named, and a dry run listing each row's fields (#441)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a question pulls in the format its push reads: matching pairs and distractors, numerical exact and range, blanks under their ids; and a distractor is pushed as the question's `matching_answer_incorrect_matches`, never as an answer (#407)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)

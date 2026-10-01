@@ -382,6 +382,22 @@ The prompts live in the resolvers (=org-canvas--submissions-resolve-assignment=,
 
 *The view comes from the file.* =org-canvas--submissions-ensure-context= reads a buffer that visits a file with a =CANVAS_ASSIGNMENT_ID= header as the detail view even before it holds a student. The summary table is never saved, so no summary buffer has both.
 
+* A Push Takes Some Rows of a Grading File (issue #441)
+
+The push was all or nothing. On 2026-10-01 two grading files held about a hundred scored, unpushed rows each under a standing instruction that no grades go up yet, and the instructor released four rows by hand. A script did it with six internals (the change at point, a re-read of the student, the single-grade PUT, the baseline record, the comment post, the draft reset) and its own copy of the conflict check.
+
+*One plan, restricted.* =org-canvas--submissions-push-plan= is what =S= sends, collected once: the grade changes and drafts after the #440 hold, the push's own conflict check, the sent-comment edits, the Comment Bank, and with ONLY, a list of user ids, every one of those restricted to the students named (=org-canvas--submissions-only-rows=). =org-canvas--submissions-push-current= and =org-canvas--submissions-push-all= take the plan, so the at-point push, the restricted script push and the full push are one path: the same check, the same confirmation, the same baselines, the same save. Nothing about a row is sent outside it.
+
+*What a row is.* Its score, Rubric rows, late status, drafted comment and sent-comment edits — everything kept under the student's heading. The Comment Bank belongs to no row and is left out of a restricted push; a grader who wants it sends =S= or =B=.
+
+*No posting with a restriction.* Posting releases every grade the column holds, so =org-canvas-push-submission-grades= refuses POST beside ONLY, and =s= never offers to post. Partial release is the point of the restriction; a post would undo it.
+
+*Nothing is ignored silently.* An id in ONLY with no heading in the file is returned under =:missing=, one whose heading has nothing to send (no change, no draft, no comment edit, not held) under =:unchanged=, and both are named in the closing message. The shell's =push-grades= exits 1 for either, as it does for a grade that did not land, a held conflict or an unsent comment change.
+
+*The signature.* The issue suggested =:only= as a keyword; =org-canvas-push-submission-grades= takes positional optional arguments (#381 chose POST that way, after #280's DOWNLOAD), so ONLY is the third: =(org-canvas-push-submission-grades ASSIGNMENT nil '(5001 5002))=. Ids may be integers or strings of digits; anything else is a =user-error= before the file is read. =s= is =org-canvas-submissions-push-at-point=, a bare =(interactive)= for undercover's sake, finding the student from anywhere in the subtree (=org-canvas--submissions-student-at-point=, shared with #440's =t= and =k=).
+
+*The dry run says what each row would send.* Under =org-canvas--dry-run= the push logs, and returns as =:would-send=, one line per student: the grade fields as JSON exactly as =org-canvas--submissions-grade-fields= builds them for =update_grades= or the PUT, the late status, and the comment. =push-grades --dry-run= prints those lines on standard output. Nothing else changes about the dry run (#442).
+
 * A Dry Run of the Grade Push Changes Nothing (issue #442)
 
 A dry run over twelve grading files on 2026-10-01 left ten of them changed on disk: every draft under =** Comment to post= had moved under =** Comments= as =- *You* <time> :: ...=, with no =[id]=, and the files were saved, so the real push that followed found no draft to send. Reading the code showed worse than the report: the draft step called =org-canvas--submissions-post-comment=, a plain =org-canvas-api-request= PUT that no dry-run guard sits in front of, so the dry run sent the comments as well (a spec pinned the two PUTs before the fix). The grade send, the late statuses, the Comment Bank and the sent-comment edits were already guarded; the drafts were not, and the bookkeeping after them assumed something had been sent.
