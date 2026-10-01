@@ -790,28 +790,6 @@ report per uploaded file) keeps both values, oldest first."
             (push (list property value) alist)))))
     (nreverse alist)))
 
-(defun org-canvas--submissions-reports-page (assignment-id cursor map)
-  "Read one page of ASSIGNMENT-ID's reports after CURSOR into MAP.
-MAP is a hash from user id (a string) to the report alist of
-`org-canvas--submissions-report-alist'; a submission with no report is
-left out.  Return the next page's cursor, or nil after the last."
-  (let* ((data (org-canvas--graphql-query
-                org-canvas--submissions-reports-query
-                (append (list (cons 'assignmentId (format "%s" assignment-id)))
-                        (when cursor (list (cons 'cursor cursor))))))
-         (connection (alist-get 'submissionsConnection
-                                (alist-get 'assignment data)))
-         (info (alist-get 'pageInfo connection)))
-    (dolist (node (append (alist-get 'nodes connection) nil))
-      (let ((user-id (org-canvas--alist-get-non-null 'userId node))
-            (reports (org-canvas--submissions-report-alist
-                      (alist-get 'nodes (alist-get 'ltiAssetReportsConnection
-                                                   node)))))
-        (when (and user-id reports)
-          (puthash (format "%s" user-id) reports map))))
-    (and (eq (alist-get 'hasNextPage info) t)
-         (org-canvas--alist-get-non-null 'endCursor info))))
-
 (defun org-canvas--submissions-fetch-reports (assignment-id)
   "Return ASSIGNMENT-ID's document processor reports by user id, or nil.
 The value is a hash from user id (a string) to the report alist of
@@ -819,11 +797,17 @@ The value is a hash from user id (a string) to the report alist of
 failed read is one warning and nil, the same as a column with no
 processor: the pull goes on without the reports."
   (condition-case err
-      (let ((map (make-hash-table :test 'equal))
-            (cursor nil))
-        (while (setq cursor (org-canvas--submissions-reports-page
-                             assignment-id cursor map)))
-        map)
+      (org-canvas--graphql-walk-pages
+       org-canvas--submissions-reports-query
+       (list (cons 'assignmentId (format "%s" assignment-id)))
+       '(assignment submissionsConnection)
+       (lambda (node map)
+         (let ((user-id (org-canvas--alist-get-non-null 'userId node))
+               (reports (org-canvas--submissions-report-alist
+                         (alist-get 'nodes (alist-get 'ltiAssetReportsConnection
+                                                      node)))))
+           (when (and user-id reports)
+             (puthash (format "%s" user-id) reports map)))))
     (error
      (org-canvas--log-warning org-canvas--logger
        (concat "[Submissions] Could not read the document processor reports"
@@ -1603,37 +1587,25 @@ The comment bank is theirs: Canvas keeps it per user."
     (or (and (alist-get 'id me) (format "%s" (alist-get 'id me)))
         (org-canvas--signal 'org-canvas-api-error "users/self answered no id"))))
 
-(defun org-canvas--submissions-bank-page (user-id cursor bank)
-  "Read one page of USER-ID's saved comments after CURSOR into BANK.
-BANK is a hash from id to text.  Return the next page's cursor, or nil
-after the last."
-  (let* ((data (org-canvas--graphql-query
-                org-canvas--submissions-bank-query
-                (append (list (cons 'userId user-id)
-                              (cons 'courseId (format "%s" org-canvas-course-id)))
-                        (when cursor (list (cons 'cursor cursor))))))
-         (connection (alist-get 'commentBankItemsConnection (alist-get 'user data)))
-         (info (alist-get 'pageInfo connection)))
-    (dolist (node (append (org-canvas--alist-get-non-null 'nodes connection) nil))
-      (let ((id (org-canvas--alist-get-non-null '_id node))
-            (text (org-canvas--submissions-comment-text
-                   (org-canvas--alist-get-non-null 'comment node))))
-        (when (and id text)
-          (puthash (format "%s" id) text bank))))
-    (and (eq (alist-get 'hasNextPage info) t)
-         (org-canvas--alist-get-non-null 'endCursor info))))
-
 (defun org-canvas--submissions-fetch-bank ()
   "Return the grader's saved comments in the course, or nil when unreadable.
 The value is a list of (ID . TEXT), in the order Canvas answers, the
 text normalized as an item's is.  A failed read is one warning and
 nil; an empty bank is `empty', so the two are never confused."
   (condition-case err
-      (let ((user-id (org-canvas--submissions-self-id))
-            (bank (make-hash-table :test 'equal))
-            (cursor nil)
-            (items nil))
-        (while (setq cursor (org-canvas--submissions-bank-page user-id cursor bank)))
+      (let* ((user-id (org-canvas--submissions-self-id))
+             (bank (org-canvas--graphql-walk-pages
+                    org-canvas--submissions-bank-query
+                    (list (cons 'userId user-id)
+                          (cons 'courseId (format "%s" org-canvas-course-id)))
+                    '(user commentBankItemsConnection)
+                    (lambda (node map)
+                      (let ((id (org-canvas--alist-get-non-null '_id node))
+                            (text (org-canvas--submissions-comment-text
+                                   (org-canvas--alist-get-non-null 'comment node))))
+                        (when (and id text)
+                          (puthash (format "%s" id) text map))))))
+             (items nil))
         (maphash (lambda (id text) (push (cons id text) items)) bank)
         (or (nreverse items) 'empty))
     (error
