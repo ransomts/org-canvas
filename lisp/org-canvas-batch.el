@@ -142,6 +142,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Pull each assignment's submissions into its grading file.")
     ("pull-queue" org-canvas-batch--cmd-pull-queue 0 0 ""
      "Pull every column the grading queue says needs it (#415).")
+    ("push-comments" org-canvas-batch--cmd-push-comments 1 nil "ASSIGNMENT..."
+     "Push only the sent comments edited or marked DELETE (#425).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -275,6 +277,18 @@ Return t, or nil after reporting a failure."
      "pull-queue is not available: this org-canvas has no org-canvas-submissions-pull-queue (issue #415)"))
   (funcall 'org-canvas-submissions-pull-queue)
   0)
+
+(defun org-canvas-batch--cmd-push-comments (parsed)
+  "Push the sent comments changed in each grading file PARSED names.
+A --dry-run sends nothing.  Return 1 if any change was not sent."
+  (let* ((org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run)))
+         (results (mapcar #'org-canvas-push-submission-comment-edits
+                          (plist-get parsed :args))))
+    (if (cl-every (lambda (r) (and r (zerop (+ (plist-get r :refused)
+                                               (plist-get r :failed)))))
+                  results)
+        0 1)))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."

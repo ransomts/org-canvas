@@ -324,6 +324,17 @@
         (expect (test-batch--run '("push" "page:Week 1")) :to-equal 1)
         (expect dry :to-be nil))))
 
+  (it "pushes each grading file's sent comment changes, exiting 1 on one unsent (#425)"
+    (let ((calls nil) (refused 0))
+      (cl-letf (((symbol-function 'org-canvas-push-submission-comment-edits)
+                 (lambda (name) (push (list name org-canvas--dry-run) calls)
+                   (list :edited 1 :deleted 0 :refused refused :failed 0 :dry-run 0))))
+        (expect (test-batch--run '("-n" "push-comments" "Essay" "2573836")) :to-equal 0)
+        (expect (reverse calls) :to-equal '(("Essay" t) ("2573836" t)))
+        (setq refused 1 calls nil)
+        (expect (test-batch--run '("push-comments" "Essay")) :to-equal 1)
+        (expect calls :to-equal '(("Essay" nil))))))
+
   (it "exits with the drift report's verdict"
     (let ((total 0))
       (cl-letf (((symbol-function 'org-canvas-diff) (lambda () total)))

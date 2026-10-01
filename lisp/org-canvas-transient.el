@@ -124,6 +124,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("W" "Score this file by section windows (attendance)" org-canvas-submissions-score-by-window)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)
+   ("C" "Push only edited and deleted sent comments" org-canvas-push-submission-comment-edits
+    :inapt-if-not org-canvas--transient-writable-p)
    ("T" "Post grades to students" org-canvas-submissions-post-grades
     :inapt-if-not org-canvas--transient-writable-p)]
   ["Messages"

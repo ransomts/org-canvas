@@ -125,6 +125,7 @@ names another.  The script runs =emacs --batch -l lisp/org-canvas-batch.el
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =push FEATURE:TITLE...=       | =org-canvas-sync-headings=                         | any heading failed |
+| =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
@@ -138,7 +139,10 @@ headings, written =FEATURE:TITLE= for a heading by its exact title or
 Strengths=, =page:Week 05 objectives=, =assignment#2563805=.  The
 feature is a module's name, singular or plural, and ends at the first
 colon or hash sign, so a title may hold either.  =--dry-run= (=-n=)
-before the command makes =push= and =sync= send nothing.  =pull-queue=
+before the command makes =push=, =push-comments= and =sync= send
+nothing.  =push-comments= takes grading files, by assignment id or
+name, and sends only their rewritten and deleted sent comments (see
+[[*Editing Sent Comments][Editing Sent Comments]]).  =pull-queue=
 needs a version of org-canvas that defines
 =org-canvas-submissions-pull-queue= (#415), and says so otherwise.
 
@@ -3397,6 +3401,15 @@ Under a manual post policy the comments you already sent are still hidden from t
 
 Only your own comments can be changed: Canvas lets a comment's author alone rewrite it, and the push holds deletions to the same rule, so a TA's comment stays theirs. Before anything is sent the push reads who you are (=users/self=) and the students' comments, and a change it may not make is named in the confirmation and the log and left as it is in the file: a comment by someone else, one edited on Canvas since the pull (fix it in SpeedGrader, or remove the item and refresh to take Canvas's text), or one no longer on Canvas. The confirmation counts the edits and deletions it will send (=Push 3 comment edit(s) and 1 comment deletion(s), leaving 1 comment change(s) unsent?=) and lists each one in =*Messages*=. A dry run sends none of them and changes nothing in the file.
 
+To send only these changes, with the grades still held, press =C= (=org-canvas-push-submission-comment-edits=, also in the dispatch menu's Submissions group). It sends the rewritten and =DELETE=-marked comments and nothing else the file holds: no score, =Rubric= row, late status, drafted comment or Comment Bank item, and it never posts. The checks, the listing and the question are the push's own (=Push 1 comment edit(s)?=), a dry run sends nothing, a course marked read-only refuses before anything is sent, and the new baselines are written and the file saved. Outside a grading file it asks for one. From a script it takes the file by assignment id or name with no prompt, as =org-canvas-push-submission-grades= does, and returns =:edited=, =:deleted=, =:refused= (changes not sent, for the reasons above), =:failed= (refused by Canvas) and =:dry-run=:
+
+#+begin_src sh
+emacs --batch -l ~/.emacs.d/init.el \
+  --eval '(org-canvas-push-submission-comment-edits "2573836")'
+#+end_src
+
+or =scripts/org-canvas push-comments 2573836= (see [[*Running from the Shell][Running from the Shell]]), which exits 1 when any change was not sent.
+
 A refresh keeps an edit or a =DELETE= mark you have not pushed, against the text it was made against; when Canvas's copy moved meanwhile, the log says so and the next push leaves that comment alone. An edit Canvas already holds is simply confirmed. A comment gone from Canvas takes the change with it, and the log quotes the text you had typed. Items without an id — in a file pulled before ids were written, or a comment just posted from =Comment to post= (recorded as =*You*=) — cannot be changed until a refresh renders them with one.
 
 ** Scoring by Section Window
@@ -3443,9 +3456,10 @@ The grading workflow repeats every week per column, and the interactive path is 
 - =(org-canvas-pull-submissions ASSIGNMENT &optional DOWNLOAD)=: ASSIGNMENT is a Canvas assignment id (an integer or a string of digits, one request) or an assignment's exact name (found in the course's list). With DOWNLOAD non-nil the grading file is the view whatever =org-canvas-submissions-default-view= says, and every student's attachments are downloaded beside it, the way =D= does. Returns the buffer.
 - =(org-canvas-open-submissions FILE)=: FILE is an absolute path, or a name under the submissions directory with or without its =.org= — the file's name or the assignment's. Returns the buffer.
 - =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= to follow in code.
-- =(org-canvas-push-submission-grades ASSIGNMENT &optional POST)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments, sent comments rewritten or marked =DELETE=, and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back: =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:edited= and =:deleted= (sent comments rewritten and deleted), =:conflicts= and =:posted=.
+- =(org-canvas-push-submission-grades ASSIGNMENT &optional POST)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments, sent comments rewritten or marked =DELETE=, and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back: =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:edited=, =:deleted=, =:refused=, =:failed= and =:dry-run= (sent comments rewritten, deleted, not sent, refused by Canvas and only previewed), =:conflicts= and =:posted=.
+- =(org-canvas-push-submission-comment-edits ASSIGNMENT)=: the same target, but only the sent comments rewritten or marked =DELETE= are sent (see [[*Editing Sent Comments][Editing Sent Comments]]); confirmed through =org-canvas--confirm=, which a batch Emacs answers yes.
 
-An id or name that matches nothing is a =user-error= naming it, and nothing in these four prompts when Emacs runs in batch. So, from a shell:
+An id or name that matches nothing is a =user-error= naming it, and nothing in these five prompts when Emacs runs in batch. So, from a shell:
 
 #+begin_src sh
 emacs --batch -l ~/.emacs.d/init.el \
@@ -4328,6 +4342,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-refresh-file= | Reopen a grading file and re-pull it in one step, returning the buffer (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, posting only when asked; returns what was done (see [[*Batch Use][Batch Use]]) |
+| =org-canvas-push-submission-comment-edits= | Push only the sent comments rewritten or marked =DELETE=, nothing else (=C=); from Lisp, by id or name |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-score-by-window= | Score by submission time against each student's section window, outliers listed first (=W=) |
@@ -4403,7 +4418,7 @@ The menu is organized into groups, each key a single keystroke:
 | Pull        | =p= =P= =u= =A=           | Pull all, pull single..., pull the heading at point, adopt the Canvas item for the heading at point |
 | Delete      | =D= =O= =X=              | Delete all, cleanup orphans, delete at point...  |
 | Publish     | =m= =M= =R=              | Publish / unpublish a module and its contents, apply =PUBLISH_AT= releases |
-| Submissions | =g= =Q= =U= =o= =q= =w= =a= =G= =T= | Pull submissions, grading queue, pull the queue, open a grading file, quiz attempts, peer reviews, completion rule, push grades, post grades |
+| Submissions | =g= =Q= =U= =o= =q= =w= =a= =W= =G= =C= =T= | Pull submissions, grading queue, pull the queue, open a grading file, quiz attempts, peer reviews, completion rule, score by section window, push grades, push only sent comment edits, post grades |
 | Messages    | =e= =E=                 | Send unsent messages / the message at point      |
 | Tools       | =i= =c= =t= =v= =V= =S= =r= =j= =J= =x= =/= =%= | Init, switch course, test connection, validate, validate all, status, drift report, adopt stamps, stamp moves, list external tools, search the live course, list every date it says |
 | Log         | =ll= =ld= =lc=           | Set log level, set log destination, clear log    |
