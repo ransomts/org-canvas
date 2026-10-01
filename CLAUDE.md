@@ -67,6 +67,7 @@ lisp/
 ├── org-canvas-peer-reviews.el   # Read-only tables of who reviews whom on an assignment (requires submissions)
 ├── org-canvas-submissions-status.el # Grading queue: per-column submitted/graded/posted counts and the next action (requires submissions)
 ├── org-canvas-submissions-window.el # Score a grading file by SUBMITTED_AT against each student's section window (requires submissions)
+├── org-canvas-submissions-reports.el # Similarity and AI Writing across every column with a processor, one row per student, read-only (requires submissions)
 ├── org-canvas-messages.el       # Send Canvas conversations from messages.org; never part of org-canvas-sync
 ├── org-canvas-new-quiz-items.el # New Quizzes item/question pipeline (sub-module of new-quizzes)
 ├── org-canvas-{feature}.el      # Feature modules: announcements, assignment-groups, assignments,
@@ -87,7 +88,7 @@ lisp/
 - Feature modules must NOT depend on each other. The one sanctioned exception is a sub-module: `org-canvas-new-quizzes` requires `org-canvas-new-quiz-items`, which itself requires only core
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
-- Command files (status, publish, adopt, orphans, browse, search, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status and submissions-window require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table); no feature module may require a command file
+- Command files (status, publish, adopt, orphans, browse, search, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, submissions-reports, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status, submissions-window and submissions-reports require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table; submissions-reports declares assignments.el's course-wide GraphQL reader, `org-canvas--assignment-graphql-read`); no feature module may require a command file
 - batch.el sits above everything: it requires `org-canvas` itself (after putting the dependencies on `load-path`) and nothing requires it; a batch Emacs loads it with `-l` (#416)
 - diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
@@ -224,6 +225,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a push compares what Canvas stored with what it sent, and a new survey says whether it is anonymous (#349)
 - a push of one assignment heading, at point or by name, reconciles that heading's overrides table through `:after-heading` and reports the counts; an override already carrying its row's dates is not PUT (#380); a heading that had drifted is restamped after the writes when the assignment read back agrees with the payload the push built (`:heading-payload`, the #349 echo check), so an override-only drift does not read as CHANGED forever (#410); an override Canvas holds that the table lacks is deleted only after asking, and kept in batch, a fourth count (#411)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
+- a read-only report sets every column's Similarity and AI Writing side by side, one row per student with sections from the same GraphQL read, with the refused files and the missing reports listed, reading no grading file and needing none (#437)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a question pulls in the format its push reads: matching pairs and distractors, numerical exact and range, blanks under their ids; and a distractor is pushed as the question's `matching_answer_incorrect_matches`, never as an answer (#407)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)

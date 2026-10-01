@@ -1,0 +1,10 @@
+* Added
+- #437 =org-canvas-submissions-reports= (transient: Submissions, =I=;
+  =scripts/org-canvas reports [--save]=) shows the Similarity and AI
+  Writing reports of every column with a document processor in one
+  read-only report: a summary per column, one row per student with
+  their sections and a pair of cells per column, the refused files
+  with their error code, and the files handed in with no report.  It
+  reads the current attempt only, sends nothing, and neither reads nor
+  writes a grading file; with a prefix argument it is also saved,
+  dated, under the submissions directory.

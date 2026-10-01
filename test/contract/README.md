@@ -89,7 +89,9 @@ and the per-person departure read, both on `list_enrollments_courses`.
 The GraphQL documents travel to Canvas as strings: the post-policy
 mutations (assignments, settings), `postAssignmentGrades` and the document
 processor reports query (submissions, issue #351) and its one-column
-processor query (issue #436), the checkpoints query
+processor query (issue #436), the cross-column report's assignment
+listing and per-column reports query (submissions reports, issue
+#437), the checkpoints query
 and `updateDiscussionTopic` mutation (discussions), and the
 document-processor query (assignments, issue #350), the grading
 queue's score statistics query (submissions status, issue #352), the
@@ -242,7 +244,9 @@ module item move's `Module`, `ModuleItem`, `ReorderModuleItemsInput`
 and `ReorderModuleItemsPayload` (issue #352, canvas-lms `1c9f0bb8`),
 and the reports query's `LtiAsset` and `DiscussionEntryVersion`, read
 to keep only the current attempt's reports (issue #436, canvas-lms
-`318f2ad0`):
+`318f2ad0`), and the cross-column report's `Enrollment`,
+`EnrollmentConnection` and `Section`, the students' sections (issue
+#437, the same ref):
 
 ```bash
 python3 test/contract/extract-canvas-graphql-contract.py --supplement \

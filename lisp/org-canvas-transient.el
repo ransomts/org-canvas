@@ -117,6 +117,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
    ("Q" "Grading queue (what needs pulling, grading, posting)" org-canvas-submissions-status)
    ("U" "Pull the queue (every column with new work)" org-canvas-submissions-pull-queue)
+   ("I" "Similarity and AI Writing across columns (read-only)" org-canvas-submissions-reports)
    ("o" "Open a saved grading file" org-canvas-open-submissions)
    ("q" "Pull a quiz's attempts (read-only table)" org-canvas-pull-quiz-submissions)
    ("w" "Pull an assignment's peer reviews (read-only)" org-canvas-pull-peer-reviews)

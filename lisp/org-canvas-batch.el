@@ -165,6 +165,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Print the local sync overview (org-canvas-status).")
     ("grades" org-canvas-batch--cmd-grades 1 nil "[--download] NAME..."
      "Pull each assignment's submissions into its grading file.")
+    ("reports" org-canvas-batch--cmd-reports 0 1 "[--save]"
+     "Print every column's Similarity and AI Writing reports (#437).")
     ("pull-queue" org-canvas-batch--cmd-pull-queue 0 0 ""
      "Pull every column the grading queue says needs it (#415).")
     ("push-comments" org-canvas-batch--cmd-push-comments 1 nil "ASSIGNMENT..."
@@ -274,6 +276,15 @@ title may hold either."
   "Print the grading queue; return 0."
   (org-canvas-submissions-status)
   0)
+
+(defun org-canvas-batch--cmd-reports (parsed)
+  "Print the document processor reports; return 0.
+They are also saved when PARSED's arguments are --save."
+  (let ((args (plist-get parsed :args)))
+    (unless (member args '(nil ("--save")))
+      (org-canvas-batch--usage "reports takes [--save]"))
+    (org-canvas-submissions-reports (and args t))
+    0))
 
 (defun org-canvas-batch--cmd-overview (_parsed)
   "Print the local sync overview; return 0."
