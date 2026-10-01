@@ -1689,26 +1689,21 @@
 (describe "org-canvas--file-get-or-create-folder edge cases"
   (before-each (test-org-canvas-reset-file-caches))
 
-  (it "handles API error by creating folder"
+  (it "re-signals a non-404 read error and creates nothing (issue #435)"
     (with-org-canvas-test-config
       (let ((create-called nil))
         (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method url &rest _args)
-                     (cond
-                      ;; by_path lookup fails
-                      ((string-match "by_path" url)
-                       (signal 'error '("Not found")))
-                      ;; folder creation succeeds
-                      ((eq method 'POST)
-                       (setq create-called t)
-                       '((id . 999) (name . "NewFolder")))
-                      (t nil))))
+                   (lambda (&rest _)
+                     ;; A 401, a timeout, anything but a 404 — it must not
+                     ;; masquerade as a missing folder
+                     (org-canvas--signal 'org-canvas-api-error "401")))
                   ((symbol-function 'org-canvas--file-create-folder)
-                   (lambda (_path _parent)
+                   (lambda (&rest _)
                      (setq create-called t)
                      '((id . 999)))))
-          (let ((result (org-canvas--file-get-or-create-folder "NewFolder" 100)))
-            (expect create-called :to-be t)))))))
+          (expect (org-canvas--file-get-or-create-folder "NewFolder" 100)
+                  :to-throw 'org-canvas-api-error)
+          (expect create-called :to-be nil))))))
 
 (describe "org-canvas--file-ensure-subfolder"
   (before-each (test-org-canvas-reset-file-caches))
