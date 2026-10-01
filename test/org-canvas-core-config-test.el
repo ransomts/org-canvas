@@ -259,7 +259,10 @@ ran alone (issue #260)."
           (said nil))
       (cl-letf (((symbol-function 'write-region)
                  (lambda (&rest _)
-                   (signal 'file-locked '("org-canvas.log" "user@host (pid 1)"))))
+                   ;; `file-locked' is a `file-error' that userlock.el defines
+                   ;; only once loaded, which a batch Emacs 29 has not done.
+                   (signal 'file-error '("Cannot resolve lock conflict in batch mode"
+                                         "org-canvas.log"))))
                 ((symbol-function 'make-directory) #'ignore)
                 ((symbol-function 'org-canvas--user-message)
                  (lambda (fmt &rest args) (push (apply #'format fmt args) said))))

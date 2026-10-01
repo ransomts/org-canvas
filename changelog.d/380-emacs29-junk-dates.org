@@ -1,0 +1,3 @@
+* Fixed
+- #380 Two override dates Emacs 29 cannot parse no longer compare as
+  equal outside UTC, so such a row is sent rather than skipped.
