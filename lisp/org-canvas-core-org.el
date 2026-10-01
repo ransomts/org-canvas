@@ -405,11 +405,6 @@ only safe for a property all its registrations agree on."
        org-canvas--property-registry)
       nil)))
 
-(defun org-canvas--alist-get-non-null (key alist)
-  "Get KEY from ALIST, returning nil for null or :null values."
-  (let ((v (alist-get key alist)))
-    (if (or (null v) (eq v :null)) nil v)))
-
 (defun org-canvas-org-save-sync-state (pom id &optional id-prop)
   "Standardize saving the Canvas ID to the heading at POM.
 ID-PROP defaults to `CANVAS_ID'.  File-level LAST_SYNCED is written
@@ -564,6 +559,24 @@ Returns a list of (success-count . fail-count)."
 	       (marker-position marker) (error-message-string err)))))))
     (dolist (m targets) (set-marker m nil))
     (cons success-count fail-count)))
+
+(defun org-canvas--collect-subtree-markers (pom &optional predicate)
+  "Return markers for the headings under the heading at POM, in order.
+POM is a marker on the parent heading; every heading in its subtree is
+visited, and PREDICATE, called with point on each, decides which are
+kept \(all are kept when it is nil).  Markers, not positions, because
+the loop that follows writes to the headings it visits.  The child
+syncs that walk a parent's subtree this way — quiz groups, quiz
+questions and New Quiz items — share this walk."
+  (with-current-buffer (marker-buffer pom)
+    (save-excursion
+      (goto-char (marker-position pom))
+      (let ((subtree-end (save-excursion (org-end-of-subtree t) (point)))
+            (markers nil))
+        (while (and (outline-next-heading) (< (point) subtree-end))
+          (when (or (null predicate) (funcall predicate))
+            (push (point-marker) markers)))
+        (nreverse markers)))))
 
 ;;;; Shared Constants and Digests
 

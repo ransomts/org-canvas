@@ -3942,6 +3942,49 @@ Returns the :remote-titles of the run context the push received."
         (expect (car warnings) :to-match "5")
         (expect requests :to-be nil)))))
 
+(describe "org-canvas--sync-children"
+  (it "counts successes, skips and failures, and visits every child"
+    (with-temp-org-buffer "* Quiz
+** One
+** Two
+** Three
+"
+      (search-forward "Quiz")
+      (org-back-to-heading t)
+      (let* ((visited nil)
+             (counts (org-canvas--sync-children
+                      (org-canvas--collect-subtree-markers (point-marker))
+                      "[Test]"
+                      (lambda ()
+                        (let ((title (org-get-heading t t t t)))
+                          (push title visited)
+                          (cond ((string= title "Two") 'skip)
+                                ((string= title "Three") (error "Simulated failure"))
+                                (t 'ok)))))))
+        (expect (length visited) :to-equal 3)
+        (expect (plist-get counts :success) :to-be 1)
+        (expect (plist-get counts :skip) :to-be 1)
+        (expect (plist-get counts :fail) :to-be 1)
+        (expect (plist-get counts :total) :to-be 3))))
+
+  (it "logs one line per failing item, prefixed by the label"
+    (with-temp-org-buffer "* Quiz
+** One
+** Two
+"
+      (search-forward "Quiz")
+      (org-back-to-heading t)
+      (let ((errors nil))
+        (cl-letf (((symbol-function 'org-canvas--log-error)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) errors))))
+          (org-canvas--sync-children
+           (org-canvas--collect-subtree-markers (point-marker))
+           "[Test]"
+           (lambda () (error "Nope"))))
+        (expect (length errors) :to-equal 2)
+        (expect (car errors) :to-match "\\[Test\\] Failed: Nope")))))
+
 (describe "org-canvas--handle-404-retry adopts the title's twin (issue #179)"
   (defun test-org-canvas-179-404--push (find-fn &optional put-url-fn)
     "Push a stamped entry whose PUT 404s; return (RESULT . REQUESTS)."
