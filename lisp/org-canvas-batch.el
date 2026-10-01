@@ -165,10 +165,22 @@ copy silently.  Return the credentials file loaded, or nil."
      "Print the local sync overview (org-canvas-status).")
     ("grades" org-canvas-batch--cmd-grades 1 nil "[--download] NAME..."
      "Pull each assignment's submissions into its grading file.")
+    ("reports" org-canvas-batch--cmd-reports 0 1 "[--save]"
+     "Print every column's Similarity and AI Writing reports (#437).")
     ("pull-queue" org-canvas-batch--cmd-pull-queue 0 0 ""
      "Pull every column the grading queue says needs it (#415).")
     ("push-comments" org-canvas-batch--cmd-push-comments 1 nil "ASSIGNMENT..."
      "Push only the sent comments edited or marked DELETE (#425).")
+    ("push-grades" org-canvas-batch--cmd-push-grades 1 4
+     "ASSIGNMENT [--only ID,ID] [--dry-run]"
+     "Push a grading file, or only the named students' rows (#441).")
+    ("export-comments" org-canvas-batch--cmd-export-comments 1 2 "FILE [OUT.json]"
+     "Write a grading file's comments as JSON, to OUT or stdout (#438).")
+    ("import-comments" org-canvas-batch--cmd-import-comments 2 3
+     "[--posted] FILE IN.json"
+     "Write IN.json's comment text into a grading file; exit 1 on a miss.")
+    ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
+     "Check grading files' comments; exit 1 on errors (#438).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -275,6 +287,15 @@ title may hold either."
   (org-canvas-submissions-status)
   0)
 
+(defun org-canvas-batch--cmd-reports (parsed)
+  "Print the document processor reports; return 0.
+They are also saved when PARSED's arguments are --save."
+  (let ((args (plist-get parsed :args)))
+    (unless (member args '(nil ("--save")))
+      (org-canvas-batch--usage "reports takes [--save]"))
+    (org-canvas-submissions-reports (and args t))
+    0))
+
 (defun org-canvas-batch--cmd-overview (_parsed)
   "Print the local sync overview; return 0."
   (org-canvas-status)
@@ -322,9 +343,88 @@ A --dry-run sends nothing.  Return 1 if any change was not sent."
          (results (mapcar #'org-canvas-push-submission-comment-edits
                           (plist-get parsed :args))))
     (if (cl-every (lambda (r) (and r (zerop (+ (plist-get r :refused)
-                                               (plist-get r :failed)))))
+                                               (plist-get r :failed)
+                                               (or (plist-get r :errored) 0)))))
                   results)
         0 1)))
+
+(defun org-canvas-batch--push-grades-args (args)
+  "Read push-grades ARGS into (ASSIGNMENT ONLY DRY-RUN).
+ONLY is the list of ids after --only, split at commas; DRY-RUN is
+non-nil for --dry-run or -n.  Anything else is a usage error."
+  (let ((assignment nil) (only nil) (dry-run nil))
+    (while args
+      (let ((arg (pop args)))
+        (cond ((member arg '("-n" "--dry-run")) (setq dry-run t))
+              ((equal arg "--only")
+               (setq only (split-string (or (pop args) "") "," t "[ \t]+"))
+               (unless (and only (cl-every (lambda (id) (string-match-p "\\`[0-9]+\\'" id))
+                                           only))
+                 (org-canvas-batch--usage "--only takes Canvas user ids, ID,ID")))
+              ((or assignment (string-prefix-p "-" arg))
+               (org-canvas-batch--usage "push-grades takes ASSIGNMENT [--only ID,ID] [--dry-run]"))
+              (t (setq assignment arg)))))
+    (unless assignment
+      (org-canvas-batch--usage "push-grades takes ASSIGNMENT [--only ID,ID] [--dry-run]"))
+    (list assignment only dry-run)))
+
+(defun org-canvas-batch--push-grades-ok-p (result)
+  "Return non-nil when RESULT, a grade push's plist, left nothing behind.
+Grades that did not land, conflicts, ids with no row or nothing to
+send, and sent-comment changes not sent all count against it."
+  (and result
+       (not (memq (plist-get result :state) '(failed unconfirmed)))
+       (zerop (+ (plist-get result :conflicts) (plist-get result :refused)
+                 (plist-get result :failed)
+                 (or (plist-get result :errored) 0)))
+       (null (plist-get result :missing))
+       (null (plist-get result :unchanged))))
+
+(defun org-canvas-batch--cmd-push-grades (parsed)
+  "Push the grading file PARSED names, or only its --only rows.
+Grades are never posted.  A --dry-run, before the command or after
+it, sends nothing and prints the fields each student's row would
+send.  Return 1 if anything was left behind
+\(`org-canvas-batch--push-grades-ok-p')."
+  (let* ((args (org-canvas-batch--push-grades-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (nth 2 args)
+                                  (plist-get parsed :dry-run)))
+         (result (org-canvas-push-submission-grades (nth 0 args) nil (nth 1 args))))
+    (dolist (row (plist-get result :would-send))
+      (princ (format "%s\n" (plist-get row :line))))
+    (if (org-canvas-batch--push-grades-ok-p result) 0 1)))
+
+(defun org-canvas-batch--cmd-export-comments (parsed)
+  "Write the comments of the grading file PARSED names as JSON; return 0.
+The second argument names the output file; without it the JSON is
+printed."
+  (let ((args (plist-get parsed :args)))
+    (org-canvas-submissions-export-comments (nth 0 args) (or (nth 1 args) "-"))
+    0))
+
+(defun org-canvas-batch--cmd-import-comments (parsed)
+  "Import the JSON PARSED names into its grading file, a dry run on --dry-run.
+--posted lets changes under a posted grade through.  Return 1 if a key
+matched nothing or a change was kept back."
+  (let* ((args (plist-get parsed :args))
+         (allow-posted (member "--posted" args))
+         (rest (remove "--posted" args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
+    (unless (= (length rest) 2)
+      (org-canvas-batch--usage "import-comments takes [--posted] FILE IN.json"))
+    (let ((result (org-canvas-submissions-import-comments
+                   (nth 0 rest) (expand-file-name (nth 1 rest)) (and allow-posted t))))
+      (if (or (plist-get result :unmatched) (plist-get result :skipped)) 1 0))))
+
+(defun org-canvas-batch--cmd-check-comments (parsed)
+  "Check the comments of each grading file PARSED names.
+Return 1 if any check found an error."
+  (let ((errors (mapcar (lambda (file)
+                          (org-canvas-submissions-comment-check-errors
+                           (org-canvas-submissions-check-comments file)))
+                        (plist-get parsed :args))))
+    (if (cl-every #'zerop errors) 0 1)))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."

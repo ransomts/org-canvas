@@ -2321,6 +2321,19 @@ line as `closing' and the single-item URLs read as `reads'."
     (expect (org-canvas--api-not-found-p '(org-canvas-api-error 404))
             :to-be nil)))
 
+(describe "org-canvas--api-failure-p (issue #443)"
+  (it "is true of a Canvas request failure and its children"
+    (dolist (sym '(org-canvas-api-error org-canvas-timeout-error
+                                        org-canvas-permission-error
+                                        org-canvas-credentials-error))
+      (expect (org-canvas--api-failure-p (list sym "x")) :to-be t)))
+  (it "is false of an error in Emacs"
+    (expect (org-canvas--api-failure-p
+             '(file-error "Cannot resolve lock conflict in batch mode"))
+            :to-be nil)
+    (expect (org-canvas--api-failure-p '(error "boom")) :to-be nil)
+    (expect (org-canvas--api-failure-p nil) :to-be nil)))
+
 (describe "pull summary gone records (issue #392)"
   (it "prints them in a section of their own and counts them"
     (org-canvas--pull-summary-reset)

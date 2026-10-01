@@ -70,6 +70,7 @@
 
 (require 'org-canvas-core)
 (require 'cl-lib)
+(require 'iso8601)
 
 (declare-function org-canvas--validate-section-structure "org-canvas-validate")
 
@@ -707,7 +708,11 @@ nothing, so the row is sent as before."
   (let ((a (and (stringp ours) (not (string-empty-p ours)) ours))
         (b (and (stringp theirs) (not (string-empty-p theirs)) theirs)))
     (if (and a b)
-        (ignore-errors (time-equal-p (date-to-time a) (date-to-time b)))
+        ;; `iso8601-valid-p' first: Emacs 29's `date-to-time' reads an
+        ;; unparseable string outside UTC as 1999-12-31, so two of them
+        ;; would agree.
+        (and (iso8601-valid-p a) (iso8601-valid-p b)
+             (ignore-errors (time-equal-p (date-to-time a) (date-to-time b))))
       (not (or a b)))))
 
 (defun org-canvas--override-dates-match-p (override existing-override)

@@ -85,6 +85,7 @@ SOURCES = [
     "lisp/org-canvas-settings.el",
     "lisp/org-canvas-submissions.el",
     "lisp/org-canvas-submissions-status.el",
+    "lisp/org-canvas-submissions-reports.el",
     "lisp/org-canvas-discussions.el",
     "lisp/org-canvas-modules.el",
 ]

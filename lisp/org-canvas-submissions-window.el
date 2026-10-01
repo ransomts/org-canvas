@@ -327,22 +327,6 @@ CONTEXT supplies :grace and :points-text."
           (plist-get context :grace)
           (plist-get row :verdict) (plist-get row :score)))
 
-(defun org-canvas--submissions-window-notes-end ()
-  "Return the position for a new line at the end of the entry's Notes.
-The Notes heading is added at the end of the entry when it has none."
-  (let ((region (org-canvas--submissions-section-region
-                 org-canvas--submissions-notes-heading)))
-    (if region
-        (save-excursion
-          (goto-char (cdr region))
-          (skip-chars-backward " \t\n" (car region))
-          (unless (= (point) (car region)) (insert "\n"))
-          (point))
-      (save-excursion
-        (org-end-of-subtree t t)
-        (insert (if (bolp) "" "\n") org-canvas--submissions-notes-heading "\n")
-        (point)))))
-
 (defun org-canvas--submissions-window-set-note (line)
   "Record LINE in the Notes of the entry at point, replacing an older one."
   (let ((region (org-canvas--submissions-section-region
@@ -355,7 +339,7 @@ The Notes heading is added at the end of the entry when it has none."
                (cdr region) t)
           (replace-match "")))))
   (save-excursion
-    (goto-char (org-canvas--submissions-window-notes-end))
+    (goto-char (org-canvas--submissions-notes-end))
     (insert line)
     (unless (looking-at-p "\n") (insert "\n"))))
 

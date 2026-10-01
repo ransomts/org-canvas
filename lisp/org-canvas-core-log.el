@@ -72,14 +72,46 @@ Output shape: \"[TIMESTAMP] [NAME] [LEVEL] MESSAGE\"."
           (insert "\n"))))))
 
 (defun org-canvas--log-write-file (logger formatted)
-  "Append FORMATTED to LOGGER's file, creating parent dirs as needed."
+  "Append FORMATTED to LOGGER's file, creating parent dirs as needed.
+The file is never visited and never locked: `write-region' appends
+with a VISIT of `silent', and `create-lockfiles' is bound to nil.  A
+batch Emacs run beside a live one that logs to the same file otherwise
+met the other's lock and signalled \"Cannot resolve lock conflict in
+batch mode\" from inside a Canvas write (issue #443)."
   (let ((file (org-canvas--logger-file logger)))
     (when (and file (stringp file))
       (let ((dir (file-name-directory file)))
         (when (and dir (not (file-exists-p dir)))
           (make-directory dir t)))
-      (let ((coding-system-for-write 'utf-8))
+      (let ((coding-system-for-write 'utf-8)
+            (create-lockfiles nil))
         (write-region (concat formatted "\n") nil file 'append 'silent)))))
+
+(defvar org-canvas--log-failed-handlers nil
+  "The log handlers whose failure has been noted since the file was set.
+A failing handler is noted once, not on every line it fails to write;
+`org-canvas--logger-set-file', which every command start runs through
+`org-canvas-clear-log', forgets them.")
+
+(defun org-canvas--log-note-failure (handler err)
+  "Say once that log HANDLER failed with ERR, through `message' alone.
+The note never goes back through a log handler, which may be the one
+failing; `message' reaches the echo area, or stderr in batch."
+  (unless (memq handler org-canvas--log-failed-handlers)
+    (push handler org-canvas--log-failed-handlers)
+    (org-canvas--user-message
+     "org-canvas: the %s log handler failed (%s); later log lines may be missing"
+     handler (error-message-string err))))
+
+(defun org-canvas--log-run-handler (handler fn logger formatted)
+  "Write FORMATTED through HANDLER's FN for LOGGER, never signalling.
+A log line is a side effect: a full disk or a lock held by another
+Emacs must not fail the Canvas request that was being logged, nor be
+read as Canvas refusing it (issue #443).  A failure is noted once by
+`org-canvas--log-note-failure'."
+  (condition-case err
+      (funcall fn logger formatted)
+    (error (org-canvas--log-note-failure handler err))))
 
 (defconst org-canvas--log-redactions
   '(("\\bBearer\\s-+[^\"'[:space:]]+" . "Bearer ***MASKED***")
@@ -113,15 +145,19 @@ log.  Any message carrying text the package did not write itself —
 (defun org-canvas--log-dispatch (logger level format-string args)
   "Emit a log entry on LOGGER at LEVEL formatted from FORMAT-STRING and ARGS.
 The formatted message passes through `org-canvas--log-redact' so
-credentials (bearer tokens, session cookies) never reach the log."
+credentials (bearer tokens, session cookies) never reach the log.  A
+handler that fails is noted once and never signals to the caller
+\(`org-canvas--log-run-handler', issue #443)."
   (when (and logger (org-canvas--log-enabled-p logger level))
     (let* ((message (org-canvas--log-redact (apply #'format format-string args)))
            (formatted (org-canvas--log-format logger level message))
            (handlers (org-canvas--logger-handlers logger)))
       (when (memq 'buffer handlers)
-        (org-canvas--log-write-buffer logger formatted))
+        (org-canvas--log-run-handler 'buffer #'org-canvas--log-write-buffer
+                                     logger formatted))
       (when (memq 'file handlers)
-        (org-canvas--log-write-file logger formatted)))))
+        (org-canvas--log-run-handler 'file #'org-canvas--log-write-file
+                                     logger formatted)))))
 
 (defun org-canvas--log-trace (logger format-string &rest args)
   "Log on LOGGER at trace level using FORMAT-STRING and ARGS."
@@ -149,7 +185,10 @@ credentials (bearer tokens, session cookies) never reach the log."
   logger)
 
 (defun org-canvas--logger-set-file (logger file)
-  "Set LOGGER's file path to FILE and return LOGGER."
+  "Set LOGGER's file path to FILE and return LOGGER.
+Forget the handler failures noted so far, so a command starting notes
+a failure of its own again."
+  (setq org-canvas--log-failed-handlers nil)
   (setf (org-canvas--logger-file logger) file)
   logger)
 

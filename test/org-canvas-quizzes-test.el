@@ -847,7 +847,11 @@ Description.
      (search-forward "Matching Question")
      (org-back-to-heading)
      (let ((pairs (org-canvas--quiz-parse-matching-list)))
-       (expect (length pairs) :to-be-truthy))))
+       ;; Pairs first, in order, then the distractor: the order the
+       ;; push reads and the pull writes
+       (expect pairs :to-equal
+               '(("Left 1" . "Right 1") ("Left 2" . "Right 2")
+                 ("Distractor" . nil))))))
 
   (it "returns left-right pairs"
     (with-temp-org-buffer
@@ -1852,6 +1856,27 @@ Intro text.
                :to-equal '("Cat" "Dog"))
        (expect (cl-every (lambda (a) (alist-get 'answer_match_right a)) answers)
                :to-be-truthy))
+     (expect (org-canvas--question-matching-distractors) :to-equal '("Elephant"))))
+
+  (it "finds a distractor written above the pairs"
+    ;; The distractor scan used to start wherever the pairs loop ended,
+    ;; so a distractor above the last pair was never scanned at all
+    (with-temp-org-buffer
+     "* Quiz
+** Match
+:PROPERTIES:
+:END:
+
+- Elephant
+- Cat = Feline
+"
+     (search-forward "Match")
+     (org-back-to-heading)
+     (let ((answers (org-canvas--question-build-answers "matching_question")))
+       (expect (mapcar (lambda (a) (alist-get 'answer_match_left a)) answers)
+               :to-equal '("Cat"))
+       (expect (mapcar (lambda (a) (alist-get 'answer_match_right a)) answers)
+               :to-equal '("Feline")))
      (expect (org-canvas--question-matching-distractors) :to-equal '("Elephant"))))
 
   (it "sends the distractors on the question, newline-delimited (issue #407)"

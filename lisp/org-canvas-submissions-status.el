@@ -185,18 +185,29 @@ one with nothing graded, `none'."
 
 ;;;; The Grading File
 
-(defun org-canvas--submissions-status-pulled-at (assignment-name)
+(defun org-canvas--submissions-status-pulled-at (assignment-name
+                                                 &optional assignment-id)
   "Return the PULLED_AT of ASSIGNMENT-NAME's grading file, or nil.
-Nil when no grading file is on disk.  The header is read from the
-file itself, never through a visited buffer: the property is written
-and saved by the pull that wrote the file, so the disk is right, and a
-report should neither visit a hundred files nor touch one the grader
-has open."
-  (let ((file (org-canvas--submissions-file-path assignment-name)))
-    (when (file-exists-p file)
+The file is the one whose header names ASSIGNMENT-ID, whatever it is
+called, else the name's (issue #431).  Nil when no grading file is on
+disk, or when two claim the id
+\(`org-canvas--submissions-status-duplicates' names them).  The header
+is read from the file itself, never through a visited buffer: the
+property is written and saved by the pull that wrote the file, so the
+disk is right, and a report should neither visit a hundred files nor
+touch one the grader has open."
+  (let ((file (org-canvas--submissions-locate-file
+               assignment-name assignment-id)))
+    (when (and (stringp file) (file-exists-p file))
       (with-temp-buffer
         (insert-file-contents file nil 0 4096)
         (org-canvas--submissions-file-property "PULLED_AT")))))
+
+(defun org-canvas--submissions-status-duplicates (assignment-id)
+  "Return the grading files claiming ASSIGNMENT-ID when two or more do."
+  (let ((files (and assignment-id
+                    (org-canvas--submissions-files-for-id assignment-id))))
+    (and (cdr files) files)))
 
 (defun org-canvas--submissions-status-parse-pulled-at (pulled-at)
   "Return PULLED-AT, a grading file's Org timestamp, as a time value.
@@ -308,7 +319,8 @@ no report or the read failed."
   "Return the report row for ASSIGNMENT as a plist.
 The keys are :name, :id (the Canvas assignment id, an integer),
 :due (an ISO timestamp or nil), :pulled-at (the
-grading file's PULLED_AT string or nil), :counts (see
+grading file's PULLED_AT string or nil), :duplicates (the grading
+files claiming the id, when two or more do; issue #431), :counts (see
 `org-canvas--submissions-status-counts', nil when unreadable),
 :next (see `org-canvas--submissions-status-next'; (\"?\") when
 unreadable), :reports (see `org-canvas--submissions-status-reports')
@@ -317,14 +329,16 @@ and :statistic, the column's entry in STATISTICS (see
 non-nil the document processor reports are not read and :reports is
 nil: Next never depends on them, and each costs a request."
   (let* ((name (or (alist-get 'name assignment) ""))
-         (pulled-at (org-canvas--submissions-status-pulled-at name))
+         (id (alist-get 'id assignment))
+         (pulled-at (org-canvas--submissions-status-pulled-at name id))
          (submissions (org-canvas--submissions-status-read-column assignment))
          (counts (unless (eq submissions 'unreadable)
                    (org-canvas--submissions-status-counts
                     submissions
                     (org-canvas--submissions-status-parse-pulled-at pulled-at)))))
     (list :name name
-          :id (alist-get 'id assignment)
+          :id id
+          :duplicates (org-canvas--submissions-status-duplicates id)
           :due (org-canvas--alist-get-non-null 'due_at assignment)
           :pulled-at pulled-at
           :counts counts
@@ -430,13 +444,15 @@ all or leaves them out."
 Rows are counted once each, as in a grading file; the columns where a
 report failed are named with their count, since that is the one a
 grader acts on before grading."
-  (let ((total (list :processed 0 :failed 0 :pending 0))
+  (let ((total (mapcan (lambda (key) (list key 0))
+                       org-canvas--submissions-report-count-keys))
         (failing nil))
     (dolist (column columns)
       (when-let* ((reports (plist-get column :reports)))
-        (dolist (key '(:processed :failed :pending))
+        (dolist (key org-canvas--submissions-report-count-keys)
           (plist-put total key
-                     (+ (plist-get total key) (plist-get reports key))))
+                     (+ (plist-get total key)
+                        (or (plist-get reports key) 0))))
         (when (> (plist-get reports :failed) 0)
           (push (format "%s (%d)" (plist-get column :name)
                         (plist-get reports :failed))
@@ -468,6 +484,16 @@ grader acts on before grading."
       (goto-char start)
       (org-table-align))))
 
+(defun org-canvas--submissions-status-insert-duplicates (columns)
+  "Insert a line for each of COLUMNS whose id two grading files claim.
+Such a column shows no Pulled date, since neither file is picked, and
+a pull of it refuses until one is left (issue #431)."
+  (dolist (column columns)
+    (when-let* ((files (plist-get column :duplicates)))
+      (insert (format "Grading files %s all claim %s; keep one.\n"
+                      (mapconcat #'file-name-nondirectory files " and ")
+                      (plist-get column :name))))))
+
 (defun org-canvas--submissions-status-render (columns)
   "Render the grading queue for COLUMNS into the current buffer."
   (org-mode)
@@ -476,6 +502,7 @@ grader acts on before grading."
   (insert (org-canvas--submissions-status-summary columns) "\n")
   (when-let* ((reports (org-canvas--submissions-status-reports-line columns)))
     (insert reports "\n"))
+  (org-canvas--submissions-status-insert-duplicates columns)
   (insert "\n")
   (org-canvas--submissions-status-insert-table columns)
   (insert "\nNext: pull = work is in and no grading file exists;"
@@ -501,7 +528,9 @@ need never parse the table (issue #415).  With COUNTS-ONLY non-nil
 the score statistics and document processor reports are not read,
 which leaves every row's Next as it would be and saves a request per
 column submitted to.  Reads only."
-  (let ((assignments (org-canvas--submissions-status-fetch-assignments)))
+  (let ((assignments (org-canvas--submissions-status-fetch-assignments))
+        (org-canvas--submissions-id-index
+         (org-canvas--submissions-grading-files-by-id)))
     (org-canvas--submissions-status-columns
      assignments
      (and assignments (not counts-only)

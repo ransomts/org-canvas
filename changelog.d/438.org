@@ -1,0 +1,25 @@
+* Added
+- #438 A grading file's comments can be exported, rewritten in bulk and
+  checked without a script of one's own.
+  =org-canvas-submissions-export-comments= (=H= in the dispatch menu's
+  Submissions group) returns every student's Rubric row comments (with
+  criterion id, name, max and score), draft, sent comments (with their
+  ids) and notes, and writes them as JSON.
+  =org-canvas-submissions-import-comments= (=I=) writes new text back by
+  user and criterion id, user id, and user and comment id, and nothing
+  else: it counts each kind it changed, names every key that matched
+  nothing, keeps back changes under a posted grade unless told
+  otherwise, and changes nothing under a dry run.  A rewritten sent
+  comment is left as a hand edit leaves it, so =C= sends it.
+  =org-canvas-submissions-check-comments= (=K=) lists deducted rows
+  without a comment and text matching
+  =org-canvas-submissions-comment-flag-regexps= as errors, and sentences
+  given to more than =org-canvas-submissions-comment-shared-threshold=
+  students as warnings.  =scripts/org-canvas= runs them as
+  =export-comments=, =import-comments= and =check-comments=, the last
+  exiting 1 on an error.
+
+* Fixed
+- #438 A grading-file section heading with nothing under it that ends
+  the student (an emptied =Comment to post=) no longer stops the push or
+  any other reader of that section with "Invalid search bound".

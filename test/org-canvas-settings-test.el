@@ -2092,4 +2092,25 @@ Old syllabus.
       (expect (org-entry-get (point) "POST_POLICY") :to-be nil))))
 
 
+(describe "org-canvas--settings-pull-single-field"
+  (it "writes nothing for a JSON null field"
+    (with-temp-org-buffer "* Course\n"
+      (org-back-to-heading)
+      (org-canvas--settings-pull-single-field
+       (point)
+       '("LICENSE" :license-raw "license" enum)
+       '((license . :null)))
+      (expect (org-entry-get (point) "LICENSE") :to-be nil)))
+
+  (it "formats a number field as a string"
+    (with-temp-org-buffer "* Course\n"
+      (org-back-to-heading)
+      (org-canvas--settings-pull-single-field
+       (point)
+       '("HOME_PAGE_ANNOUNCEMENT_LIMIT" :home-page-announcement-limit
+         "home_page_announcement_limit" number)
+       '((home_page_announcement_limit . 5)))
+      (expect (org-entry-get (point) "HOME_PAGE_ANNOUNCEMENT_LIMIT")
+              :to-equal "5"))))
+
 ;;; org-canvas-settings-test.el ends here
