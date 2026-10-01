@@ -382,6 +382,14 @@ The prompts live in the resolvers (=org-canvas--submissions-resolve-assignment=,
 
 *The view comes from the file.* =org-canvas--submissions-ensure-context= reads a buffer that visits a file with a =CANVAS_ASSIGNMENT_ID= header as the detail view even before it holds a student. The summary table is never saved, so no summary buffer has both.
 
+* A Dry Run of the Grade Push Changes Nothing (issue #442)
+
+A dry run over twelve grading files on 2026-10-01 left ten of them changed on disk: every draft under =** Comment to post= had moved under =** Comments= as =- *You* <time> :: ...=, with no =[id]=, and the files were saved, so the real push that followed found no draft to send. Reading the code showed worse than the report: the draft step called =org-canvas--submissions-post-comment=, a plain =org-canvas-api-request= PUT that no dry-run guard sits in front of, so the dry run sent the comments as well (a spec pinned the two PUTs before the fix). The grade send, the late statuses, the Comment Bank and the sent-comment edits were already guarded; the drafts were not, and the bookkeeping after them assumed something had been sent.
+
+*A dry run sends nothing and writes nothing.* =org-canvas--submissions-post-draft= logs =[DRY-RUN] Would post a comment for NAME= and leaves the draft where it is; =org-canvas--submissions-push-all= records no baseline under a dry run, not even the late-only path's; =org-canvas--submissions-mark-conflicts= writes no =CONFLICT=; a Comment Bank item the bank already holds is not labelled and =CANVAS_COMMENT_BANK= is not rewritten; and =org-canvas-push-submission-grades= does not save. What a dry run does is read (the conflict check's re-read of the column, the bank, the grader's id) and report: the closing message and the returned plist count what a push would send (=:comments= the drafts, =:conflicts= the rows that would be skipped, =:dry-run= the sent-comment edits), with =:state dry-run= and =:pushed 0=.
+
+*Conflicts are counted, not marked.* Marking a conflict writes to the file, and a preview that writes is the bug; the count in the message and in =:conflicts= is the dry run's report of them.
+
 * A Bulk Grade Push Waits for Canvas's Job (issue #382)
 
 =update_grades= does not store grades; it queues a job and answers with a Progress object. The push used to ignore that answer: it recorded every =CANVAS_SCORE= baseline, said "Pushed 102 grade(s)" and offered to post while the job was still running. On Attendance 01 (2026-09-28) a read-back at once found 2 of 102 scores; 36, then 50, a few seconds later; all of them after about a minute. Had the job failed, the file would have claimed every score as Canvas's, and the next push would have seen nothing to send.

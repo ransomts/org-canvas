@@ -1,0 +1,8 @@
+* Fixed
+- #442 A dry run of the grade push (=org-canvas-push-submission-grades=
+  or =S= under =org-canvas--dry-run=) sends nothing and leaves the
+  grading file as it was.  It used to post every drafted comment to
+  Canvas, move it under =** Comments= and save the file, so the real
+  push that followed found no draft to send; it also marked conflicts
+  and labelled Comment Bank items.  The dry run now only counts what a
+  push would send.

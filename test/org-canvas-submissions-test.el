@@ -5453,5 +5453,91 @@ ITEMS is the text of the Comments section.  MORE follows the student."
       (org-canvas--submissions-append-comment-to-buffer "Adams, Alice" "New.")
       (expect (buffer-string) :to-match "\\*\\* Comments\n- \\*You\\* <[^>]+> :: New\\.\n\\*\\* Notes"))))
 
+;;;; A Dry Run of the Grade Push Changes Nothing (issue #442)
+
+(defun test-dry-push--file ()
+  "Return a grading file holding every kind of change, and a conflicted row."
+  (concat (test-sent-only--everything-file)
+          "\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 8\n:CANVAS_SCORE: 7\n:END:\n\n"
+          "** Comment to post\nBob's note.\n"))
+
+(defun test-dry-push--canvas ()
+  "Return the submissions Canvas holds for `test-dry-push--file'.
+Alice's score is her baseline; Bob was regraded in SpeedGrader."
+  (list (test-org-canvas-make-submission
+         (list (cons 'score 3)
+               (cons 'submission_comments
+                     (vector (test-sent--comment 22 77 "Mine.")))))
+        (test-org-canvas-make-submission
+         (list (cons 'id 50002) (cons 'user_id 5002) (cons 'score 9)
+               (cons 'user (test-org-canvas-make-user
+                            '((id . 5002) (sortable_name . "Beta, Bob"))))))))
+
+(defun test-dry-push--run (fn)
+  "Call FN, a push of HW.org, under a dry run with Canvas as above.
+Return a plist: :result, :calls (every request), :before and :after
+\(the file on disk) and :modified (the buffer's flag afterwards)."
+  (let (out)
+    (with-org-canvas-test-config
+      (test-batch-push--with-dir (test-dry-push--file)
+        (let ((org-canvas--dry-run t)
+              (noninteractive t)
+              (calls nil)
+              (before (with-temp-buffer
+                        (insert-file-contents-literally file)
+                        (buffer-string))))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _) (push (list method url) calls) nil))
+                    ((symbol-function 'org-canvas--submissions-self-id) (lambda () "77"))
+                    ((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                     (lambda (_id) (test-dry-push--canvas)))
+                    ((symbol-function 'org-canvas--submissions-fetch-bank)
+                     (lambda () '(("4821" . "Show your units."))))
+                    ((symbol-function 'org-canvas--graphql-send)
+                     (lambda (&rest _) (error "Sent a GraphQL request")))
+                    ((symbol-function 'org-canvas--confirm) (lambda (_) t))
+                    ((symbol-function 'y-or-n-p) (lambda (&rest _) (error "Prompted")))
+                    ((symbol-function 'org-canvas--user-message) #'ignore)
+                    ((symbol-function 'org-canvas--log-info) #'ignore)
+                    ((symbol-function 'org-canvas--log-warning) #'ignore))
+            (let ((result (funcall fn)))
+              (setq out (list :result result :calls calls :before before
+                              :after (with-temp-buffer
+                                       (insert-file-contents-literally file)
+                                       (buffer-string))
+                              :modified (buffer-modified-p (find-buffer-visiting file)))))))))
+    out))
+
+(describe "a dry run of the grade push (issue #442)"
+  (it "sends nothing and leaves the grading file byte for byte as it was"
+    (let* ((r (test-dry-push--run
+               (lambda () (org-canvas-push-submission-grades "1001" t))))
+           (result (plist-get r :result)))
+      (expect (plist-get r :calls) :to-be nil)
+      (expect (plist-get r :modified) :to-be nil)
+      (expect (plist-get r :after) :to-equal (plist-get r :before))
+      (expect (plist-get result :state) :to-be 'dry-run)
+      (expect (plist-get result :pushed) :to-equal 0)
+      (expect (plist-get result :comments) :to-equal 2)
+      (expect (plist-get result :conflicts) :to-equal 1)
+      (expect (plist-get result :dry-run) :to-equal 1)
+      (expect (plist-get result :posted) :to-be nil)))
+
+  (it "keeps every draft, baseline and conflict in the buffer of S"
+    (let ((r (test-dry-push--run
+              (lambda ()
+                (with-current-buffer (org-canvas--submissions-visit-grading-file
+                                      (expand-file-name "HW.org" org-canvas-submissions-directory))
+                  (setq org-canvas-submissions--current-view 'detail)
+                  (org-canvas-submissions-push-grades)
+                  (list :drafts (length (org-canvas--submissions-collect-comment-drafts))
+                        :bank (length (org-canvas--submissions-bank-pending))
+                        :text (buffer-string)))))))
+      (expect (plist-get r :modified) :to-be nil)
+      (expect (plist-get (plist-get r :result) :drafts) :to-equal 2)
+      (expect (plist-get (plist-get r :result) :bank) :to-equal 1)
+      (expect (plist-get (plist-get r :result) :text) :not :to-match "CONFLICT")
+      (expect (plist-get (plist-get r :result) :text) :not :to-match "\\*You\\*"))))
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

@@ -1752,14 +1752,15 @@ An item Canvas already held as typed (`same') counts nowhere.")
 (defun org-canvas--submissions-bank-record-one (item outcome baseline counts)
   "Record OUTCOME of ITEM in the buffer, BASELINE and COUNTS.
 Return BASELINE, which may have gained an entry; COUNTS is changed in
-place."
+place.  Under `org-canvas--dry-run' the buffer is left alone (issue
+#442)."
   (let ((kind (car outcome))
         (key (cdr (assq (car outcome) org-canvas--submissions-bank-count-keys))))
     (org-canvas--submissions-bank-warn outcome)
-    (when (memq kind '(created adopted))
-      (org-canvas--submissions-bank-label item (cadr outcome)))
     (when key
       (plist-put counts key (1+ (plist-get counts key))))
+    (when (and (memq kind '(created adopted)) (not org-canvas--dry-run))
+      (org-canvas--submissions-bank-label item (cadr outcome)))
     (when (memq kind '(created adopted updated same))
       (setf (alist-get (cadr outcome) baseline nil nil #'equal)
             (org-canvas--submissions-bank-digest (plist-get item :text))))
@@ -1779,7 +1780,8 @@ records nothing.  The counts are a plist of :created, :adopted,
                  (setq baseline (org-canvas--submissions-bank-record-one
                                  item outcome baseline counts))))
              (reverse pending) (reverse outcomes))
-    (org-canvas--submissions-bank-set-baseline baseline)
+    (unless org-canvas--dry-run
+      (org-canvas--submissions-bank-set-baseline baseline))
     counts))
 
 (defun org-canvas--submissions-push-bank (assignment-id)
@@ -4128,9 +4130,11 @@ diff is pushable.  A conflicting diff carries a :conflict reason."
       (cons (nreverse ok) (nreverse bad)))))
 
 (defun org-canvas--submissions-mark-conflicts (conflicts)
-  "Write a CONFLICT property on the heading of each of CONFLICTS."
+  "Write a CONFLICT property on the heading of each of CONFLICTS.
+Under `org-canvas--dry-run' nothing is written: a dry run changes
+nothing in the file (issue #442)."
   (save-excursion
-    (dolist (c conflicts)
+    (dolist (c (unless org-canvas--dry-run conflicts))
       (when (org-canvas--submissions-goto-user (plist-get c :user-id))
         (org-entry-put (point) "CONFLICT" (plist-get c :conflict))))))
 
@@ -4264,20 +4268,31 @@ LATE is the alist of late statuses sent, (USER-ID . STORED) each; see
   (when buffer-file-name
     (save-buffer)))
 
+(defun org-canvas--submissions-post-draft (assignment-id draft)
+  "Post DRAFT to ASSIGNMENT-ID and record it under its student's Comments.
+The draft is reset to the template once its comment is posted.  Under
+`org-canvas--dry-run' nothing is sent and nothing written: the draft
+stays where it is, for the real push to send (issue #442)."
+  (if org-canvas--dry-run
+      (org-canvas--log-info org-canvas--logger
+        "[DRY-RUN] Would post a comment for %s" (plist-get draft :name))
+    (org-canvas--submissions-post-comment
+     assignment-id (plist-get draft :user-id) (plist-get draft :text))
+    (save-excursion
+      (when (org-canvas--submissions-goto-user (plist-get draft :user-id))
+        (org-canvas--submissions-append-comment-to-buffer
+         (plist-get draft :name) (plist-get draft :text))
+        (org-canvas--submissions-reset-draft)))))
+
 (defun org-canvas--submissions-post-drafts (assignment-id drafts)
   "Post each of DRAFTS to ASSIGNMENT-ID, recording it under Comments as it lands.
 The draft is reset to the template after its comment is posted, so a
 failure midway leaves the file accurate: posted comments are recorded,
-unposted ones still drafted.  Return the number posted."
-  (let ((posted 0))
-    (dolist (d drafts)
-      (org-canvas--submissions-post-comment assignment-id (plist-get d :user-id) (plist-get d :text))
-      (save-excursion
-        (when (org-canvas--submissions-goto-user (plist-get d :user-id))
-          (org-canvas--submissions-append-comment-to-buffer (plist-get d :name) (plist-get d :text))
-          (org-canvas--submissions-reset-draft)))
-      (cl-incf posted))
-    posted))
+unposted ones still drafted.  Return the number posted, or under
+`org-canvas--dry-run' the number a push would post."
+  (dolist (d drafts)
+    (org-canvas--submissions-post-draft assignment-id d))
+  (length drafts))
 
 (defun org-canvas--submissions-describe-grade-changes (diffs)
   "Return the confirmation's words for the grade DIFFS, or nil without any.
@@ -4452,7 +4467,10 @@ grading file it is, and everything `org-canvas-submissions-push-grades'
 would send is sent, without confirming.  Grades are posted only when
 POST is non-nil, and then only once Canvas has stored every grade the
 push sent (issue #382): posting is what students see, so it is a
-choice of its own and never follows from the push.  The file is saved.
+choice of its own and never follows from the push.  The file is saved,
+except under `org-canvas--dry-run', which sends nothing and leaves the
+file as it was: no draft consumed, no baseline or CONFLICT written
+\(issue #442).
 
 Return a plist: :pushed, the grades Canvas stored; :state, how the
 grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
@@ -4476,7 +4494,8 @@ and one that only pushes leaves POST out (issue #381)."
                           (memq (plist-get result :state) '(nil completed))
                           (org-canvas--submissions-post-assignment
                            org-canvas-submissions--assignment-id))))
-        (org-canvas--save-buffer)
+        (unless org-canvas--dry-run
+          (org-canvas--save-buffer))
         (plist-put result :posted posted)))))
 
 ;;;; Pushing Only the Sent Comments (issue #425)
@@ -4567,7 +4586,8 @@ then, when COMMENTS, (SENDABLE . REFUSED), has sent comments to edit
 or delete, those (issue #419), then the drafted comments, then, when
 BANK lists Comment Bank items to send, the comment bank; CONFLICTS,
 already marked, and the refused comment changes are only counted in
-the closing message.  Every baseline is recorded only once
+the closing message.  A dry run records nothing at all (issue #442).
+Every baseline is recorded only once
 the grades have landed: a bulk push waits for Canvas's background job,
 and one that failed or ran out of time records no score or rubric
 baseline, so the next push sends them again (issue #382).
@@ -4586,9 +4606,9 @@ caller."
          (posted (org-canvas--submissions-post-drafts assignment-id drafts))
          (saved (and bank (org-canvas--submissions-push-bank assignment-id)))
          (applied (org-canvas--submissions-grades-applied-p outcome)))
-    (if applied
-        (org-canvas--submissions-record-pushed changes (car late))
-      (org-canvas--submissions-record-late-only changes (car late)))
+    (cond (org-canvas--dry-run nil)
+          (applied (org-canvas--submissions-record-pushed changes (car late)))
+          (t (org-canvas--submissions-record-late-only changes (car late))))
     (org-canvas--user-message
      "%s%s and %d comment(s)%s%s%s%s"
      (org-canvas--submissions-grades-note (length grading) outcome)
