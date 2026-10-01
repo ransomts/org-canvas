@@ -169,6 +169,9 @@ copy silently.  Return the credentials file loaded, or nil."
      "Pull every column the grading queue says needs it (#415).")
     ("push-comments" org-canvas-batch--cmd-push-comments 1 nil "ASSIGNMENT..."
      "Push only the sent comments edited or marked DELETE (#425).")
+    ("push-grades" org-canvas-batch--cmd-push-grades 1 4
+     "ASSIGNMENT [--only ID,ID] [--dry-run]"
+     "Push a grading file, or only the named students' rows (#441).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -326,6 +329,52 @@ A --dry-run sends nothing.  Return 1 if any change was not sent."
                                                (or (plist-get r :errored) 0)))))
                   results)
         0 1)))
+
+(defun org-canvas-batch--push-grades-args (args)
+  "Read push-grades ARGS into (ASSIGNMENT ONLY DRY-RUN).
+ONLY is the list of ids after --only, split at commas; DRY-RUN is
+non-nil for --dry-run or -n.  Anything else is a usage error."
+  (let ((assignment nil) (only nil) (dry-run nil))
+    (while args
+      (let ((arg (pop args)))
+        (cond ((member arg '("-n" "--dry-run")) (setq dry-run t))
+              ((equal arg "--only")
+               (setq only (split-string (or (pop args) "") "," t "[ \t]+"))
+               (unless (and only (cl-every (lambda (id) (string-match-p "\\`[0-9]+\\'" id))
+                                           only))
+                 (org-canvas-batch--usage "--only takes Canvas user ids, ID,ID")))
+              ((or assignment (string-prefix-p "-" arg))
+               (org-canvas-batch--usage "push-grades takes ASSIGNMENT [--only ID,ID] [--dry-run]"))
+              (t (setq assignment arg)))))
+    (unless assignment
+      (org-canvas-batch--usage "push-grades takes ASSIGNMENT [--only ID,ID] [--dry-run]"))
+    (list assignment only dry-run)))
+
+(defun org-canvas-batch--push-grades-ok-p (result)
+  "Return non-nil when RESULT, a grade push's plist, left nothing behind.
+Grades that did not land, conflicts, ids with no row or nothing to
+send, and sent-comment changes not sent all count against it."
+  (and result
+       (not (memq (plist-get result :state) '(failed unconfirmed)))
+       (zerop (+ (plist-get result :conflicts) (plist-get result :refused)
+                 (plist-get result :failed)
+                 (or (plist-get result :errored) 0)))
+       (null (plist-get result :missing))
+       (null (plist-get result :unchanged))))
+
+(defun org-canvas-batch--cmd-push-grades (parsed)
+  "Push the grading file PARSED names, or only its --only rows.
+Grades are never posted.  A --dry-run, before the command or after
+it, sends nothing and prints the fields each student's row would
+send.  Return 1 if anything was left behind
+\(`org-canvas-batch--push-grades-ok-p')."
+  (let* ((args (org-canvas-batch--push-grades-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (nth 2 args)
+                                  (plist-get parsed :dry-run)))
+         (result (org-canvas-push-submission-grades (nth 0 args) nil (nth 1 args))))
+    (dolist (row (plist-get result :would-send))
+      (princ (format "%s\n" (plist-get row :line))))
+    (if (org-canvas-batch--push-grades-ok-p result) 0 1)))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."
