@@ -1270,9 +1270,14 @@
       (setq-local org-canvas-submissions--assignment-id "1001")
       (setq-local org-canvas-submissions--data nil)
       (org-canvas-submissions-mode 1)
+      (spy-on 'message)
       (org-canvas-submissions-push-grades)
-      ;; No error = success; function returns after "No grade changes" message
-      ))
+      ;; An unchanged file pushes nothing and says so
+      (expect (cl-some (lambda (call)
+                         (and (stringp (car call))
+                              (string-match-p "Nothing to push" (car call))))
+                       (spy-calls-all-args 'message))
+              :to-be-truthy)))
 
   (it "dispatches single change to PUT"
     (with-org-canvas-test-config

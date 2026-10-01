@@ -1329,16 +1329,20 @@ Content.
   (it "handles no subgroups"
     (with-org-canvas-test-config
       (with-sync-test-env
-        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
-                  ((symbol-function 'org-canvas-api-request)
-                   (lambda (_method url &rest _args)
-                     (cond
-                      ((string-match "root_outcome_group" url) '((id . 1000)))
-                      (t [])))))
-          ;; Should not error with empty subgroups
-          (let ((org-canvas-outcomes-file "/nonexistent.org"))
-            (org-canvas-delete-all-outcomes))
-          (expect t :to-be t))))))
+        (let ((requests nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (push (list method url) requests)
+                       (cond
+                        ((string-match "root_outcome_group" url) '((id . 1000)))
+                        (t [])))))
+            ;; Should not error with empty subgroups
+            (let ((org-canvas-outcomes-file "/nonexistent.org"))
+              (org-canvas-delete-all-outcomes))
+            ;; No subgroups came back: nothing was asked of the delete API
+            (expect (cl-some (lambda (call) (eq (car call) 'DELETE)) requests)
+                    :to-be nil)))))))
 
 ;;;; Outcome Group Push Timeout Recovery
 
