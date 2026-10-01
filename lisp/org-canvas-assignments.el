@@ -488,7 +488,7 @@ Pure function — no buffer access."
     (when (plist-get data :assignment_group_id)
       (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s"
                   (plist-get data :assignment_group_id)))
-   (unless (plist-get data :rubric-id)
+   (when (plist-get data :rubric-id)
       (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s"
                   (plist-get data :rubric-id)))
 
