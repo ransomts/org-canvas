@@ -280,16 +280,20 @@ Returns alist of (blank_id . ((text . is-correct) ...))."
 
 (defun org-canvas--quiz-parse-matching-list ()
   "Parse matching question format: left = right.
-Returns list of (left . right) pairs.  Last item with no match is distractor."
+Returns list of (left . right) pairs; a `- text' line with no `='
+is a distractor, returned as (text . nil) (#407)."
   (save-excursion
-    (let ((matches nil)
-	  (bound (save-excursion (org-end-of-subtree t) (point))))
+    (let* ((start (point))
+	   (matches nil)
+	   (bound (save-excursion (org-end-of-subtree t) (point))))
       (while (re-search-forward "^- \\(.+?\\) = \\(.+\\)$" bound t)
 	(push (cons (string-trim (match-string 1))
 		    (string-trim (match-string 2)))
 	      matches))
-      ;; Also check for distractors (items without =)
-      (goto-char (point))
+      ;; Also check for distractors (items without =), restarting from
+      ;; the heading: the pairs loop left point after the last match, so
+      ;; a distractor written above it was never scanned
+      (goto-char start)
       (while (re-search-forward "^- \\([^=\n]+\\)$" bound t)
 	(let ((text (string-trim (match-string 1))))
 	  (unless (string-match-p "\\[[ X]\\]" text)  ; Skip checkboxes
