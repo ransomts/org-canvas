@@ -1,0 +1,5 @@
+* Fixed
+- #428 The assignment parse's debug log names a stamped heading's
+  rubric id.  An inverted guard made the =Rubric ID:= line fire only
+  when the id was nil, printing a useless =Rubric ID: nil= and never
+  a real id.

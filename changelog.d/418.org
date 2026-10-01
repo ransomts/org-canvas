@@ -1,0 +1,7 @@
+* Fixed
+- #418 A matching question finds a distractor written above its last
+  pair.  The distractor scan started wherever the pairs scan ended, so
+  only a distractor after the last =- Left = Right= pair was ever found;
+  one typed before it was silently absent from
+  =matching_answer_incorrect_matches=.  Both scans now run from the
+  question's heading, over the same region.
