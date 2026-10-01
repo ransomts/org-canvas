@@ -1224,12 +1224,15 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
 (defun org-canvas--submissions-section-region (heading)
   "Return (START . END) of the body under HEADING within the entry at point.
 START is the line after HEADING; END the next heading or the end of the
-student's subtree.  Nil when the entry has no such heading."
+student's subtree.  Nil when the entry has no such heading.  A
+HEADING that ends the subtree with nothing under it gives an empty
+region at the end of its own line (issue #438)."
   (save-excursion
     (org-back-to-heading t)
     (let ((end (save-excursion (org-end-of-subtree t) (point))))
       (when (re-search-forward (concat "^" (regexp-quote heading) "$") end t)
         (forward-line 1)
+        (goto-char (min (point) end))
         (cons (point)
               (save-excursion
                 (if (re-search-forward "^\\*" end t) (line-beginning-position) end)))))))
@@ -1242,13 +1245,21 @@ of them as one, so a drafted comment reaches Canvas with its
 paragraph breaks (issue #264)."
   (let ((region (org-canvas--submissions-section-region heading)))
     (when region
-      (let* ((raw (buffer-substring-no-properties (car region) (cdr region)))
-             (kept (seq-remove (lambda (l) (string-match-p "\\`[ \t]*#" l))
-                               (split-string raw "\n")))
-             (text (string-trim
-                    (replace-regexp-in-string "\n[ \t]*\n\\(?:[ \t]*\n\\)+" "\n\n"
-                                              (mapconcat #'identity kept "\n")))))
-        (and (not (string-empty-p text)) text)))))
+      (org-canvas--submissions-section-normalize
+       (buffer-substring-no-properties (car region) (cdr region))))))
+
+(defun org-canvas--submissions-section-normalize (raw)
+  "Return RAW, a section's body, normalized as a drafted comment is read.
+This is how `org-canvas--submissions-section-text' reads one: Org
+comment lines go, blank lines at either end go and a run of them
+between paragraphs becomes one; nil when nothing is left.  The comment
+import normalizes a new draft through it too (issue #438)."
+  (let* ((kept (seq-remove (lambda (l) (string-match-p "\\`[ \t]*#" l))
+                           (split-string raw "\n")))
+         (text (string-trim
+                (replace-regexp-in-string "\n[ \t]*\n\\(?:[ \t]*\n\\)+" "\n\n"
+                                          (mapconcat #'identity kept "\n")))))
+    (and (not (string-empty-p text)) text)))
 
 (defun org-canvas--submissions-set-section (heading template text)
   "Replace the body under HEADING in the entry at point with TEMPLATE and TEXT.

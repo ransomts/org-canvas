@@ -127,6 +127,9 @@ ARGS=, which is also the line to use without it.
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =push FEATURE:TITLE...=       | =org-canvas-sync-headings=                         | any heading failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
+| =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
+| =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
+| =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
@@ -3445,6 +3448,52 @@ or =scripts/org-canvas push-comments 2573836= (see [[*Running from the Shell][Ru
 
 A refresh keeps an edit or a =DELETE= mark you have not pushed, against the text it was made against; when Canvas's copy moved meanwhile, the log says so and the next push leaves that comment alone. An edit Canvas already holds is simply confirmed. A comment gone from Canvas takes the change with it, and the log quotes the text you had typed. Items without an id — in a file pulled before ids were written, or a comment just posted from =Comment to post= (recorded as =*You*=) — cannot be changed until a refresh renders them with one.
 
+** Exporting, Importing and Checking Comments
+
+A course-wide rewrite of feedback — a new feedback guide, a voice pass — touches every row comment, draft and sent comment in a dozen grading files.  Three commands give those comments to a script or a rewriter as data and take the new text back, through the same readers and writers the push uses, so no script has to parse the file.  All three are local: nothing is read from Canvas and nothing is sent.  Each takes its grading file as =org-canvas-push-submission-comment-edits= does: the grading buffer at hand, else an assignment id or the file's path or name, asking only when there is none.
+
+=M-x org-canvas-submissions-export-comments= (transient: Submissions, =H=) writes every student's comments as JSON:
+
+#+begin_src js
+{"assignment_id": "1001", "assignment": "Essay 1",
+ "students": [
+  {"user_id": "5001", "name": "Adams, Alice", "status": "graded", "score": "8",
+   "posted": null,
+   "rows": [{"criterion_id": "_812", "criterion": "Thesis", "max": "5", "score": "3",
+             "comment": "The claim needs a reason given early."}],
+   "draft": "Draft text, or null",
+   "sent": [{"id": "48213", "author": "Prof", "time": "<2026-09-28 Mon 14:02>",
+             "delete": false, "text": "Good start."}],
+   "notes": "Your notes, or null"}]}
+#+end_src
+
+Every student is exported; =posted= holds =POSTED_AT=, so a rewriter can leave the posted ones out.  From Lisp, =(org-canvas-submissions-export-comments FILE OUTPUT)= returns the same as plists (=:user-id=, =:rows= of =(:criterion-id :criterion :max :score :comment)=, =:draft=, =:sent= of =(:id :author :time :delete :text)=, ...) and writes the JSON when OUTPUT names a file, or prints it for ="-"=.
+
+=M-x org-canvas-submissions-import-comments= (=I=) takes a file of that shape — the whole export, only the keys to change, or a bare array of students — and writes:
+
+- a row's =comment= into its =- ID ::= item under =** Rubric=, found by =user_id= and =criterion_id=;
+- =draft= under =** Comment to post=, below its template;
+- a sent comment's =text= over its =** Comments= item, found by =user_id= and =id=.
+
+Nothing else in the file moves, and a text equal to the file's is no change, so importing an unchanged export leaves the file byte for byte as it was.  The rows and drafts go out with the next =S=.  A rewritten sent comment is left exactly as a hand edit leaves it — new text, the =CANVAS_COMMENTS= baseline untouched — so =C= sends it, checked as any edit is (see [[*Editing Sent Comments][Editing Sent Comments]]); an emptied one is refused, since a sent comment is deleted only by its =DELETE= mark.  A draft with a line starting with =#= is refused too: Org reads that line as a comment and the push would leave it out.  A student whose grade is already posted keeps every change back, since they may have read the comment; =(org-canvas-submissions-import-comments FILE DATA t)=, or =--posted= on the command line, lets the changes through.  The echo area (stderr in batch) names every key that matched nothing (=user 5001 criterion _9=) and every change kept back.  Under a dry run (=-n=) nothing is written and the counts are the same.  From Lisp DATA is the JSON file's name or a list of student plists, and a plist comes back: =:rows=, =:drafts=, =:sent=, =:unmatched=, =:skipped= and =:dry-run=.
+
+=M-x org-canvas-submissions-check-comments= (=K=) checks the students not yet posted (and not departed) before a push, and lists:
+
+- *errors*: a =Rubric= row scored below its =Max= with no comment; a row comment, draft or sent comment matching one of =org-canvas-submissions-comment-flag-regexps= (empty by default — a course puts the dashes or words its feedback guide bans there);
+- *warnings*: a sentence of =org-canvas-submissions-comment-sentence-min-length= (25) characters or more given word for word to more than =org-canvas-submissions-comment-shared-threshold= (3) students in the column; nil turns the count off.
+
+The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence is only a warning: a stock line can be meant.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
+
+A course-wide pass from the shell:
+
+#+begin_src sh
+scripts/org-canvas export-comments Essay_1 essay1.json
+# ... rewrite essay1.json ...
+scripts/org-canvas -n import-comments Essay_1 essay1.json   # counts, nothing written
+scripts/org-canvas import-comments Essay_1 essay1.json
+scripts/org-canvas check-comments Essay_1
+#+end_src
+
 ** Scoring by Section Window
 
 An in-class check — attendance, an in-room closer — is graded by when it arrived: full credit when a student submitted during their own section's meeting, 0 otherwise. =M-x org-canvas-submissions-score-by-window= (transient: Submissions, =W=) does that for a grading file, locally; nothing is read from Canvas and nothing is sent.
@@ -4379,6 +4428,9 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-score-by-window= | Score by submission time against each student's section window, outliers listed first (=W=) |
+| =org-canvas-submissions-export-comments= | A grading file's row comments, drafts, sent comments and notes as data, or JSON (=H=) |
+| =org-canvas-submissions-import-comments= | Write new comment text back by user, criterion and comment id, nothing else (=I=) |
+| =org-canvas-submissions-check-comments= | Deducted rows without a comment, flagged text, sentences many students share (=K=) |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |

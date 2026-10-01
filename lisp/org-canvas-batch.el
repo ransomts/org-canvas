@@ -169,6 +169,13 @@ copy silently.  Return the credentials file loaded, or nil."
      "Pull every column the grading queue says needs it (#415).")
     ("push-comments" org-canvas-batch--cmd-push-comments 1 nil "ASSIGNMENT..."
      "Push only the sent comments edited or marked DELETE (#425).")
+    ("export-comments" org-canvas-batch--cmd-export-comments 1 2 "FILE [OUT.json]"
+     "Write a grading file's comments as JSON, to OUT or stdout (#438).")
+    ("import-comments" org-canvas-batch--cmd-import-comments 2 3
+     "[--posted] FILE IN.json"
+     "Write IN.json's comment text into a grading file; exit 1 on a miss.")
+    ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
+     "Check grading files' comments; exit 1 on errors (#438).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -325,6 +332,38 @@ A --dry-run sends nothing.  Return 1 if any change was not sent."
                                                (plist-get r :failed)))))
                   results)
         0 1)))
+
+(defun org-canvas-batch--cmd-export-comments (parsed)
+  "Write the comments of the grading file PARSED names as JSON; return 0.
+The second argument names the output file; without it the JSON is
+printed."
+  (let ((args (plist-get parsed :args)))
+    (org-canvas-submissions-export-comments (nth 0 args) (or (nth 1 args) "-"))
+    0))
+
+(defun org-canvas-batch--cmd-import-comments (parsed)
+  "Import the JSON PARSED names into its grading file, a dry run on --dry-run.
+--posted lets changes under a posted grade through.  Return 1 if a key
+matched nothing or a change was kept back."
+  (let* ((args (plist-get parsed :args))
+         (allow-posted (member "--posted" args))
+         (rest (remove "--posted" args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
+    (unless (= (length rest) 2)
+      (org-canvas-batch--usage "import-comments takes [--posted] FILE IN.json"))
+    (let ((result (org-canvas-submissions-import-comments
+                   (nth 0 rest) (expand-file-name (nth 1 rest)) (and allow-posted t))))
+      (if (or (plist-get result :unmatched) (plist-get result :skipped)) 1 0))))
+
+(defun org-canvas-batch--cmd-check-comments (parsed)
+  "Check the comments of each grading file PARSED names.
+Return 1 if any check found an error."
+  (let ((errors (mapcar (lambda (file)
+                          (org-canvas-submissions-comment-check-errors
+                           (org-canvas-submissions-check-comments file)))
+                        (plist-get parsed :args))))
+    (if (cl-every #'zerop errors) 0 1)))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."

@@ -122,6 +122,9 @@ writing commands greyed rather than only erroring when one is chosen
    ("w" "Pull an assignment's peer reviews (read-only)" org-canvas-pull-peer-reviews)
    ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
    ("W" "Score this file by section windows (attendance)" org-canvas-submissions-score-by-window)
+   ("K" "Check this file's comments (missing, flagged, shared)" org-canvas-submissions-check-comments)
+   ("H" "Export this file's comments as JSON" org-canvas-submissions-export-comments)
+   ("I" "Import comment text from JSON" org-canvas-submissions-import-comments)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)
    ("C" "Push only edited and deleted sent comments" org-canvas-push-submission-comment-edits

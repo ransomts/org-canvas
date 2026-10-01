@@ -94,6 +94,7 @@
 (require 'org-canvas-peer-reviews)
 (require 'org-canvas-submissions-status)
 (require 'org-canvas-submissions-window)
+(require 'org-canvas-submissions-comments)
 (require 'org-canvas-messages)
 (require 'org-canvas-setup)
 
