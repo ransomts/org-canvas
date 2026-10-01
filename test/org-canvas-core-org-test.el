@@ -523,6 +523,50 @@
               (expect (cdr result) :to-equal 0)))
         (delete-file temp-file)))))
 
+(describe "org-canvas--collect-subtree-markers"
+  (it "collects every heading of the subtree, in order, nested included"
+    (with-temp-org-buffer "* Parent
+** First
+*** Nested
+** Second
+* Next top level
+"
+      (search-forward "Parent")
+      (org-back-to-heading t)
+      (expect (mapcar (lambda (m)
+                        (with-current-buffer (marker-buffer m)
+                          (save-excursion
+                            (goto-char m)
+                            (org-get-heading t t t t))))
+                      (org-canvas--collect-subtree-markers (point-marker)))
+              :to-equal '("First" "Nested" "Second"))))
+
+  (it "keeps only the headings PREDICATE accepts"
+    (with-temp-org-buffer "* Parent
+** First
+*** Nested
+** Second
+"
+      (search-forward "Parent")
+      (org-back-to-heading t)
+      (expect (mapcar (lambda (m)
+                        (with-current-buffer (marker-buffer m)
+                          (save-excursion
+                            (goto-char m)
+                            (org-get-heading t t t t))))
+                      (org-canvas--collect-subtree-markers
+                       (point-marker)
+                       (lambda () (= (org-outline-level) 2))))
+              :to-equal '("First" "Second"))))
+
+  (it "collects nothing for a parent with no children"
+    (with-temp-org-buffer "* Parent
+Body text only.
+"
+      (search-forward "Parent")
+      (org-back-to-heading t)
+      (expect (org-canvas--collect-subtree-markers (point-marker)) :to-be nil))))
+
 ;;;; 21. For Each Entry Error Handling
 
 (describe "org-canvas--for-each-entry error details"

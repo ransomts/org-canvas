@@ -934,46 +934,30 @@ Unwraps the `quiz_groups' response wrapper."
   "Save question group from DATA with CANVAS_ID from RESPONSE."
   (org-canvas--finalize-item data response :title-key :name))
 
+(defun org-canvas--quiz-group-heading-p ()
+  "Return non-nil when the heading at point is a question group.
+A level-2 heading under the quiz carrying TYPE: group."
+  (and (= (org-outline-level) 2)
+       (equal (org-entry-get (point) "TYPE") "group")))
+
 (defun org-canvas--sync-quiz-groups (quiz-marker quiz-canvas-id)
   "Sync all question groups under the quiz at QUIZ-MARKER.
 QUIZ-CANVAS-ID is the Canvas ID of the quiz.
 Returns a cons (SUCCESS . FAIL) count."
-  (let ((group-markers nil)
-	(group-success 0))
-    ;; Collect all group markers (level-2 headings with TYPE=group)
-    (with-current-buffer (marker-buffer quiz-marker)
-      (save-excursion
-	(goto-char (marker-position quiz-marker))
-	(let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-	  (while (and (outline-next-heading)
-		      (< (point) subtree-end))
-	    (when (and (= (org-outline-level) 2)
-		       (equal (org-entry-get (point) "TYPE") "group"))
-	      (push (point-marker) group-markers)))))
-      (setq group-markers (nreverse group-markers)))
-
-    ;; Sync each group
-    (dolist (g-marker group-markers)
-      (with-current-buffer (marker-buffer g-marker)
-	(save-excursion
-	  (goto-char (marker-position g-marker))
-	  (condition-case err
-	      (let* ((data (org-canvas--question-group-parse-entry quiz-canvas-id))
-		     (payload (org-canvas--question-group-build-payload data))
-		     (response (org-canvas--question-group-push-to-api data payload)))
-		(org-canvas--question-group-finalize data response)
-		(setq group-success (1+ group-success)))
-	    (error
-	     (org-canvas--log-error org-canvas--logger "[Group] Failed: %s"
-	       (error-message-string err)))))))
-
-    ;; Release markers to avoid memory leaks
-    (dolist (m group-markers) (set-marker m nil))
-
-    (when (> (length group-markers) 0)
+  (let* ((label "[Group]")
+	 (counts (org-canvas--sync-children
+		  (org-canvas--collect-subtree-markers
+		   quiz-marker #'org-canvas--quiz-group-heading-p)
+		  label
+		  (lambda ()
+		    (let* ((data (org-canvas--question-group-parse-entry quiz-canvas-id))
+			   (payload (org-canvas--question-group-build-payload data))
+			   (response (org-canvas--question-group-push-to-api data payload)))
+		      (org-canvas--question-group-finalize data response))))))
+    (when (> (plist-get counts :total) 0)
       (org-canvas--log-info org-canvas--logger "[Groups] %d/%d synced"
-	group-success (length group-markers)))
-    (cons group-success (- (length group-markers) group-success))))
+	(plist-get counts :success) (plist-get counts :total)))
+    (cons (plist-get counts :success) (plist-get counts :fail))))
 
 ;;;; Main Sync Function
 
@@ -1028,48 +1012,26 @@ holds, when one is unclaimed, instead of creating a second (issue
 #179).  Questions at level 3 under a `TYPE: group' heading are pushed
 into that group, whose id the group sync stamped a moment earlier
 \(issue #243)."
-  (let ((question-markers nil)
-	(question-success 0)
-	remote claimed)
-    ;; First, collect all question markers (level-2 headings under this quiz)
-    (with-current-buffer (marker-buffer quiz-marker)
-      (save-excursion
-	(goto-char (marker-position quiz-marker))
-	(let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-	  (while (and (outline-next-heading)
-		      (< (point) subtree-end))
-	    (when (org-canvas--quiz-question-heading-p)
-	      (push (point-marker) question-markers)))))
-      (setq question-markers (nreverse question-markers)
-            claimed (org-canvas--quiz-claimed-ids question-markers)
-            remote (org-canvas--quiz-remote-questions quiz-canvas-id question-markers)))
-
-    ;; Now sync each question using the stable markers
-    (dolist (q-marker question-markers)
-      (with-current-buffer (marker-buffer q-marker)
-	(save-excursion
-	  (goto-char (marker-position q-marker))
-	  (condition-case err
-	      (let* ((data (org-canvas--question-parse-entry quiz-canvas-id))
-		     (adopted (org-canvas--adopt-child-twin
-			       data remote
-			       (lambda (item) (org-canvas--question-twin-p data item))
-			       claimed "[Question]"))
-		     (payload (org-canvas--question-build-payload data))
-		     (response (org-canvas--question-push-to-api data payload)))
-		(when adopted (push adopted claimed))
-		(org-canvas--question-finalize data response)
-		(setq question-success (1+ question-success)))
-	    (error
-	     (org-canvas--log-error org-canvas--logger "[Question] Failed: %s"
-	       (error-message-string err)))))))
-
-    ;; Release markers to avoid memory leaks
-    (dolist (m question-markers) (set-marker m nil))
-
+  (let* ((label "[Question]")
+	 (question-markers (org-canvas--collect-subtree-markers
+			    quiz-marker #'org-canvas--quiz-question-heading-p))
+	 (claimed (org-canvas--quiz-claimed-ids question-markers))
+	 (remote (org-canvas--quiz-remote-questions quiz-canvas-id question-markers))
+	 (counts (org-canvas--sync-children
+		  question-markers label
+		  (lambda ()
+		    (let* ((data (org-canvas--question-parse-entry quiz-canvas-id))
+			   (adopted (org-canvas--adopt-child-twin
+				     data remote
+				     (lambda (item) (org-canvas--question-twin-p data item))
+				     claimed label))
+			   (payload (org-canvas--question-build-payload data))
+			   (response (org-canvas--question-push-to-api data payload)))
+		      (when adopted (push adopted claimed))
+		      (org-canvas--question-finalize data response))))))
     (org-canvas--log-info org-canvas--logger "[Questions] %d/%d synced"
-      question-success (length question-markers))
-    (cons question-success (- (length question-markers) question-success))))
+      (plist-get counts :success) (plist-get counts :total))
+    (cons (plist-get counts :success) (plist-get counts :fail))))
 
 (defun org-canvas--quiz-questions-digest (data)
   "Digest the question and question-group subtrees of the quiz in DATA.

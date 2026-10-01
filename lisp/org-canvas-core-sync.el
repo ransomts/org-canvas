@@ -1794,6 +1794,34 @@ adopted id as a string, or nil."
           (plist-put data :canvas-id id)
           id)))))
 
+(defun org-canvas--sync-children (markers label item-fn)
+  "Run ITEM-FN at each heading at MARKERS and count the outcomes.
+ITEM-FN is called with point on the heading, in the heading's own
+buffer, for the parse/adopt/build/push/finalize of one child; the
+symbol `skip' counts the child as skipped rather than synced, and
+anything else as a success.  An error ITEM-FN signals is logged as one
+LABEL line — LABEL is the bracketed tag the module's other child log
+lines carry, as `org-canvas--adopt-child-twin' takes it — and counted
+as a failure, and the loop moves on.  MARKERS are released afterwards.
+Returns a plist (:success N :skip N :fail N :total N); the caller
+owns how the counts are reported, since the modules disagree about
+denominator and wording."
+  (let ((success 0) (skip 0) (fail 0))
+    (dolist (m markers)
+      (with-current-buffer (marker-buffer m)
+        (save-excursion
+          (goto-char (marker-position m))
+          (condition-case err
+              (if (eq (funcall item-fn) 'skip)
+                  (setq skip (1+ skip))
+                (setq success (1+ success)))
+            (error
+             (setq fail (1+ fail))
+             (org-canvas--log-error org-canvas--logger
+               "%s Failed: %s" label (error-message-string err)))))))
+    (dolist (m markers) (set-marker m nil))
+    (list :success success :skip skip :fail fail :total (length markers))))
+
 (defun org-canvas--push-remote-items-titled (title find-fn &optional ctx)
   "Return the remote items carrying TITLE, or nil.
 Inside a sync CTX's :remote-titles is the snapshot's title index, read
