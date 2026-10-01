@@ -36,7 +36,22 @@
 
   (it "defaults to Page for unknown files"
     (expect (org-canvas--module-item-type-from-file "unknown.org")
-            :to-equal "Page")))
+            :to-equal "Page"))
+
+  (it "follows a course that renames its files (issue #435)"
+    (let ((org-canvas-quizzes-file "/somewhere/exams.org")
+          (org-canvas-files-file "/somewhere/course-files.org"))
+      (expect (org-canvas--module-item-type-from-file "exams.org")
+              :to-equal "Quiz")
+      (expect (org-canvas--module-item-type-from-file "course-files.org")
+              :to-equal "File")
+      ;; The default names no longer answer for a renamed course, and a
+      ;; same-stemmed file in another directory never matched another
+      ;; type's basename.
+      (expect (org-canvas--module-item-type-from-file "quizzes.org")
+              :to-equal "Page")
+      (expect (org-canvas--module-item-type-from-file "sub/exams.org")
+              :to-equal "Quiz"))))
 
 (describe "org-canvas--module-parse-prerequisite-ids"
   (it "parses comma-separated IDs"
@@ -1469,6 +1484,30 @@
             (expect (org-canvas--module-item-push-to-api 100 data payload)
                     :to-throw 'error)))))))
 
+(describe "org-canvas--module-item-live-p"
+  (it "says so with one warning when the read fails (issue #435)"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (org-canvas--signal 'org-canvas-api-error "401")))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (expect (org-canvas--module-item-live-p 10 55) :to-be nil)
+        (expect (length logged) :to-equal 1)
+        (expect (car logged)
+                :to-match "Could not read module 10's item 55"))))
+
+  (it "answers live for an item the read returns"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) '((id . 55) (title . "There")))))
+        (expect (org-canvas--module-item-live-p 10 55) :to-be-truthy))))
+
+  (it "answers not live for an item the read does not return"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) '((id . 56) (title . "Other")))))
+        (expect (org-canvas--module-item-live-p 10 55) :to-be nil)))))
+
 ;;;; Module Resolve Link Edge Cases
 
 (describe "org-canvas--module-resolve-link edge cases"
@@ -2095,10 +2134,14 @@
 :CANVAS_URL: welcome-page
 :END:
 "))
-            (let ((org-canvas-directory temp-dir))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
               (let ((link (org-canvas--module-resolve-item-link
                            "Page" "welcome-page" "Welcome")))
-                (expect link :to-match "Welcome"))))
+                (expect link :to-equal
+                        "[[file:pages.org::*Welcome][Welcome]]"))))
         (let ((buf (find-buffer-visiting pages-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
@@ -2114,16 +2157,79 @@
 :CANVAS_ID: 42
 :END:
 "))
-            (let ((org-canvas-directory temp-dir))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-assignments-file assign-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
               (let ((link (org-canvas--module-resolve-item-link
                            "Assignment" 42 "Homework 1")))
-                (expect link :to-match "Homework 1"))))
+                (expect link :to-equal
+                        "[[file:assignments.org::*Homework 1][Homework 1]]"))))
         (let ((buf (find-buffer-visiting assign-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "resolves Discussion by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (disc-file (expand-file-name "discussions.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file disc-file
+              (insert "* Week 1 Forum\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-discussions-file disc-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-item-link
+                       "Discussion" 7 "Week 1 Forum")
+                      :to-equal
+                      "[[file:discussions.org::*Week 1 Forum][Week 1 Forum]]")))
+        (let ((buf (find-buffer-visiting disc-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves Quiz by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file quiz-file
+              (insert "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-quizzes-file quiz-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-item-link
+                       "Quiz" 9 "Quiz 1")
+                      :to-equal "[[file:quizzes.org::*Quiz 1][Quiz 1]]")))
+        (let ((buf (find-buffer-visiting quiz-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves a File-typed org link through the files var"
+    ;; `org-canvas--module-resolve-item-link' routes File items to the
+    ;; direct file link; the org-link resolver keeps its own File arm for
+    ;; anything that reaches it typed that way.
+    (let* ((temp-dir (make-temp-file "mod-link-file-arm" t))
+           (files-file (expand-file-name "course-files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-file
+              (insert "* Reading\n:PROPERTIES:\n:CANVAS_ID: 3\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-files-file files-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-org-item-link
+                       "File" 3 "Reading")
+                      :to-equal "[[file:course-files.org::*Reading][Reading]]")))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "returns title when file not found"
-    (let ((org-canvas-directory "/nonexistent-dir/"))
+    (let ((org-canvas-directory "/nonexistent-dir/")
+          (org-canvas-pages-file "/nonexistent-dir/pages.org"))
       (expect (org-canvas--module-resolve-item-link "Page" 999 "My Page")
               :to-equal "My Page")))
 
@@ -2142,7 +2248,10 @@
           (progn
             (with-temp-file pages-file
               (insert "* My Page\n:PROPERTIES:\n:CANVAS_URL: my-page\n:END:\n"))
-            (let ((org-canvas-directory temp-dir))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
               (let ((link (org-canvas--module-resolve-item-link
                            "Page" "my-page" nil)))
                 ;; When title is nil, (or title heading-name) falls back to heading-name
@@ -2159,11 +2268,32 @@
           (progn
             (with-temp-file pages-file
               (insert "* Some Other Page\n:PROPERTIES:\n:CANVAS_URL: other\n:END:\n"))
-            (let ((org-canvas-directory temp-dir))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
               (let ((link (org-canvas--module-resolve-item-link
                            "Page" "nonexistent-id" nil)))
                 ;; heading-name is nil and title is nil → "Untitled"
                 (expect link :to-equal "Untitled"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves through a renamed pages file (issue #435)"
+    (let* ((temp-dir (make-temp-file "mod-link-renamed" t))
+           (pages-file (expand-file-name "site-pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Welcome\n:PROPERTIES:\n:CANVAS_URL: welcome-page\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-item-link
+                       "Page" "welcome-page" "Welcome")
+                      :to-equal "[[file:site-pages.org::*Welcome][Welcome]]")))
         (let ((buf (find-buffer-visiting pages-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
@@ -2367,8 +2497,7 @@
             (with-temp-file files-path
               (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
                       ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
-            (cl-letf (((symbol-function 'org-canvas--path)
-                       (lambda (f) (if (equal f "files.org") files-path f))))
+            (let ((org-canvas-files-file files-path))
               (let* ((link (org-canvas--module-resolve-item-link
                             "File" 42 "foo.pdf")))
                 (expect link :to-equal "[[file:content/foo.pdf][foo.pdf]]")
@@ -2403,8 +2532,7 @@
                       "** books\n"
                       "*** [[file:content/readings/books/x.pdf][x.pdf]]\n"
                       ":PROPERTIES:\n:CANVAS_ID: 77\n:END:\n"))
-            (cl-letf (((symbol-function 'org-canvas--path)
-                       (lambda (f) (if (equal f "files.org") files-path f))))
+            (let ((org-canvas-files-file files-path))
               (expect (org-canvas--module-resolve-item-link "File" 77 "x.pdf")
                       :to-equal "[[file:content/readings/books/x.pdf][x.pdf]]")))
         (delete-directory tmpdir t))))
@@ -2415,8 +2543,7 @@
       (unwind-protect
           (progn
             (with-temp-file files-path (insert ""))
-            (cl-letf (((symbol-function 'org-canvas--path)
-                       (lambda (f) (if (equal f "files.org") files-path f))))
+            (let ((org-canvas-files-file files-path))
               (expect (org-canvas--module-resolve-item-link "File" 999 "missing.pdf")
                       :to-equal "missing.pdf")))
         (delete-directory tmpdir t)))))
@@ -5307,18 +5434,20 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
 
 (describe "org-canvas--module-resolve-file-item-link fallbacks"
   (it "returns the title, or Untitled, when files.org is missing"
-    (let ((org-canvas-directory (make-temp-file "modules-nofiles-" t)))
+    (let* ((tmpdir (make-temp-file "modules-nofiles-" t))
+           (org-canvas-files-file (expand-file-name "files.org" tmpdir)))
       (unwind-protect
           (progn
             (expect (org-canvas--module-resolve-file-item-link 5 "Syllabus")
                     :to-equal "Syllabus")
             (expect (org-canvas--module-resolve-file-item-link 5 nil)
                     :to-equal "Untitled"))
-        (delete-directory org-canvas-directory t))))
+        (delete-directory tmpdir t))))
 
   (it "links the heading's path, naming it by the link description when the item has no title"
-    (let* ((org-canvas-directory (make-temp-file "modules-files-" t))
-           (files-org (expand-file-name "files.org" org-canvas-directory)))
+    (let* ((tmpdir (make-temp-file "modules-files-" t))
+           (files-org (expand-file-name "files.org" tmpdir))
+           (org-canvas-files-file files-org))
       (unwind-protect
           (progn
             (with-temp-file files-org
@@ -5330,7 +5459,7 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
                     :to-equal "[[file:content/a.pdf][A.pdf]]"))
         (let ((buf (find-buffer-visiting files-org)))
           (when buf (kill-buffer buf)))
-        (delete-directory org-canvas-directory t)))))
+        (delete-directory tmpdir t)))))
 
 (describe "org-canvas--module-pull-insert-content-item (issue #199)"
   (defmacro test-199--in-module (&rest body)
@@ -5362,7 +5491,9 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
 
   (it "links a Page item to the pages.org heading carrying its CANVAS_URL"
     (let* ((dir (make-temp-file "pull-page-" t))
-           (org-canvas-directory dir))
+           (org-canvas-directory dir)
+           (org-canvas-pages-file (expand-file-name "pages.org" dir))
+           (org-canvas-modules-file (expand-file-name "modules.org" dir)))
       (unwind-protect
           (progn
             (with-temp-file (expand-file-name "pages.org" dir)

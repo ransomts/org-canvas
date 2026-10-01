@@ -265,7 +265,7 @@ Return the folder object."
       (org-canvas-api-request 'GET (format "%s/api/v1/folders/%s"
                                            org-canvas-base-url parent-folder-id))
     ;; Try to resolve the path, create if not found
-    (condition-case _err
+    (condition-case err
         (let* ((encoded-path (url-hexify-string folder-path))
                (endpoint (org-canvas-api-course-endpoint "folders/by_path/%s" encoded-path))
                (folders (org-canvas-api-request 'GET endpoint)))
@@ -274,8 +274,15 @@ Return the folder object."
               (elt folders (1- (length folders)))
             (org-canvas--file-create-folder folder-path parent-folder-id)))
       (error
-       ;; Folder doesn't exist, create it
-       (org-canvas--file-create-folder folder-path parent-folder-id)))))
+       ;; Only a 404 means the path does not exist.  Anything else —
+       ;; a 401 above all — used to masquerade as a missing folder and
+       ;; fire a create (#435)
+       (if (org-canvas--404-error-p err)
+           (org-canvas--file-create-folder folder-path parent-folder-id)
+         (org-canvas--log-error org-canvas--logger
+           "[Files] Could not read the folder path %s (%s); creating nothing"
+           folder-path (error-message-string err))
+         (signal (car err) (cdr err)))))))
 
 (defun org-canvas--file-create-folder (folder-path parent-folder-id)
   "Create a folder at FOLDER-PATH under PARENT-FOLDER-ID."

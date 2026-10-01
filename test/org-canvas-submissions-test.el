@@ -1023,7 +1023,26 @@
                  (lambda (url _path &rest _) (setq copied-url url))))
         (org-canvas--submissions-download-file
          "https://example.com/download?foo=bar" "/tmp" "test.pdf"))
-      (expect copied-url :to-match "&access_token=test-token"))))
+      (expect copied-url :to-match "&access_token=test-token")))
+
+  (it "re-signals a failure without the token (issue #435)"
+    ;; url-copy-file puts the whole URL, token included, into the error
+    ;; data; a redaction-shaped leak straight into the echo area.
+    (let ((org-canvas-api-token "secret-token-value"))
+      (cl-letf (((symbol-function 'url-copy-file)
+                 (lambda (&rest _)
+                   ;; A non-string datum rides along untouched
+                   (signal 'file-missing
+                           (list "Opening URL" 404
+                                 "https://example.com/download?access_token=secret-token-value")))))
+        (let ((err (condition-case e
+                       (progn (org-canvas--submissions-download-file
+                               "https://example.com/download" "/tmp" "test.pdf")
+                              nil)
+                     (error e))))
+          (expect (cdr err) :to-equal
+                  '("Opening URL" 404
+                    "https://example.com/download?access_token=***MASKED***")))))))
 
 ;;;; Refresh Error Paths
 
@@ -2781,7 +2800,17 @@ submission.  Every call is pushed onto `test-entry--calls'."
         (expect-api-called 'GET "assignments/1001"))))
   (it "is nil when the request fails"
     (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) (error "down"))))
-      (expect (org-canvas--submissions-fetch-assignment "1001") :to-be nil))))
+      (expect (org-canvas--submissions-fetch-assignment "1001") :to-be nil)))
+
+  (it "says so with one warning when the request fails (issue #435)"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "down")))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (expect (org-canvas--submissions-fetch-assignment "1001") :to-be nil)
+        (expect (length logged) :to-equal 1)
+        (expect (car logged) :to-match "Could not read assignment 1001")))))
 
 ;;;; Drafted Comments
 
