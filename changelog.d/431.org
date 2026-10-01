@@ -1,0 +1,12 @@
+* Fixed
+- #431 A renamed column keeps its grading file.  The file is found by
+  the =CANVAS_ASSIGNMENT_ID= in its header first and by name second,
+  in the pull, the grading queue, =org-canvas-open-submissions= (which
+  now takes an assignment id too), the section-window scoring and the
+  push, so the queue no longer calls a renamed column =pull= and a
+  pull no longer starts a second, empty file beside the one holding
+  the typed scores.  The pull renames the old file to the new name,
+  moving its =files/<assignment>/= attachments and rewriting its links,
+  =#+TITLE= and =CANVAS_ASSIGNMENT_NAME=; a buffer visiting it
+  follows, and one with unsaved changes stops the pull with a message.
+  Two files claiming one assignment are named, and neither is picked.

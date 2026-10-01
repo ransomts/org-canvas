@@ -2192,6 +2192,185 @@ submission.  Every call is pushed onto `test-entry--calls'."
                       :to-equal "1001"))
           (kill-buffer plain))))))
 
+(defun test-byid--write (dir base id name &optional body)
+  "Write grading file BASE.org into DIR for assignment ID named NAME.
+A nil ID writes a header with no CANVAS_ASSIGNMENT_ID.  BODY follows
+the header.  Return the path."
+  (let ((file (expand-file-name (concat base ".org") dir)))
+    (with-temp-file file
+      (insert (format "#+TITLE: Submissions: %s\n" name)
+              (if id (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n" id) "")
+              (format "#+PROPERTY: CANVAS_ASSIGNMENT_NAME %s\n\n" name)
+              (or body "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 1\n:END:\n")))
+    file))
+
+(defun test-byid--org-files (dir)
+  "Return the names of the .org files in DIR."
+  (directory-files dir nil "\\.org\\'"))
+
+(defmacro test-byid--with-info-log (&rest body)
+  "Run BODY with `test-byid--infos' collecting the info lines logged."
+  (declare (indent 0))
+  `(let ((test-byid--infos nil))
+     (cl-letf (((symbol-function 'org-canvas--log-info)
+                (lambda (_logger fmt &rest args)
+                  (push (apply #'format fmt args) test-byid--infos))))
+       ,@body)))
+
+(defvar test-byid--infos nil "Info lines `test-byid--with-info-log' collected.")
+
+(describe "A column's grading file is found by its id (issue #431)"
+  (it "renames the file of a renamed column, its attachments and its header"
+    (with-submissions-dir
+      (let* ((old (test-byid--write
+                   dir "Attendance_03" 77 "Attendance 03"
+                   (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n"
+                           ":SCORE: 1\n:END:\n"
+                           "- [[file:files/Attendance_03/Adams__Alice/a.pdf][a.pdf]]\n")))
+             (files (expand-file-name "files/Attendance_03/Adams__Alice/" dir))
+             (target (expand-file-name "Attendance_03__Wed_Sep_30.org" dir)))
+        (make-directory files t)
+        (with-temp-file (expand-file-name "a.pdf" files) (insert "pdf"))
+        (test-byid--with-info-log
+          (expect (org-canvas--submissions-grading-file-for
+                   "Attendance 03: Wed Sep 30" "77")
+                  :to-equal target)
+          (expect (cl-count-if (lambda (line) (string-match-p "Renamed" line))
+                               test-byid--infos)
+                  :to-equal 1)
+          (expect (cl-find-if (lambda (line) (string-match-p "Renamed" line))
+                              test-byid--infos)
+                  :to-match "Renamed grading file Attendance_03\\.org to Attendance_03__Wed_Sep_30\\.org"))
+        (expect (file-exists-p old) :to-be nil)
+        (expect (test-byid--org-files dir)
+                :to-equal '("Attendance_03__Wed_Sep_30.org"))
+        (expect (file-exists-p
+                 (expand-file-name
+                  "files/Attendance_03__Wed_Sep_30/Adams__Alice/a.pdf" dir))
+                :to-be-truthy)
+        (expect (file-exists-p (expand-file-name "files/Attendance_03" dir))
+                :to-be nil)
+        (let ((text (with-temp-buffer (insert-file-contents target) (buffer-string))))
+          (expect text :to-match "^#\\+TITLE: Submissions: Attendance 03: Wed Sep 30$")
+          (expect text :to-match
+                  "^#\\+PROPERTY: CANVAS_ASSIGNMENT_NAME Attendance 03: Wed Sep 30$")
+          (expect text :to-match "^#\\+PROPERTY: CANVAS_ASSIGNMENT_ID 77$")
+          (expect text :to-match "^:SCORE: 1$")
+          (expect text :to-match
+                  "\\[\\[file:files/Attendance_03__Wed_Sep_30/Adams__Alice/a\\.pdf\\]")))))
+
+  (it "pulls a renamed column into its old file, scores kept, and writes no second file"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (test-byid--write
+         dir "Homework_1" 1001 "Homework 1"
+         "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (test-entry--canvas '((id . 1001) (name . "Homework 1 (revised)")))))
+          (with-current-buffer (org-canvas-pull-submissions "1001")
+            (expect buffer-file-name :to-match "Homework_1__revised_\\.org\\'")
+            (expect org-canvas-submissions--assignment-name
+                    :to-equal "Homework 1 (revised)")
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "SCORE") :to-equal "95")))
+        (expect (test-byid--org-files dir)
+                :to-equal '("Homework_1__revised_.org")))))
+
+  (it "moves a buffer visiting the old file along with it"
+    (with-submissions-dir
+      (let* ((old (test-byid--write dir "HW" 1001 "HW"))
+             (buf (org-canvas--find-file-noselect old)))
+        (with-current-buffer buf
+          (setq-local org-canvas-submissions--assignment-name "HW"))
+        (org-canvas--submissions-grading-file-for "HW 2" 1001)
+        (expect (buffer-live-p buf) :to-be-truthy)
+        (expect (buffer-file-name buf)
+                :to-equal (expand-file-name "HW_2.org" dir))
+        (expect (buffer-modified-p buf) :to-be nil)
+        (expect (buffer-local-value 'org-canvas-submissions--assignment-name buf)
+                :to-equal "HW 2"))))
+
+  (it "refuses to rename a file whose buffer holds unsaved changes"
+    (with-submissions-dir
+      (let* ((old (test-byid--write dir "HW" 1001 "HW"))
+             (buf (org-canvas--find-file-noselect old)))
+        (with-current-buffer buf
+          (goto-char (point-max))
+          (insert "typed\n"))
+        (expect (org-canvas--submissions-grading-file-for "HW 2" 1001)
+                :to-throw 'user-error)
+        (expect (file-exists-p old) :to-be-truthy)
+        (expect (test-byid--org-files dir) :to-equal '("HW.org"))
+        (with-current-buffer buf (set-buffer-modified-p nil)))))
+
+  (it "refuses to rename over a file that already has the new name"
+    (with-submissions-dir
+      (test-byid--write dir "HW" 1001 "HW")
+      (test-byid--write dir "HW_2" nil "HW 2")
+      (expect (org-canvas--submissions-grading-file-for "HW 2" 1001)
+              :to-throw 'user-error)
+      (expect (test-byid--org-files dir) :to-equal '("HW.org" "HW_2.org"))))
+
+  (it "leaves an attachment directory where it is when the new one exists"
+    (with-submissions-dir
+      (test-byid--write dir "HW" 1001 "HW")
+      (make-directory (expand-file-name "files/HW/A/" dir) t)
+      (make-directory (expand-file-name "files/HW_2/" dir) t)
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (org-canvas--submissions-grading-file-for "HW 2" 1001))
+        (expect (length warnings) :to-equal 1))
+      (expect (file-directory-p (expand-file-name "files/HW/A/" dir)) :to-be-truthy)
+      (expect (test-byid--org-files dir) :to-equal '("HW_2.org"))))
+
+  (it "names both files when two claim one id, and writes nothing"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (test-byid--write dir "Attendance_01" 1001 "Attendance 01")
+        (test-byid--write dir "Attendance_01__Fri_Sep_18" 1001 "Attendance 01: Fri Sep 18")
+        (let ((message nil))
+          (condition-case err
+              (org-canvas--submissions-grading-file-for "Attendance 01: Fri" 1001)
+            (user-error (setq message (error-message-string err))))
+          (expect message :to-match "Attendance_01\\.org and Attendance_01__Fri_Sep_18\\.org")
+          (expect message :to-match "assignment 1001"))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (test-entry--canvas '((id . 1001) (name . "Attendance 01: Fri")))))
+          (expect (org-canvas-pull-submissions "1001") :to-throw 'user-error))
+        (expect (org-canvas-open-submissions "1001") :to-throw 'user-error)
+        (expect (test-byid--org-files dir)
+                :to-equal '("Attendance_01.org" "Attendance_01__Fri_Sep_18.org")))))
+
+  (it "still finds a file without an id header by the column's name"
+    (with-submissions-dir
+      (let ((legacy (test-byid--write dir "HW_1" nil "HW 1")))
+        (expect (org-canvas--submissions-grading-file-for "HW 1" 1001)
+                :to-equal legacy)
+        (expect (org-canvas--submissions-grading-file-path "HW 1") :to-equal legacy)
+        (expect (test-byid--org-files dir) :to-equal '("HW_1.org")))))
+
+  (it "opens a file by the id in its header, whatever it is called"
+    (with-submissions-dir
+      (let ((file (test-byid--write dir "Old_name" 1001 "Old name")))
+        (expect (org-canvas--submissions-grading-file-path "1001") :to-equal file)
+        (expect (org-canvas--submissions-grading-file-path 1001) :to-equal file)
+        (expect (buffer-file-name (org-canvas-open-submissions 1001)) :to-equal file)
+        (expect (org-canvas--submissions-grading-file-path 1002) :to-throw 'user-error))))
+
+  (it "passes over lock files when reading the headers"
+    (with-submissions-dir
+      (let ((file (test-byid--write dir "HW" 1001 "HW")))
+        (make-symbolic-link "user@host.1234:1" (expand-file-name ".#HW.org" dir))
+        (expect (org-canvas--submissions-files-for-id 1001) :to-equal (list file)))))
+
+  (it "passes over a .org it cannot read"
+    (with-submissions-dir
+      (let ((file (test-byid--write dir "HW" 1001 "HW")))
+        (make-directory (expand-file-name "archive.org" dir))
+        (expect (org-canvas--submissions-files-for-id 1001) :to-equal (list file))))))
+
 (describe "org-canvas-submissions-refresh-file"
   (it "visits, re-pulls and returns a buffer the grading commands can run in"
     (with-org-canvas-test-config
@@ -4843,7 +5022,8 @@ Progress by default).  No prompt may be asked.  Return a plist:
   (it "refuses an id when there is no submissions directory"
     (let ((org-canvas-submissions-directory
            (expand-file-name "no-such-dir" temporary-file-directory)))
-      (expect (org-canvas--submissions-grading-file-for-id 1001) :to-be nil))))
+      (expect (org-canvas--submissions-files-for-id 1001) :to-be nil)
+      (expect (org-canvas--submissions-push-target 1001) :to-throw 'user-error))))
 
 (describe "org-canvas--submissions-post-assignment"
   (it "posts, or under a dry run sends nothing and answers nil"
