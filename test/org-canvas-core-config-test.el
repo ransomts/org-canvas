@@ -251,6 +251,69 @@ ran alone (issue #260)."
                       :to-match "\\`preexisting\n\\[.*\\] \\[test\\] \\[INFO\\] hello world\n\\'")))
         (when (get-buffer buffer-name) (kill-buffer buffer-name))))))
 
+(describe "a log handler that fails (issue #443)"
+  (it "returns normally when the file write signals, noting it once"
+    (let ((logger (org-canvas--logger-make :name "test" :handlers '(file)
+                                           :file "/nonexistent/org-canvas.log"))
+          (org-canvas--log-failed-handlers nil)
+          (said nil))
+      (cl-letf (((symbol-function 'write-region)
+                 (lambda (&rest _)
+                   (signal 'file-locked '("org-canvas.log" "user@host (pid 1)"))))
+                ((symbol-function 'make-directory) #'ignore)
+                ((symbol-function 'org-canvas--user-message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+        (expect (org-canvas--log-info logger "first") :not :to-throw)
+        (expect (org-canvas--log-warning logger "second") :not :to-throw))
+      (expect (length said) :to-equal 1)
+      (expect (car said) :to-match "the file log handler failed")
+      (expect org-canvas--log-failed-handlers :to-equal '(file))))
+
+  (it "keeps writing the buffer when the file handler fails"
+    (let* ((buffer-name "*org-canvas-log-test-443*")
+           (logger (org-canvas--logger-make :name "test" :handlers '(buffer file)
+                                            :buffer buffer-name
+                                            :file "/nonexistent/org-canvas.log"))
+           (org-canvas--log-failed-handlers nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--log-write-file)
+                     (lambda (&rest _) (error "Disk full")))
+                    ((symbol-function 'org-canvas--user-message) #'ignore))
+            (org-canvas--log-error logger "kept")
+            (with-current-buffer buffer-name
+              (expect (buffer-string) :to-match "\\[ERROR\\] kept")))
+        (when (get-buffer buffer-name) (kill-buffer buffer-name)))))
+
+  (it "notes a failure again once the file is set anew"
+    (let ((org-canvas--log-failed-handlers '(file))
+          (logger (org-canvas--logger-make :name "test")))
+      (org-canvas--logger-set-file logger "/tmp/x.log")
+      (expect org-canvas--log-failed-handlers :to-be nil))))
+
+(describe "org-canvas--log-write-file (issue #443)"
+  (it "appends without visiting the file or taking a lock"
+    (let* ((dir (make-temp-file "org-canvas-log-" t))
+           (file (expand-file-name "org-canvas.log" dir))
+           (logger (org-canvas--logger-make :name "test" :handlers '(file)
+                                            :file file))
+           (locking 'unseen)
+           (real (symbol-function 'write-region)))
+      (unwind-protect
+          (progn
+            (cl-letf (((symbol-function 'write-region)
+                       (lambda (&rest args)
+                         (setq locking create-lockfiles)
+                         (apply real args))))
+              (org-canvas--log-info logger "one")
+              (org-canvas--log-info logger "two"))
+            (expect locking :to-be nil)
+            (expect (directory-files dir nil "\\`\\.#") :to-be nil)
+            (expect (find-buffer-visiting file) :to-be nil)
+            (with-temp-buffer
+              (insert-file-contents file)
+              (expect (buffer-string) :to-match "one\n.*two\n\\'")))
+        (delete-directory dir t)))))
+
 (describe "org-canvas--log-trace"
   (it "dispatches when the logger level is trace"
     (let* ((buffer-name "*org-canvas-log-test-trace*")

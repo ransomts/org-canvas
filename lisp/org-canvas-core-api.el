@@ -588,6 +588,22 @@ in [FAILED] lines stays readable."
         err-msg full-url body)
       (signal 'org-canvas-api-error (list err-msg))))))
 
+(defun org-canvas--api-failure-p (err)
+  "Return non-nil when ERR, a caught error, is a failed Canvas request.
+ERR is a `condition-case' value.  A failed request is an
+`org-canvas-api-error' or a child of it (a timeout, a 403 through
+`org-canvas-permission-error''s second parent): Canvas refused the
+request or did not answer it.  An `org-canvas-credentials-error' counts
+too, since a 401 is Canvas's answer, signalled apart from the api
+errors only so that an expired token stops a run.  Any other error
+happened in Emacs — a log write meeting a lock, a buffer edit — and is
+not Canvas's doing, so a caller counting outcomes words it apart
+\(issue #443)."
+  (let ((conditions (and (consp err) (get (car err) 'error-conditions))))
+    (and (or (memq 'org-canvas-api-error conditions)
+             (memq 'org-canvas-credentials-error conditions))
+         t)))
+
 (defun org-canvas--api-not-found-p (err)
   "Return non-nil when ERR, a `condition-case' value, is Canvas's HTTP 404.
 Read from the message `org-canvas--api-handle-plz-error' signals, which

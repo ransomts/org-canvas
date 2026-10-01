@@ -322,7 +322,8 @@ A --dry-run sends nothing.  Return 1 if any change was not sent."
          (results (mapcar #'org-canvas-push-submission-comment-edits
                           (plist-get parsed :args))))
     (if (cl-every (lambda (r) (and r (zerop (+ (plist-get r :refused)
-                                               (plist-get r :failed)))))
+                                               (plist-get r :failed)
+                                               (or (plist-get r :errored) 0)))))
                   results)
         0 1)))
 
