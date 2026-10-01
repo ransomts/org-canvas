@@ -236,6 +236,164 @@ one's changes after the echo area has moved on (issue #415).")
    (format "%s.org" (org-canvas--submissions-sanitize-filename assignment-name))
    (org-canvas--submissions-dir)))
 
+;;;; Finding a Column's Grading File (issue #431)
+
+;; A grading file is named after its column, but the column is the id
+;; in its header: a column renamed on Canvas keeps its id, and the file
+;; under the old name keeps every score typed in it.  So a column's file
+;; is looked up by CANVAS_ASSIGNMENT_ID first and by name second, and
+;; the pull renames a file it found under an old name.  Two files that
+;; claim one id are named and neither is picked.
+
+(defvar org-canvas--submissions-id-index nil
+  "Hash of assignment id to the grading files claiming it, or nil.
+Bound by a read-only command that looks up many columns at once (the
+grading queue), so the directory is read once; nil reads it afresh at
+each lookup, which a command that renames files needs.")
+
+(defun org-canvas--submissions-header-files ()
+  "Return the .org files under the submissions directory, sorted.
+Emacs lock files (.#NAME.org, dangling links) and other dot files are
+left out."
+  (let ((dir (org-canvas--submissions-dir)))
+    (when (file-directory-p dir)
+      (directory-files dir t "\\`[^.#].*\\.org\\'"))))
+
+(defun org-canvas--submissions-grading-files-by-id ()
+  "Return a hash of assignment id to the grading files whose header names it.
+Only the first part of each file is read; no request is made."
+  (let ((index (make-hash-table :test #'equal)))
+    (dolist (file (org-canvas--submissions-header-files))
+      (when-let* ((id (condition-case nil
+                          (org-canvas--submissions-file-assignment-id file)
+                        (file-error nil))))
+        (puthash id (append (gethash id index) (list file)) index)))
+    index))
+
+(defun org-canvas--submissions-files-for-id (id)
+  "Return the grading files whose CANVAS_ASSIGNMENT_ID is ID, sorted."
+  (gethash (format "%s" id)
+           (or org-canvas--submissions-id-index
+               (org-canvas--submissions-grading-files-by-id))))
+
+(defun org-canvas--submissions-id-p (assignment)
+  "Return non-nil when ASSIGNMENT is an id: an integer or a string of digits."
+  (or (integerp assignment)
+      (and (stringp assignment) (string-match-p "\\`[0-9]+\\'" assignment))))
+
+(defun org-canvas--submissions-locate-file (assignment-name assignment-id)
+  "Return the grading file of ASSIGNMENT-NAME (ASSIGNMENT-ID), or a list.
+The file whose header names ASSIGNMENT-ID wins, whatever its name;
+without one the path is the name's, existing or not.  When two or more
+files claim the id the value is their list, for the caller to report."
+  (let ((files (and assignment-id
+                    (org-canvas--submissions-files-for-id assignment-id))))
+    (cond ((cdr files) files)
+          (files (car files))
+          (t (org-canvas--submissions-file-path assignment-name)))))
+
+(defun org-canvas--submissions-duplicate-error (assignment-id files)
+  "Signal a `user-error' naming FILES, which all claim ASSIGNMENT-ID."
+  (user-error "Grading files %s all claim assignment %s; keep one, merge \
+what was typed in the others into it, delete them and try again"
+              (mapconcat #'file-name-nondirectory files " and ")
+              assignment-id))
+
+(defun org-canvas--submissions-claimed-file (assignment-id)
+  "Return the grading file claiming ASSIGNMENT-ID, or nil when none does.
+Two files claiming it are a `user-error' naming both."
+  (let ((files (org-canvas--submissions-files-for-id assignment-id)))
+    (when (cdr files)
+      (org-canvas--submissions-duplicate-error assignment-id files))
+    (car files)))
+
+(defun org-canvas--submissions-same-file-p (a b)
+  "Return non-nil when paths A and B name one file, compared as truenames."
+  (equal (file-truename a) (file-truename b)))
+
+(defun org-canvas--submissions-attachment-root (file)
+  "Return the files/<assignment>/ directory of the grading FILE."
+  (expand-file-name (format "files/%s/" (file-name-base file))
+                    (file-name-directory file)))
+
+(defun org-canvas--submissions-move-attachments (old new)
+  "Move the attachment directory of grading file OLD to that of NEW.
+Return non-nil when it moved.  A directory already under the new name
+is left alone, with a warning, rather than merged."
+  (let ((from (org-canvas--submissions-attachment-root old))
+        (to (org-canvas--submissions-attachment-root new)))
+    (cond ((not (file-directory-p from)) nil)
+          ((file-exists-p to)
+           (org-canvas--log-warning org-canvas--logger
+             "[Submissions] Left %s where it is: %s already exists"
+             from to)
+           nil)
+          (t (rename-file (directory-file-name from) (directory-file-name to))
+             t))))
+
+(defun org-canvas--submissions-retitle (assignment-name old new moved)
+  "Rewrite this grading file's header for ASSIGNMENT-NAME.
+The title and CANVAS_ASSIGNMENT_NAME name the column again, and when
+MOVED the attachment links follow the directory from that of the
+grading file OLD to that of NEW."
+  (org-canvas--submissions-replace-header-line
+   "^#\\+TITLE: .*$" (format "#+TITLE: Submissions: %s" assignment-name))
+  (org-canvas--submissions-replace-header-line
+   "^#\\+PROPERTY: CANVAS_ASSIGNMENT_NAME .*$"
+   (format "#+PROPERTY: CANVAS_ASSIGNMENT_NAME %s" assignment-name))
+  (when moved
+    (save-excursion
+      (goto-char (point-min))
+      (let ((from (format "[[file:files/%s/" (file-name-base old)))
+            (to (format "[[file:files/%s/" (file-name-base new)))
+            (inhibit-read-only t))
+        (while (search-forward from nil t)
+          (replace-match to t t)))))
+  (when (local-variable-p 'org-canvas-submissions--assignment-name)
+    (setq-local org-canvas-submissions--assignment-name assignment-name)))
+
+(defun org-canvas--submissions-rename-grading-file (old new assignment-name)
+  "Rename the grading file OLD to NEW, the file of ASSIGNMENT-NAME; return NEW.
+Its attachment directory moves with it and its header is rewritten.  A
+buffer visiting OLD follows the rename; one holding unsaved changes is
+a `user-error', as is a NEW that already exists, so nothing typed is
+lost and no file is written over."
+  (let ((buf (find-buffer-visiting old)))
+    (when (file-exists-p new)
+      (user-error "Grading file %s is for a column now named %s, but %s \
+already exists; merge the two by hand"
+                  (file-name-nondirectory old) assignment-name
+                  (file-name-nondirectory new)))
+    (when (and buf (buffer-modified-p buf))
+      (user-error "Grading file %s has unsaved changes and its column is \
+now named %s; save it, then try again"
+                  (file-name-nondirectory old) assignment-name))
+    (rename-file old new)
+    (when buf
+      (with-current-buffer buf (set-visited-file-name new t t)))
+    (let ((moved (org-canvas--submissions-move-attachments old new)))
+      (with-current-buffer (or buf (org-canvas--find-file-noselect new))
+        (org-canvas--submissions-retitle assignment-name old new moved)
+        (org-canvas--save-buffer)))
+    (org-canvas--log-info org-canvas--logger
+      "[Submissions] Renamed grading file %s to %s: its column is now named %s"
+      (file-name-nondirectory old) (file-name-nondirectory new) assignment-name)
+    new))
+
+(defun org-canvas--submissions-grading-file-for (assignment-name assignment-id)
+  "Return the grading file path of ASSIGNMENT-NAME (ASSIGNMENT-ID) for a pull.
+The file claiming ASSIGNMENT-ID is renamed to ASSIGNMENT-NAME's when
+it carries an old name; two files claiming it are a `user-error'
+naming both, and nothing is written."
+  (let ((found (org-canvas--submissions-locate-file
+                assignment-name assignment-id))
+        (target (org-canvas--submissions-file-path assignment-name)))
+    (cond ((consp found)
+           (org-canvas--submissions-duplicate-error assignment-id found))
+          ((org-canvas--submissions-same-file-p found target) target)
+          (t (org-canvas--submissions-rename-grading-file
+              found target assignment-name)))))
+
 (defun org-canvas--submissions-ensure-directory ()
   "Create the submissions directory and return it.
 Write a .gitignore there once, when
@@ -3590,25 +3748,44 @@ the wrong column."
       (or (cl-find-if (lambda (a) (equal (alist-get 'name a) name)) assignments)
           (user-error "No assignment named %s in this course" name)))))
 
+(defun org-canvas--submissions-named-grading-file (file)
+  "Return the grading file the name or path FILE spells, or signal.
+FILE is an absolute path, or a name under the submissions directory
+with or without its .org: the file's own name, or the assignment's,
+which the pull spelled into a file name."
+  (let* ((dir (org-canvas--submissions-dir))
+         (given (if (string-suffix-p ".org" file) file (concat file ".org")))
+         (candidates (list (expand-file-name given dir)
+                           (org-canvas--submissions-file-path file))))
+    (or (cl-find-if #'file-exists-p candidates)
+        (user-error "No grading file %s in %s" file dir))))
+
+(defun org-canvas--submissions-choose-grading-file ()
+  "Ask for one of the submissions directory's files and return its path."
+  (let* ((dir (org-canvas--submissions-dir))
+         (files (and (file-directory-p dir)
+                     (directory-files dir nil "\\.org\\'"))))
+    (unless files
+      (user-error "No grading files in %s; pull an assignment first" dir))
+    (expand-file-name (completing-read "Grading file: " files nil t) dir)))
+
 (defun org-canvas--submissions-grading-file-path (file)
   "Return the path of the grading file FILE names, or ask for one.
-FILE is an absolute path, or a name under
+FILE is a Canvas assignment id (an integer, or a string of digits),
+matched against each grading file's CANVAS_ASSIGNMENT_ID whatever the
+file is called (issue #431); or an absolute path, or a name under
 `org-canvas-submissions-directory' with or without its .org: the
 file's own name, or the assignment's, which the pull spelled into a
-file name.  Nil offers the directory's files in the minibuffer.  A
-name that matches no file is a `user-error'."
-  (let ((dir (org-canvas--submissions-dir)))
-    (if file
-        (let* ((given (if (string-suffix-p ".org" file) file (concat file ".org")))
-               (candidates (list (expand-file-name given dir)
-                                 (org-canvas--submissions-file-path file))))
-          (or (cl-find-if #'file-exists-p candidates)
-              (user-error "No grading file %s in %s" file dir)))
-      (let ((files (and (file-directory-p dir)
-                        (directory-files dir nil "\\.org\\'"))))
-        (unless files
-          (user-error "No grading files in %s; pull an assignment first" dir))
-        (expand-file-name (completing-read "Grading file: " files nil t) dir)))))
+file name.  A string of digits no header names is tried as a name.
+Nil offers the directory's files in the minibuffer.  A FILE that
+matches no file, or an id two files claim, is a `user-error'."
+  (cond ((null file) (org-canvas--submissions-choose-grading-file))
+        ((and (org-canvas--submissions-id-p file)
+              (org-canvas--submissions-claimed-file file)))
+        ((integerp file)
+         (user-error "No grading file for assignment %s in %s; pull it first"
+                     file (org-canvas--submissions-dir)))
+        (t (org-canvas--submissions-named-grading-file file))))
 
 (defun org-canvas--submissions-visit-grading-file (path)
   "Return the buffer visiting the grading file PATH, set up for grading.
@@ -3656,10 +3833,12 @@ interactive (issue #280)."
 (defun org-canvas-open-submissions (&optional file)
   "Visit the grading file FILE with `org-canvas-submissions-mode' on.
 Grading files are the detail views `org-canvas-pull-submissions' saves
-under `org-canvas-submissions-directory'.  FILE is an absolute path,
-or a name under that directory with or without its .org — the file's
-name or the assignment's; interactively, and when it is nil, one is
-chosen in the minibuffer.  Return the buffer (issue #280)."
+under `org-canvas-submissions-directory'.  FILE is a Canvas
+assignment id, found in the files' headers whatever they are called
+\(issue #431), an absolute path, or a name under that directory with
+or without its .org — the file's name or the assignment's;
+interactively, and when it is nil, one is chosen in the minibuffer.
+Return the buffer (issue #280)."
   (interactive)
   (let ((buf (org-canvas--submissions-visit-grading-file
               (org-canvas--submissions-grading-file-path file))))
@@ -3728,7 +3907,8 @@ and what changed since the last render is reported
 \(`org-canvas--submissions-report-changes') and kept in
 `org-canvas-submissions--last-refresh'.  Return the buffer."
   (let ((buf (if (eq view 'detail)
-                 (org-canvas--submissions-grading-buffer assignment-name)
+                 (org-canvas--submissions-grading-buffer
+                  assignment-name assignment-id)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
     (with-current-buffer buf
       (unless (derived-mode-p 'org-mode)
@@ -3769,13 +3949,17 @@ and what changed since the last render is reported
     (switch-to-buffer buf)
     buf))
 
-(defun org-canvas--submissions-grading-buffer (assignment-name)
+(defun org-canvas--submissions-grading-buffer (assignment-name
+                                               &optional assignment-id)
   "Return the buffer visiting ASSIGNMENT-NAME's grading file.
-Create the submissions directory as needed.  An existing file is not
-guarded: whatever was typed in it is carried over the re-render
-\(`org-canvas--submissions-collect-carryover')."
+The file is the one whose header names ASSIGNMENT-ID, renamed when the
+column was (`org-canvas--submissions-grading-file-for', issue #431),
+else the name's.  Create the submissions directory as needed.  An
+existing file is not guarded: whatever was typed in it is carried over
+the re-render (`org-canvas--submissions-collect-carryover')."
   (org-canvas--submissions-ensure-directory)
-  (org-canvas--find-file-noselect (org-canvas--submissions-file-path assignment-name)))
+  (org-canvas--find-file-noselect
+   (org-canvas--submissions-grading-file-for assignment-name assignment-id)))
 
 
 ;;;; Grade Writing
@@ -4414,32 +4598,13 @@ RESULT is the plist of `org-canvas--submissions-push-all'."
     (insert-file-contents file nil 0 4096)
     (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID")))
 
-(defun org-canvas--submissions-grading-file-for-id (id)
-  "Return the grading file whose header names assignment ID, or nil.
-Every file under the submissions directory is looked at; no request
-is made."
-  (let ((dir (org-canvas--submissions-dir))
-        (want (format "%s" id)))
-    (when (file-directory-p dir)
-      (cl-find-if (lambda (file)
-                    (equal want (org-canvas--submissions-file-assignment-id file)))
-                  (directory-files dir t "\\.org\\'")))))
-
 (defun org-canvas--submissions-push-target (assignment)
   "Return the path of the grading file ASSIGNMENT names.
-ASSIGNMENT is a Canvas assignment id (an integer, or a string of
-digits), matched against each grading file's CANVAS_ASSIGNMENT_ID, or
-whatever `org-canvas--submissions-grading-file-path' takes: a path, or
-the file's or the assignment's name.  Nil asks for the file.  An id no
-file names is a `user-error'."
-  (let ((id-p (or (integerp assignment)
-                  (and (stringp assignment)
-                       (string-match-p "\\`[0-9]+\\'" assignment)))))
-    (or (and id-p (org-canvas--submissions-grading-file-for-id assignment))
-        (if (integerp assignment)
-            (user-error "No grading file for assignment %s in %s; pull it first"
-                        assignment (org-canvas--submissions-dir))
-          (org-canvas--submissions-grading-file-path assignment)))))
+ASSIGNMENT is whatever `org-canvas--submissions-grading-file-path'
+takes: a Canvas assignment id, matched against each grading file's
+CANVAS_ASSIGNMENT_ID, a path, or the file's or the assignment's name.
+Nil asks for the file.  An id no file names is a `user-error'."
+  (org-canvas--submissions-grading-file-path assignment))
 
 ;;;###autoload
 (defun org-canvas-push-submission-grades (&optional assignment post)
