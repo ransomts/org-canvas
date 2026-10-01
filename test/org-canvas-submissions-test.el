@@ -5174,6 +5174,200 @@ ITEMS is the text of the Comments section.  MORE follows the student."
               (expect (plist-get result :edited) :to-equal 1)
               (expect (plist-get result :deleted) :to-equal 1))))))))
 
+;;;; Pushing Only the Sent Comments (issue #425)
+
+(defun test-sent-only--everything-file ()
+  "Return a grading file where a sent comment, scores, rows, drafts and the bank differ."
+  (concat test-rubric-file-header
+          "* Comment Bank\n- Show your units.\n\n"
+          (test-rubric-entry "Adams, Alice" 5001
+                             (format ":SCORE: 4\n:CANVAS_SCORE: 3\n:SUBMISSION_ID: 9001\n:LATE_STATUS: late\n:CANVAS_COMMENTS: 22=%s\n"
+                                     (org-canvas--submissions-comment-digest "Mine."))
+                             '(("_7104" "Thesis" 2 2 "Sharp") ("_7105" "Evidence" 3 2 nil)
+                               ("_7106" "Style" 1 nil nil)))
+          "** Comments\n- *Prof* [22] :: Mine, rewritten.\n\n"
+          "** Comment to post\nSee me.\n"))
+
+(defun test-sent-only--push (&optional assignment)
+  "Push only the sent comments of ASSIGNMENT, confirming; return (RESULT . PROMPT)."
+  (let ((prompt nil))
+    (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t)))
+      (cons (org-canvas-push-submission-comment-edits assignment) prompt))))
+
+(describe "pushing only the sent comments (issue #425)"
+  (it "sends the comment edit and nothing else the file holds"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent-only--everything-file)
+          (org-canvas--submissions-ensure-context)
+          (expect (org-canvas--submissions-collect-grade-changes) :not :to-be nil)
+          (expect (org-canvas--submissions-collect-comment-drafts) :not :to-be nil)
+          (expect (org-canvas--submissions-bank-pending) :not :to-be nil)
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+            (let* ((mutations nil)
+                   (pushed (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                                      (lambda (&rest args) (push args mutations) nil)))
+                             (test-sent-only--push))))
+              (expect (cdr pushed) :to-equal "Push 1 comment edit(s)? ")
+              (expect (car pushed) :to-equal
+                      '(:edited 1 :deleted 0 :refused 0 :failed 0 :dry-run 0))
+              (expect mutations :to-be nil))
+            (expect (mapcar (lambda (c) (list (car c) (cadr c))) test-org-canvas-api-calls)
+                    :to-equal
+                    (list (list 'PUT (org-canvas-api-course-endpoint
+                                      "assignments/%s/submissions/%s/comments/%s" 1001 5001 "22"))))
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3")
+            (expect (org-entry-get (point) "SCORE") :to-equal "4")
+            (expect (buffer-string) :to-match "^\\*\\* Comment to post\nSee me\\.$")
+            (expect (buffer-string) :to-match "^- Show your units\\.$")
+            (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)
+            (expect (org-canvas--submissions-collect-comment-drafts) :not :to-be nil))))))
+
+  (it "refuses what the full push refuses and counts it"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("21" . "Theirs.") ("22" . "Mine."))
+                                            (concat "- *TA* [21] :: Theirs, rewritten.\n"
+                                                    "- DELETE *Prof* [22] :: Mine.\n"))
+          (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs.")
+                                        (test-sent--comment 22 77 "Mine."))
+            (let* ((pushed nil)
+                   (warnings (test-sent--collecting-warnings
+                              (setq pushed (test-sent-only--push)))))
+              (expect warnings :to-equal
+                      '("[Submissions] Comment 21 on Adams, Alice not changed: not yours; only its author may change it"))
+              (expect (cdr pushed) :to-equal
+                      "Push 1 comment deletion(s), leaving 1 comment change(s) unsent? ")
+              (expect (car pushed) :to-equal
+                      '(:edited 0 :deleted 1 :refused 1 :failed 0 :dry-run 0)))
+            (expect (test-org-canvas-api-call-count) :to-equal 1)
+            (expect (buffer-string) :to-match "\\[21\\] :: Theirs, rewritten\\."))))))
+
+  (it "sends nothing and changes nothing under a dry run, even on a read-only course"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                            "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                        (test-sent--comment 23 77 "Drop."))
+            (let ((org-canvas--dry-run t)
+                  (org-canvas-read-only t)
+                  (before (buffer-string)))
+              (expect (car (test-sent-only--push)) :to-equal
+                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 2))
+              (expect (test-org-canvas-api-call-count) :to-equal 0)
+              (expect (buffer-string) :to-equal before)
+              (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 2)))))))
+
+  (it "refuses a read-only course before anything is sent"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+            (let ((org-canvas-read-only t))
+              (expect (test-sent-only--push) :to-throw 'org-canvas-read-only-error))
+            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+
+  (it "sends nothing when the question is declined"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+            (let ((noninteractive nil)
+                  (org-canvas-assume-yes nil)
+                  (asked nil))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq asked p) nil)))
+                (expect (org-canvas-push-submission-comment-edits) :to-be nil))
+              (expect asked :to-equal "Push 1 comment edit(s)? "))
+            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+
+  (it "says when there is nothing to send"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine.\n")
+          (let ((shown nil))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) shown)))
+                      ((symbol-function 'org-canvas--confirm) (lambda (_) (error "must not ask"))))
+              (expect (org-canvas-push-submission-comment-edits) :to-equal
+                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 0)))
+            (expect (car shown) :to-equal "No sent comment to change")
+            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+
+  (it "saves the new baseline through the package's save path"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              `(("comments/22" . ,(test-sent--comment 22 77 "Mine, rewritten."))))
+        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+            (let ((saves 0)
+                  (save (symbol-function 'org-canvas--save-buffer)))
+              (cl-letf (((symbol-function 'org-canvas--save-buffer)
+                         (lambda () (cl-incf saves) (funcall save))))
+                (test-sent-only--push))
+              (expect saves :to-equal 1))
+            (expect (buffer-modified-p) :to-be nil)
+            (expect (with-temp-buffer
+                      (insert-file-contents file)
+                      (buffer-string))
+                    :to-match (format ":CANVAS_COMMENTS: 22=%s"
+                                      (org-canvas--submissions-comment-digest
+                                       "Mine, rewritten."))))))))
+
+  (it "pushes a grading file named from a script, without a prompt"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                            "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                        (test-sent--comment 23 77 "Drop."))
+            (let ((noninteractive t)
+                  (org-canvas-assume-yes nil)
+                  (grading (current-buffer)))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (error "must not ask")))
+                        ((symbol-function 'completing-read)
+                         (lambda (&rest _) (error "must not prompt"))))
+                (with-temp-buffer
+                  (expect (org-canvas-push-submission-comment-edits "HW") :to-equal
+                          '(:edited 1 :deleted 1 :refused 0 :failed 0 :dry-run 0))))
+              (expect (buffer-local-value 'org-canvas-submissions--current-view grading)
+                      :to-equal 'detail)
+              (expect (test-org-canvas-api-call-count) :to-equal 2)
+              (expect (buffer-modified-p grading) :to-be nil)))))))
+
+  (it "finds a grading file by its assignment id"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("23" . "Drop.")) "- DELETE *Prof* [23] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 23 77 "Drop."))
+            (with-temp-buffer
+              (expect (plist-get (car (test-sent-only--push 1001)) :deleted) :to-equal 1)))))))
+
+  (it "reports the refused count from the full push as well"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("21" . "Theirs.")) "- *TA* [21] :: Theirs, rewritten.\n")
+          (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs."))
+            (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+              (expect (plist-get (org-canvas-push-submission-grades 1001) :refused)
+                      :to-equal 1)))))))
+
+  (it "refuses a buffer that names no assignment"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"
+          (expect (org-canvas-push-submission-comment-edits) :to-throw 'user-error)
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+
+  (it "is bound to C in a grading file and in the dispatch menu"
+    (expect (lookup-key org-canvas-submissions-mode-map (kbd "C"))
+            :to-equal #'org-canvas-push-submission-comment-edits)
+    (expect (test-org-canvas-transient-has-command-p
+             'org-canvas-dispatch 'org-canvas-push-submission-comment-edits)
+            :to-be-truthy)))
+
 (describe "refreshing a file with sent comments changed (issue #419)"
   (it "keeps an unsent edit and a DELETE mark over the re-render"
     (with-org-canvas-test-config

@@ -211,6 +211,7 @@ one's changes after the echo area has moved on (issue #415).")
     (define-key map (kbd "D") #'org-canvas-submissions-download-all-attachments)
     (define-key map (kbd "B") #'org-canvas-submissions-pull-comment-bank)
     (define-key map (kbd "x") #'org-canvas-submissions-delete-comment-bank-item)
+    (define-key map (kbd "C") #'org-canvas-push-submission-comment-edits)
     map)
   "Keymap for `org-canvas-submissions-mode'.")
 
@@ -2601,6 +2602,15 @@ With SKIP-LEFT a student who left the course is passed over."
 A student who left the course is skipped, as their draft is."
   (apply #'append (mapcar #'cdr (org-canvas--submissions-comment-edits-by-student t))))
 
+(defun org-canvas--submissions-pending-comment-edits (assignment-id)
+  "Return the sent comments changed here as (SENDABLE . REFUSED), or nil.
+The changes are those `org-canvas--submissions-collect-comment-edits'
+finds, checked against ASSIGNMENT-ID on Canvas by
+`org-canvas--submissions-check-comment-edits'.  The full push and the
+comment-only push both start here (issue #425)."
+  (org-canvas--submissions-check-comment-edits
+   assignment-id (org-canvas--submissions-collect-comment-edits)))
+
 (defun org-canvas--submissions-live-comments (assignment-id user-ids)
   "Return a hash from comment id to (AUTHOR-ID . DIGEST) on ASSIGNMENT-ID.
 Only the submissions of USER-IDS are read into it, the digest taken
@@ -2794,6 +2804,19 @@ COUNTS is what `org-canvas--submissions-apply-comment-edits' returned."
                         (format ", %d refused by Canvas (see the log)" (plist-get counts :failed))
                       ""))))
    (org-canvas--submissions-refused-note refused)))
+
+(defun org-canvas--submissions-comment-edit-result (counts comments)
+  "Return the counts a push reports for sent comments, as a plist.
+COUNTS is what `org-canvas--submissions-apply-comment-edits' returned
+and COMMENTS the (SENDABLE . REFUSED) it was given.  The plist has
+:edited, :deleted, :refused (not sent, see
+`org-canvas--submissions-comment-refusal'), :failed (refused by Canvas)
+and :dry-run."
+  (list :edited (or (plist-get counts :edited) 0)
+        :deleted (or (plist-get counts :deleted) 0)
+        :refused (length (cdr comments))
+        :failed (or (plist-get counts :failed) 0)
+        :dry-run (or (plist-get counts :dry-run) 0)))
 
 (defun org-canvas--submissions-restore-comment (edit)
   "Put EDIT, a sent comment changed here, back into the fresh entry at point.
@@ -4364,14 +4387,14 @@ question.  Return nil when the push was declined, else the plist of
     (pcase-let ((`(,changes . ,conflicts)
                  (org-canvas--submissions-partition-conflicts
                   assignment-id (org-canvas--submissions-collect-grade-changes)))
-                (comments (org-canvas--submissions-check-comment-edits
-                           assignment-id (org-canvas--submissions-collect-comment-edits))))
+                (comments (org-canvas--submissions-pending-comment-edits assignment-id)))
       (org-canvas--submissions-mark-conflicts conflicts)
       (cond ((not (or changes drafts bank (car comments)))
              (message "Nothing to push%s%s" (org-canvas--submissions-conflicts-note conflicts)
                       (org-canvas--submissions-refused-note (cdr comments)))
-             (list :pushed 0 :state nil :late 0 :comments 0
-                   :conflicts (length conflicts)))
+             (append (list :pushed 0 :state nil :late 0 :comments 0
+                           :conflicts (length conflicts))
+                     (org-canvas--submissions-comment-edit-result nil comments)))
             ((or (not ask)
                  (org-canvas--submissions-confirm-push changes drafts bank conflicts comments))
              (org-canvas--submissions-push-all
@@ -4435,8 +4458,9 @@ Return a plist: :pushed, the grades Canvas stored; :state, how the
 grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
 nil when no grade was sent) with :message its reason; :late,
 :comments and :conflicts, the late statuses set, the comments posted
-and the changes skipped as conflicts; :edited and :deleted, the sent
-comments rewritten and deleted (issue #419); :posted, non-nil when
+and the changes skipped as conflicts; :edited, :deleted, :refused,
+:failed and :dry-run, the sent comments rewritten, deleted, not sent,
+refused by Canvas and only shown (issue #419); :posted, non-nil when
 the grades were posted.  A script that pushes a column by id and posts
 it calls
 
@@ -4454,6 +4478,79 @@ and one that only pushes leaves POST out (issue #381)."
                            org-canvas-submissions--assignment-id))))
         (org-canvas--save-buffer)
         (plist-put result :posted posted)))))
+
+;;;; Pushing Only the Sent Comments (issue #425)
+
+(defun org-canvas--submissions-send-comment-edits (assignment-id comments)
+  "Send COMMENTS, (SENDABLE . REFUSED), to ASSIGNMENT-ID and save the file.
+Nothing else in the file is sent.  Return the plist of
+`org-canvas--submissions-comment-edit-result'."
+  (let ((counts (org-canvas--submissions-apply-comment-edits assignment-id (car comments))))
+    (when buffer-file-name
+      (org-canvas--save-buffer))
+    (org-canvas--user-message
+     "Comment edits: %s"
+     (string-remove-prefix
+      "; " (org-canvas--submissions-comment-edits-note counts (cdr comments))))
+    (org-canvas--submissions-comment-edit-result counts comments)))
+
+(defun org-canvas--submissions-push-comment-edits-current ()
+  "Push only the sent comments changed in the grading buffer at hand.
+They are confirmed first, with the full push's question and listing,
+through `org-canvas--confirm'.  A course marked `org-canvas-read-only' refuses
+before anything is sent, unless under `org-canvas--dry-run'.  Return
+nil when declined, else the plist of
+`org-canvas--submissions-comment-edit-result'."
+  (org-canvas--submissions-ensure-context)
+  (let ((assignment-id org-canvas-submissions--assignment-id))
+    (unless assignment-id
+      (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    (let ((comments (org-canvas--submissions-pending-comment-edits assignment-id)))
+      (cond ((not (car comments))
+             (message "No sent comment to change%s"
+                      (org-canvas--submissions-refused-note (cdr comments)))
+             (org-canvas--submissions-comment-edit-result nil comments))
+            ((progn (unless org-canvas--dry-run
+                      (org-canvas--check-writable 'PUT "editing sent comments"))
+                    (org-canvas--submissions-confirm-push nil nil nil nil comments))
+             (org-canvas--submissions-send-comment-edits assignment-id comments))))))
+
+(defun org-canvas--submissions-comment-edits-buffer (assignment)
+  "Return the grading buffer for ASSIGNMENT, as the comment-only push takes it.
+Nil in a grading buffer is that buffer; otherwise ASSIGNMENT is
+resolved by `org-canvas--submissions-push-target' and its file visited
+in the detail view."
+  (if (and (null assignment) org-canvas-submissions-mode)
+      (current-buffer)
+    (with-current-buffer (org-canvas--submissions-visit-grading-file
+                          (org-canvas--submissions-push-target assignment))
+      (setq org-canvas-submissions--current-view 'detail)
+      (current-buffer))))
+
+;;;###autoload
+(defun org-canvas-push-submission-comment-edits (&optional assignment)
+  "Push only the sent comments rewritten or marked DELETE in a grading file.
+Nothing else is sent: no score, rubric row, late status, drafted
+comment or Comment Bank item, and nothing is posted (issue #425).
+Each change is checked as `org-canvas-submissions-push-grades' checks
+it (only your own comments, none edited on Canvas since the pull,
+none gone, none emptied), listed, and confirmed through
+`org-canvas--confirm', which `org-canvas-assume-yes' and a batch Emacs
+answer yes.  A dry run sends nothing and changes nothing.  The new
+baselines are written and the file saved.
+
+ASSIGNMENT is nil in a grading buffer, for that buffer; else a Canvas
+assignment id or a grading file's path or name, as
+`org-canvas-push-submission-grades' takes it, and nil elsewhere asks
+for the file.  Return nil when declined, else a plist: :edited and
+:deleted, the comments rewritten and deleted; :refused, the changes
+not sent; :failed, those Canvas refused; :dry-run, those a dry run
+only showed.  A script calls
+
+  (org-canvas-push-submission-comment-edits \"2573836\")"
+  (interactive)
+  (with-current-buffer (org-canvas--submissions-comment-edits-buffer assignment)
+    (org-canvas--submissions-push-comment-edits-current)))
 
 (defun org-canvas--submissions-late-note (failed)
   "Return the push message note for FAILED late statuses, or \"\"."
@@ -4479,8 +4576,9 @@ Return a plist: :pushed, the grades Canvas stored (0 when they did not
 land); :state, the grade send's (`completed', `failed', `unconfirmed',
 `dry-run', or nil when no grade was sent) and :message its reason;
 :late, :comments and :conflicts, the late statuses set, the comments
-posted and the conflicts skipped; :edited and :deleted, the sent
-comments rewritten and deleted.  Posting is left to the caller."
+posted and the conflicts skipped; and the sent comments' counts of
+`org-canvas--submissions-comment-edit-result'.  Posting is left to the
+caller."
   (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
          (outcome (org-canvas--submissions-send-grades assignment-id changes))
          (late (org-canvas--submissions-send-late-statuses changes))
@@ -4500,14 +4598,13 @@ comments rewritten and deleted.  Posting is left to the caller."
      (org-canvas--submissions-late-note (cdr late))
      (org-canvas--submissions-describe-bank saved bank)
      (org-canvas--submissions-conflicts-note conflicts))
-    (list :pushed (if applied (length grading) 0)
-          :state (plist-get outcome :state)
-          :message (plist-get outcome :message)
-          :late (length (car late))
-          :comments posted
-          :edited (or (plist-get edited :edited) 0)
-          :deleted (or (plist-get edited :deleted) 0)
-          :conflicts (length conflicts))))
+    (append (list :pushed (if applied (length grading) 0)
+                  :state (plist-get outcome :state)
+                  :message (plist-get outcome :message)
+                  :late (length (car late))
+                  :comments posted
+                  :conflicts (length conflicts))
+            (org-canvas--submissions-comment-edit-result edited comments))))
 
 ;;;; Posting Grades
 
