@@ -1,0 +1,18 @@
+* Added
+- #440 Two commands resolve a grading file's =CONFLICT= on the heading
+  at point, after reading the student's submission: =t=
+  (=org-canvas-submissions-take-canvas=) makes =SCORE=, =LATE_STATUS=
+  and the =Rubric= rows Canvas's and keeps what was typed as one line
+  under =Notes=; =k= (=org-canvas-submissions-keep-mine=) keeps the
+  typed grade and makes Canvas's its baseline, so the next push sends
+  it.  A refresh's closing line names every student it left marked
+  =CONFLICT=, with the reason.
+
+* Fixed
+- #440 A heading marked =CONFLICT= is no longer pushed.  After a
+  refresh re-baselined a row to a newer SpeedGrader grade, the next
+  push sent the file's older typed score (or Rubric rows) over it.
+  The push now holds the whole heading (score, rows, late status,
+  drafted comment) until =t= or =k= resolves it, names it in its
+  closing message, and returns =:conflict-names= beside =:conflicts=,
+  which counts every heading held back.

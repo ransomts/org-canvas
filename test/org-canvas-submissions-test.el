@@ -1665,23 +1665,22 @@
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (org-canvas--submissions-goto-user 5001)
           (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: Canvas has 2")))))
-  (it "pushes the clean changes and clears CONFLICT once resolved"
+  (it "holds back a heading already marked CONFLICT and pushes the clean ones (issue #440)"
     (with-org-canvas-test-config
       (with-mock-api
-        ;; The bulk endpoint answers a Progress object; its job has
-        ;; finished here, so nothing is polled (issue #382).
-        (setq test-org-canvas-api-responses
-              '(("update_grades" . ((id . 77) (workflow_state . "completed")))))
         (with-grading-file (concat test-grading-file-header
                                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
           (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
                      (lambda (_id) '((5001 . ("92" nil nil)) (5002 . ("75" nil nil)))))
                     ((symbol-function 'y-or-n-p) (lambda (_) t)))
             (org-canvas-submissions-push-grades))
-          (expect-api-called 'POST "assignments/1001/submissions/update_grades")
+          (expect-api-called 'PUT "assignments/1001/submissions/5002")
+          (expect (test-org-canvas-api-call-count) :to-equal 1)
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-be nil)
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "95")))))
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "stale")
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")
+          (org-canvas--submissions-goto-user 5002)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")))))
   (it "does not consult Canvas for an ephemeral buffer"
     (with-org-canvas-test-config
       (with-mock-api
@@ -1884,7 +1883,8 @@ and `test-refresh--log'; a prompt fails."
          (list (test-org-canvas-make-submission '((score . nil) (attempt . 2)))
                (test-refresh--bob '((score . 3) (attempt . 2) (late . t)))))
         (expect (test-refresh--summary)
-                :to-equal "Refreshed HW: 1 new, 1 resubmitted after grading")
+                :to-equal (concat "Refreshed HW: 1 new, 1 resubmitted after grading"
+                                  "; CONFLICT on 1: Beta, Bob (attempt: 2 submitted after grading)"))
         (org-canvas--submissions-goto-user 5002)
         (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: 2 submitted after grading")
         (expect (org-entry-get (point) "ATTEMPT") :to-equal "2")
@@ -3152,7 +3152,7 @@ submission.  Every call is pushed onto `test-entry--calls'."
                        (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
               (org-canvas-submissions-push-grades))
             (expect (car messages)
-                    :to-equal "Nothing to push; 1 conflict(s) marked CONFLICT: pull again, or set CANVAS_SCORE to Canvas's value to override")))))))
+                    :to-equal "Nothing to push; 1 conflict(s) not sent (Adams, Alice): resolve each with t (take Canvas's) or k (keep mine)")))))))
 
 (describe "posting grades (issue #202)"
   (it "records the assignment's effective policy in the file header"
@@ -4121,7 +4121,9 @@ student's live baseline for the conflict check, nil to skip it."
                                            . ((nodes . ,(vconcat test-history--bob)))))))))))
             (test-refresh--run (list (test-refresh--bob '((score . 3) (attempt . 2))))))
           (expect asked :to-equal '("5002")))
-        (expect (test-refresh--summary) :to-equal "Refreshed HW: 1 resubmitted after grading")
+        (expect (test-refresh--summary)
+                :to-equal (concat "Refreshed HW: 1 resubmitted after grading"
+                                  "; CONFLICT on 1: Beta, Bob (attempt: 2 submitted after grading)"))
         (expect (cl-find-if (lambda (l) (string-prefix-p "[Refresh] Beta, Bob: attempt 2 (" l))
                             test-refresh--log)
                 :to-match "after the score 3 given on attempt 1 ")
@@ -5538,6 +5540,170 @@ Return a plist: :result, :calls (every request), :before and :after
       (expect (plist-get (plist-get r :result) :bank) :to-equal 1)
       (expect (plist-get (plist-get r :result) :text) :not :to-match "CONFLICT")
       (expect (plist-get (plist-get r :result) :text) :not :to-match "\\*You\\*"))))
+
+;;;; A Heading Marked CONFLICT Is Not Pushed (issue #440)
+
+(defun test-conflict--file ()
+  "Return a grading file whose Alice is marked CONFLICT over typed rows and a draft."
+  (concat test-rubric-file-header
+          (test-rubric-entry "Adams, Alice" 5001
+                             ":SCORE: 4\n:CANVAS_SCORE: 0\n:SUBMISSION_ID: 9001\n:ATTEMPT: 1\n:LATE_STATUS: late\n:CONFLICT: score: Canvas has 0\n"
+                             '(("_7104" "Thesis" 2 2 "Sharp") ("_7105" "Evidence" 3 2 nil)
+                               ("_7106" "Style" 1 nil nil)))
+          "** Notes\nRead twice.\n\n** Comment to post\nSee me.\n"))
+
+(defun test-conflict--canvas ()
+  "Return Alice's submission as Canvas holds it after a SpeedGrader zero."
+  (test-org-canvas-make-submission
+   '((score . 0) (entered_score . 0) (attempt . 2) (late_policy_status . "missing")
+     (rubric_assessment . ((_7104 . ((points . 0) (comments . "Authorship"))))))))
+
+(defun test-conflict--resolve (fn)
+  "Call FN, a resolving command, with Canvas answering `test-conflict--canvas'.
+Return the requests made, as (METHOD URL)."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (method url &rest _) (push (list method url) calls)
+                 (test-conflict--canvas)))
+              ((symbol-function 'message) #'ignore))
+      (funcall fn))
+    calls))
+
+(describe "a heading marked CONFLICT (issue #440)"
+  (it "is not pushed after a refresh puts a stale typed score over a SpeedGrader grade"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student
+                                  "Beta, Bob" 5002
+                                  ":STATUS: submitted\n:SCORE: 10\n:CANVAS_SCORE: 8\n:ATTEMPT: 1\n"
+                                  ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n")
+                                 "\n** Comment to post\nLate, minus two.\n")
+        (test-refresh--run (list (test-refresh--bob '((score . 0) (attempt . 1)))))
+        (expect (test-refresh--summary) :to-equal
+                (concat "Refreshed HW: 1 scored on Canvas since the pull"
+                        "; CONFLICT on 1: Beta, Bob (score: Canvas has 0)"))
+        (with-mock-api
+          (let ((result (cl-letf (((symbol-function 'message) #'ignore))
+                          (org-canvas--submissions-push-current nil))))
+            (expect (test-org-canvas-api-call-count) :to-equal 0)
+            (expect (plist-get result :pushed) :to-equal 0)
+            (expect (plist-get result :comments) :to-equal 0)
+            (expect (plist-get result :conflicts) :to-equal 1)
+            (expect (plist-get result :conflict-names) :to-equal '("Beta, Bob"))))
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "SCORE") :to-equal "10")
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 0")
+        (expect (org-canvas--submissions-comment-draft) :to-equal "Late, minus two."))))
+
+  (it "names the held heading beside those the push's own check finds"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   (test-refresh--student "Adams, Alice" 5001
+                                                          ":SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n")
+                                   (test-refresh--student "Beta, Bob" 5002
+                                                          ":SCORE: 80\n:CANVAS_SCORE: 75\n"))
+          (let ((said nil))
+            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                       (lambda (_id) '((5002 . ("77" nil nil)))))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+              (let ((result (org-canvas--submissions-push-current nil)))
+                (expect (plist-get result :conflicts) :to-equal 2)
+                (expect (plist-get result :conflict-names) :to-equal '("Adams, Alice" "Beta, Bob"))))
+            (expect said :to-equal
+                    "Nothing to push; 2 conflict(s) not sent (Adams, Alice; Beta, Bob): resolve each with t (take Canvas's) or k (keep mine)")
+            (expect (test-org-canvas-api-call-count) :to-equal 0)
+            (org-canvas--submissions-goto-user 5002)
+            (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 77"))))))
+
+  (it "takes Canvas's grade with t, keeping what was typed under Notes"
+    (with-org-canvas-test-config
+      (with-rubric-file (test-conflict--file)
+        (org-canvas--submissions-goto-user 5001)
+        (forward-line 3)
+        (let ((calls (test-conflict--resolve #'org-canvas-submissions-take-canvas)))
+          (expect calls :to-equal
+                  (list (list 'GET (org-canvas-api-course-endpoint
+                                    "assignments/%s/submissions/%s" "1001" "5001")))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (org-entry-get (point) "SCORE") :to-equal "0")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "0")
+        (expect (org-entry-get (point) "LATE_STATUS") :to-equal "missing")
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+        (expect (org-entry-get (point) "ATTEMPT") :to-equal "2")
+        (expect (mapcar (lambda (r) (list (nth 0 r) (nth 3 r) (nth 4 r)))
+                        (org-canvas--submissions-rubric-rows))
+                :to-equal '(("_7104" "0" "Authorship") ("_7105" nil nil) ("_7106" nil nil)))
+        (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading)
+                :to-match "\\`Read twice\\.\n- Typed before taking Canvas's grade <[^>]+>: SCORE 4; LATE_STATUS late; Rubric _7104 2 (Sharp), _7105 2\\'")
+        (expect (org-canvas--submissions-comment-draft) :to-equal "See me.")
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+        (expect (buffer-modified-p) :to-be nil))))
+
+  (it "takes Canvas's absence of a grade too, from anywhere in the heading"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student
+                                  "Adams, Alice" 5001
+                                  ":SCORE: 7\n:CANVAS_SCORE: 5\n:LATE_STATUS: late\n:CONFLICT: score: Canvas has no grade\n")
+                                 "** Comment to post\nSee me.")
+        (re-search-forward "^\\*\\* Comment to post")
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (test-org-canvas-make-submission
+                                      '((score . nil) (entered_score . nil)))))
+                  ((symbol-function 'message) #'ignore))
+          (expect (org-canvas-submissions-take-canvas) :to-equal "Adams, Alice"))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (mapcar (lambda (p) (org-entry-get (point) p))
+                        '("SCORE" "CANVAS_SCORE" "LATE_STATUS" "CANVAS_LATE_STATUS" "CONFLICT"))
+                :to-equal '(nil nil nil nil nil))
+        (expect (buffer-string) :to-match
+                "\\*\\* Notes\n- Typed before taking Canvas's grade <[^>]+>: SCORE 7; LATE_STATUS late\n\\'"))))
+
+  (it "keeps the typed grade with k, against Canvas's as its new baseline"
+    (with-org-canvas-test-config
+      (with-rubric-file (test-conflict--file)
+        (org-canvas--submissions-goto-user 5001)
+        (test-conflict--resolve #'org-canvas-submissions-keep-mine)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (org-entry-get (point) "SCORE") :to-equal "4")
+        (expect (org-entry-get (point) "LATE_STATUS") :to-equal "late")
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+        (expect (org-entry-get (point) "CANVAS_RUBRIC") :to-equal
+                (org-canvas--submissions-submission-rubric-digest (test-conflict--canvas)))
+        (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading)
+                :to-equal "Read twice.")
+        (let* ((change (car (org-canvas--submissions-collect-grade-changes)))
+               (old (plist-get change :old-score))
+               (new (plist-get change :new-score)))
+          (expect (list old new) :to-equal '("0" "4")))
+        ;; Canvas still holds what k read, so the push's check passes it.
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                   (lambda (_id) (list (test-conflict--canvas)))))
+          (expect (cdr (org-canvas--submissions-partition-conflicts
+                        "1001" (org-canvas--submissions-collect-grade-changes)))
+                  :to-be nil)))))
+
+  (it "refuses a heading without CONFLICT, the summary view, and other buffers"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Adams, Alice" 5001 ":SCORE: 4\n"))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-canvas-submissions-keep-mine) :to-throw 'user-error)
+        (setq-local org-canvas-submissions--current-view 'summary)
+        (cl-letf (((symbol-function 'org-canvas--submissions-ensure-context) #'ignore))
+          (expect (org-canvas-submissions-take-canvas) :to-throw 'user-error))))
+    (with-temp-buffer
+      (expect (org-canvas-submissions-take-canvas) :to-throw 'user-error)))
+
+  (it "binds t and k in the grading mode"
+    (expect (lookup-key org-canvas-submissions-mode-map (kbd "t"))
+            :to-be #'org-canvas-submissions-take-canvas)
+    (expect (lookup-key org-canvas-submissions-mode-map (kbd "k"))
+            :to-be #'org-canvas-submissions-keep-mine)))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

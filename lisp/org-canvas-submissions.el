@@ -30,9 +30,10 @@
 ;;    the score.  Before pushing from a saved file Canvas is re-read: a
 ;;    student whose grade or assessment changed there since the pull,
 ;;    or who resubmitted, is skipped and marked :CONFLICT: rather than
-;;    overwritten (`org-canvas-submissions-check-conflicts').  Pushed
-;;    scores and assessments become the new baselines and the file is
-;;    saved.
+;;    overwritten (`org-canvas-submissions-check-conflicts').  A
+;;    heading marked :CONFLICT: is never pushed until `t' (take
+;;    Canvas's) or `k' (keep mine) resolves it.  Pushed scores and
+;;    assessments become the new baselines and the file is saved.
 ;; 5. `org-canvas-open-submissions' reopens a saved grading file.
 ;;
 ;; VIEWS
@@ -90,7 +91,8 @@ edited in the detail file either way."
   "Non-nil means re-read Canvas before pushing grades from a saved file.
 A heading whose CANVAS_SCORE no longer matches what Canvas holds, or
 whose student resubmitted since the pull, is skipped and marked with a
-CONFLICT property instead of being overwritten."
+CONFLICT property instead of being overwritten.  A heading already
+marked CONFLICT is held back whatever this says (issue #440)."
   :type 'boolean
   :group 'org-canvas)
 
@@ -212,6 +214,8 @@ one's changes after the echo area has moved on (issue #415).")
     (define-key map (kbd "B") #'org-canvas-submissions-pull-comment-bank)
     (define-key map (kbd "x") #'org-canvas-submissions-delete-comment-bank-item)
     (define-key map (kbd "C") #'org-canvas-push-submission-comment-edits)
+    (define-key map (kbd "t") #'org-canvas-submissions-take-canvas)
+    (define-key map (kbd "k") #'org-canvas-submissions-keep-mine)
     map)
   "Keymap for `org-canvas-submissions-mode'.")
 
@@ -1262,6 +1266,22 @@ Either may be nil.  Does nothing when the entry has no such heading."
         (when text (insert text "\n"))
         (when (looking-at "^\\*") (insert "\n"))))))
 
+(defun org-canvas--submissions-notes-end ()
+  "Return the position for a new line at the end of the entry's Notes.
+The Notes heading is added at the end of the entry when it has none."
+  (let ((region (org-canvas--submissions-section-region
+                 org-canvas--submissions-notes-heading)))
+    (if region
+        (save-excursion
+          (goto-char (cdr region))
+          (skip-chars-backward " \t\n" (car region))
+          (unless (= (point) (car region)) (insert "\n"))
+          (point))
+      (save-excursion
+        (org-end-of-subtree t t)
+        (insert (if (bolp) "" "\n") org-canvas--submissions-notes-heading "\n")
+        (point)))))
+
 (defun org-canvas--submissions-draft-region ()
   "Return (START . END) of the draft body under the heading at point, or nil."
   (org-canvas--submissions-section-region org-canvas--submissions-draft-heading))
@@ -2220,7 +2240,8 @@ score no longer describes the file; a successful push clears it."
 FOUND is the plist of `org-canvas--submissions-changes-since';
 PREVIOUS supplies the PULLED_AT the no-change line names.  Each kind
 present is counted; the students who left say how many headings were
-kept for the work under them."
+kept for the work under them.  FOUND's :conflicted, the headings left
+marked CONFLICT, are named (issue #440)."
   (let ((parts nil))
     (dolist (label org-canvas--submissions-change-labels)
       (when-let* ((pairs (plist-get found (car label))))
@@ -2229,10 +2250,22 @@ kept for the work under them."
                           (format " (%d kept)" (length (plist-get found :kept)))
                         ""))
               parts)))
-    (if parts
-        (format "Refreshed %s: %s" name (string-join (nreverse parts) ", "))
-      (format "Refreshed %s: no changes since %s" name
-              (or (plist-get previous :pulled-at) "the last pull")))))
+    (concat
+     (if parts
+         (format "Refreshed %s: %s" name (string-join (nreverse parts) ", "))
+       (format "Refreshed %s: no changes since %s" name
+               (or (plist-get previous :pulled-at) "the last pull")))
+     (org-canvas--submissions-describe-conflicted (plist-get found :conflicted)))))
+
+(defun org-canvas--submissions-describe-conflicted (conflicted)
+  "Return the refresh line's note naming CONFLICTED students, or \"\".
+CONFLICTED is a list of (USER-ID NAME REASON), as
+`org-canvas--submissions-conflicted-headings' returns it (issue #440)."
+  (if conflicted
+      (format "; CONFLICT on %d: %s" (length conflicted)
+              (mapconcat (lambda (c) (format "%s (%s)" (nth 1 c) (nth 2 c)))
+                         conflicted "; "))
+    ""))
 
 (defun org-canvas--submissions-log-changes (found)
   "Log one line per student a refresh FOUND something about.
@@ -2259,6 +2292,8 @@ Return the summary line, or nil on a first pull."
   (when previous
     (let ((changes (org-canvas--submissions-changes-since previous submissions carry)))
       (org-canvas--submissions-mark-resubmitted (plist-get changes :resubmitted) submissions)
+      (setq changes (plist-put changes :conflicted
+                               (org-canvas--submissions-conflicted-headings)))
       (org-canvas--submissions-log-changes changes)
       (when assignment-id
         (org-canvas--submissions-report-attempts
@@ -4093,8 +4128,9 @@ gone.  The rubric is compared only when CHANGE sends one, and the late
 status only when CHANGE sets one.  The reason names
 what moved and what Canvas holds — `score: Canvas has 93' — and is
 the CONFLICT value; a property is a slot for a short value, and the
-way out (pull again, or set CANVAS_SCORE to Canvas's value) is the
-push's message and the manual's (issue #264)."
+way out (`org-canvas-submissions-take-canvas' or
+`org-canvas-submissions-keep-mine', issue #440) is the push's message
+and the manual's (issue #264)."
   (let ((live-score (nth 0 live))
         (live-attempt (nth 1 live))
         (live-rubric (nth 2 live))
@@ -4138,14 +4174,200 @@ nothing in the file (issue #442)."
       (when (org-canvas--submissions-goto-user (plist-get c :user-id))
         (org-entry-put (point) "CONFLICT" (plist-get c :conflict))))))
 
+(defun org-canvas--submissions-conflict-names (conflicts)
+  "Return the student names of CONFLICTS, joined for a message."
+  (mapconcat (lambda (c) (plist-get c :name)) conflicts "; "))
+
 (defun org-canvas--submissions-conflicts-note (conflicts)
   "Return the note a push message ends with for CONFLICTS, or an empty string.
-It carries the way out of a CONFLICT, which the property value no
-longer does (issue #264)."
+It names the students held back and carries the way out of a
+CONFLICT, which the property value does not (issue #264): the two
+commands of issue #440."
   (if conflicts
-      (format "; %d conflict(s) marked CONFLICT: pull again, or set CANVAS_SCORE to Canvas's value to override"
-              (length conflicts))
+      (format "; %d conflict(s) not sent (%s): resolve each with t (take Canvas's) or k (keep mine)"
+              (length conflicts) (org-canvas--submissions-conflict-names conflicts))
     ""))
+
+(defun org-canvas--submissions-conflict-result (conflicts)
+  "Return the plist a push reports CONFLICTS under.
+:conflicts counts the headings held back, those already marked
+CONFLICT and those the push's own check found; :conflict-names lists
+their students' names."
+  (list :conflicts (length conflicts)
+        :conflict-names (mapcar (lambda (c) (plist-get c :name)) conflicts)))
+
+;;;; Resolving a Conflict (issue #440)
+
+;; A heading marked CONFLICT shows the grader's typed values against a
+;; Canvas that moved since they were typed: a refresh found a newer
+;; SpeedGrader grade, assessment or late status under them, or a
+;; resubmission on a graded row, or the push's own check did.  Nothing
+;; of such a heading is pushed — score, Rubric rows, late status or
+;; drafted comment — until the grader says which side wins: take
+;; Canvas's, or keep mine.  Both read the student's submission first,
+;; so the baselines they write are Canvas's now and not the file's.
+
+(defun org-canvas--submissions-conflicted-headings ()
+  "Return (USER-ID NAME REASON) for every student heading marked CONFLICT.
+A student who left the course is passed over; nothing is pushed for
+them anyway."
+  (let ((found nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^[ \t]*:CONFLICT:" nil t)
+        (org-back-to-heading t)
+        (let ((user-id (org-entry-get (point) "USER_ID"))
+              (reason (org-entry-get (point) "CONFLICT")))
+          (when (and user-id reason (= (org-current-level) 1)
+                     (not (org-canvas--submissions-left-p)))
+            (push (list (string-to-number user-id) (org-get-heading t t t t) reason)
+                  found)))
+        (org-end-of-meta-data)))
+    (nreverse found)))
+
+(defun org-canvas--submissions-hold-conflicted (changes drafts)
+  "Hold back what the headings marked CONFLICT would send.
+CHANGES are the grade changes and DRAFTS the drafted comments.
+Return (CHANGES DRAFTS HELD): the grade changes and drafted comments
+still to send, and one plist (:user-id :name :conflict :held t) per
+heading that had something to send and was held."
+  (let* ((marked (org-canvas--submissions-conflicted-headings))
+         (held-p (lambda (x) (assoc (plist-get x :user-id) marked)))
+         (ids (delete-dups (mapcar (lambda (x) (plist-get x :user-id))
+                                   (seq-filter held-p (append changes drafts))))))
+    (list (seq-remove held-p changes)
+          (seq-remove held-p drafts)
+          (mapcar (lambda (id)
+                    (let ((m (assoc id marked)))
+                      (list :user-id id :name (nth 1 m) :conflict (nth 2 m) :held t)))
+                  ids))))
+
+(defun org-canvas--submissions-fetch-student (assignment-id user-id)
+  "Return USER-ID's submission to ASSIGNMENT-ID, read from Canvas now."
+  (org-canvas-api-request
+   'GET (org-canvas-api-course-endpoint "assignments/%s/submissions/%s"
+                                        assignment-id user-id)
+   :params '(("include[]" . "rubric_assessment"))))
+
+(defun org-canvas--submissions-put-or-delete (property value)
+  "Set PROPERTY of the entry at point to VALUE, or delete it when VALUE is nil."
+  (if value
+      (org-entry-put (point) property value)
+    (org-entry-delete (point) property)))
+
+(defun org-canvas--submissions-rebaseline-at-point (submission)
+  "Make SUBMISSION, just read from Canvas, the baselines of the entry at point.
+CANVAS_SCORE, CANVAS_RUBRIC, CANVAS_LATE_STATUS and ATTEMPT follow it
+and CONFLICT goes; the typed SCORE, rows and LATE_STATUS stay."
+  (let ((attempt (alist-get 'attempt submission)))
+    (org-canvas--submissions-put-or-delete
+     "CANVAS_SCORE" (org-canvas--submissions-shown-score submission))
+    (org-canvas--submissions-put-or-delete
+     "CANVAS_RUBRIC" (org-canvas--submissions-submission-rubric-digest submission))
+    (org-canvas--submissions-put-or-delete
+     "CANVAS_LATE_STATUS" (org-canvas--submissions-late-status submission))
+    (when (numberp attempt)
+      (org-entry-put (point) "ATTEMPT" (format "%d" attempt)))
+    (org-entry-delete (point) "CONFLICT")))
+
+(defun org-canvas--submissions-typed-record ()
+  "Return the grader's typed grade of the entry at point as one line, or nil.
+SCORE, LATE_STATUS and every Rubric row with a score or a comment, as
+typed; nil when none of them is present."
+  (let* ((score (org-entry-get (point) "SCORE"))
+         (late (org-entry-get (point) "LATE_STATUS"))
+         (rows (seq-filter (lambda (r) (or (nth 3 r) (nth 4 r)))
+                           (org-canvas--submissions-rubric-rows)))
+         (parts (delq nil
+                      (list (and score (format "SCORE %s" score))
+                            (and late (format "LATE_STATUS %s" late))
+                            (and rows
+                                 (concat "Rubric "
+                                         (mapconcat #'org-canvas--submissions-describe-row
+                                                    rows ", ")))))))
+    (and parts (string-join parts "; "))))
+
+(defun org-canvas--submissions-describe-row (row)
+  "Return ROW, a Rubric row, as `ID SCORE (COMMENT)' on one line."
+  (concat (nth 0 row) " " (or (nth 3 row) "-")
+          (if (nth 4 row)
+              (format " (%s)" (replace-regexp-in-string "\n+" " " (nth 4 row)))
+            "")))
+
+(defun org-canvas--submissions-take-canvas-at-point (submission)
+  "Make the entry at point show SUBMISSION's grade, as just read from Canvas.
+SCORE, LATE_STATUS and the Rubric rows follow Canvas, the baselines
+too (`org-canvas--submissions-rebaseline-at-point'), and what was typed
+is kept as one line under Notes, so nothing the grader wrote is lost."
+  (let ((typed (org-canvas--submissions-typed-record))
+        (assessment (org-canvas--submissions-assessment submission)))
+    (org-canvas--submissions-rebaseline-at-point submission)
+    (org-canvas--submissions-put-or-delete
+     "SCORE" (org-canvas--submissions-shown-score submission))
+    (org-canvas--submissions-put-or-delete
+     "LATE_STATUS" (org-canvas--submissions-late-status submission))
+    (dolist (row (org-canvas--submissions-rubric-rows))
+      (let ((entry (org-canvas--submissions-assessment-entry assessment (nth 0 row))))
+        (org-canvas--submissions-rubric-set-row (nth 0 row) (car entry) (cdr entry))))
+    (when typed
+      (save-excursion
+        (goto-char (org-canvas--submissions-notes-end))
+        (insert (format "- Typed before taking Canvas's grade %s: %s"
+                        (format-time-string "<%Y-%m-%d %a %H:%M>") typed))
+        (unless (looking-at-p "\n") (insert "\n"))))))
+
+(defun org-canvas--submissions-resolve-conflict (take)
+  "Resolve the CONFLICT of the student heading at point; TAKE picks the side.
+With TAKE non-nil Canvas's grade replaces the typed one
+\(`org-canvas--submissions-take-canvas-at-point'); otherwise the typed
+one stays and Canvas's becomes its baseline, so the next push sends
+it.  The student's submission is read first; the file is saved.
+Return the student's name."
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (unless (eq org-canvas-submissions--current-view 'detail)
+    (user-error "Switch to detail view first (press v)"))
+  (save-excursion
+    (org-back-to-heading t)
+    (while (> (org-current-level) 1) (outline-up-heading 1 t))
+    (let ((user-id (org-entry-get (point) "USER_ID"))
+          (name (org-get-heading t t t t))
+          (inhibit-read-only t))
+      (unless (and user-id (org-entry-get (point) "CONFLICT"))
+        (user-error "No CONFLICT on the heading at point"))
+      (let ((submission (org-canvas--submissions-fetch-student
+                         org-canvas-submissions--assignment-id user-id)))
+        (if take
+            (org-canvas--submissions-take-canvas-at-point submission)
+          (org-canvas--submissions-rebaseline-at-point submission)))
+      (when buffer-file-name
+        (org-canvas--save-buffer))
+      (message (if take "%s now shows Canvas's grade; what was typed is under Notes"
+                 "%s keeps the typed grade; the next push sends it")
+               name)
+      name)))
+
+;;;###autoload
+(defun org-canvas-submissions-take-canvas ()
+  "Resolve the CONFLICT at point by taking Canvas's grade.
+The student's submission is read; SCORE, LATE_STATUS and the Rubric
+rows become Canvas's, as do their baselines, CONFLICT is cleared, and
+the values that were typed are kept as one line under Notes (issue
+#440).  A drafted comment stays drafted.  Return the student's name."
+  (interactive)
+  (org-canvas--submissions-resolve-conflict t))
+
+;;;###autoload
+(defun org-canvas-submissions-keep-mine ()
+  "Resolve the CONFLICT at point by keeping the typed grade.
+The student's submission is read and becomes the heading's baseline
+\(CANVAS_SCORE, CANVAS_RUBRIC, CANVAS_LATE_STATUS, ATTEMPT), the typed
+SCORE, Rubric rows and LATE_STATUS stay, and CONFLICT is cleared, so
+the next push sends them over Canvas's grade (issue #440).  Return the
+student's name."
+  (interactive)
+  (org-canvas--submissions-resolve-conflict nil))
 
 (defun org-canvas--submissions-describe-rubric (change)
   "Return the note CHANGE's rubric rows add to its line, or an empty string."
@@ -4338,7 +4560,10 @@ post heading.  A SCORE of none (or -) clears the grade Canvas holds,
 while an absent or blank SCORE leaves it alone (issue #417).  A
 rubric used for grading sets the score from its rows' total.  Changes
 that conflict with what Canvas holds now are skipped and marked (see
-`org-canvas-submissions-check-conflicts').  After a successful push
+`org-canvas-submissions-check-conflicts'), and a heading already
+marked CONFLICT sends nothing until `org-canvas-submissions-take-canvas'
+or `org-canvas-submissions-keep-mine' resolves it (issue #440); both
+are named in the closing message.  After a successful push
 the baselines, the comment records, and the file are updated.  A
 LATE_STATUS that differs from its CANVAS_LATE_STATUS is sent too, one
 GraphQL request per student, and so is every new or edited item of
@@ -4392,23 +4617,31 @@ With ASK non-nil the push is confirmed first
 \(`org-canvas--submissions-confirm-push'); nil pushes without a
 question.  Return nil when the push was declined, else the plist of
 `org-canvas--submissions-push-all', which with nothing to push has
-:pushed 0 and :state nil.  Posting is never part of it."
+:pushed 0 and :state nil.  Posting is never part of it.
+
+A heading marked CONFLICT sends nothing — grade, Rubric rows, late
+status or draft — until it is resolved (issue #440); it is counted
+and named with the conflicts the push's own check finds, which are
+marked."
   (org-canvas--submissions-ensure-context)
   (let ((assignment-id org-canvas-submissions--assignment-id)
-        (drafts (org-canvas--submissions-collect-comment-drafts))
         (bank (org-canvas--submissions-bank-pending)))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
-    (pcase-let ((`(,changes . ,conflicts)
-                 (org-canvas--submissions-partition-conflicts
-                  assignment-id (org-canvas--submissions-collect-grade-changes)))
-                (comments (org-canvas--submissions-pending-comment-edits assignment-id)))
-      (org-canvas--submissions-mark-conflicts conflicts)
+    (pcase-let* ((`(,pending ,drafts ,held)
+                  (org-canvas--submissions-hold-conflicted
+                   (org-canvas--submissions-collect-grade-changes)
+                   (org-canvas--submissions-collect-comment-drafts)))
+                 (`(,changes . ,found)
+                  (org-canvas--submissions-partition-conflicts assignment-id pending))
+                 (conflicts (append held found))
+                 (comments (org-canvas--submissions-pending-comment-edits assignment-id)))
+      (org-canvas--submissions-mark-conflicts found)
       (cond ((not (or changes drafts bank (car comments)))
              (message "Nothing to push%s%s" (org-canvas--submissions-conflicts-note conflicts)
                       (org-canvas--submissions-refused-note (cdr comments)))
-             (append (list :pushed 0 :state nil :late 0 :comments 0
-                           :conflicts (length conflicts))
+             (append (list :pushed 0 :state nil :late 0 :comments 0)
+                     (org-canvas--submissions-conflict-result conflicts)
                      (org-canvas--submissions-comment-edit-result nil comments)))
             ((or (not ask)
                  (org-canvas--submissions-confirm-push changes drafts bank conflicts comments))
@@ -4476,7 +4709,9 @@ Return a plist: :pushed, the grades Canvas stored; :state, how the
 grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
 nil when no grade was sent) with :message its reason; :late,
 :comments and :conflicts, the late statuses set, the comments posted
-and the changes skipped as conflicts; :edited, :deleted, :refused,
+and the headings skipped as conflicts (held as marked CONFLICT, or
+found by the push's check), with :conflict-names their students'
+names (issue #440); :edited, :deleted, :refused,
 :failed and :dry-run, the sent comments rewritten, deleted, not sent,
 refused by Canvas and only shown (issue #419); :posted, non-nil when
 the grades were posted.  A script that pushes a column by id and posts
@@ -4596,7 +4831,8 @@ Return a plist: :pushed, the grades Canvas stored (0 when they did not
 land); :state, the grade send's (`completed', `failed', `unconfirmed',
 `dry-run', or nil when no grade was sent) and :message its reason;
 :late, :comments and :conflicts, the late statuses set, the comments
-posted and the conflicts skipped; and the sent comments' counts of
+posted and the conflicts skipped, with :conflict-names (see
+`org-canvas--submissions-conflict-result'); and the sent comments' counts of
 `org-canvas--submissions-comment-edit-result'.  Posting is left to the
 caller."
   (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
@@ -4622,8 +4858,8 @@ caller."
                   :state (plist-get outcome :state)
                   :message (plist-get outcome :message)
                   :late (length (car late))
-                  :comments posted
-                  :conflicts (length conflicts))
+                  :comments posted)
+            (org-canvas--submissions-conflict-result conflicts)
             (org-canvas--submissions-comment-edit-result edited comments))))
 
 ;;;; Posting Grades
