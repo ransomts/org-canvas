@@ -111,6 +111,16 @@
      "SubmissionHistoryOrder",
      "SubmissionHistoryOrderField"
     ]
+   },
+   {
+    "generated": "2026-10-01",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "DiscussionEntryVersion",
+     "LtiAsset"
+    ]
    }
   ]
  },
@@ -2202,6 +2212,46 @@
    },
    "kind": "OBJECT"
   },
+  "DiscussionEntryVersion": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "message": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "messageIntro": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "version": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int!"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "DiscussionSortOrderType": {
    "kind": "ENUM",
    "values": {
@@ -2523,6 +2573,41 @@
     "missing": null,
     "none": null
    }
+  },
+  "LtiAsset": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "attachmentId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "attachmentName": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "discussionEntryVersion": {
+     "args": {},
+     "deprecated": null,
+     "type": "DiscussionEntryVersion"
+    },
+    "submissionAttempt": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "submissionId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    }
+   },
+   "kind": "OBJECT"
   },
   "LtiAssetProcessor": {
    "fields": {

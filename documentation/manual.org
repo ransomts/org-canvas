@@ -3392,9 +3392,18 @@ When the assignment has a document processor attached (Turnitin as an LTI asset 
 - =:AI_WRITING:= — Turnitin's AI Writing report (=turnitin_aiwriting=): its score, such as =0%=
 - =:REPORT_<TYPE>:= — any other report type, its name upcased (=REPORT_GRAMMAR_CHECK=), so a second processor still shows up
 
-A report that has not finished reads =pending=, one that failed =failed= (for an uploaded PDF that is usually an image-only scan, worth knowing before you grade), and one the tool declined =not processed=. Two reports of one type, one per uploaded file, are joined with a comma. A =Reports:= line under the =Assignment:= line counts the students: =Reports: 36 processed, 7 failed, 0 pending=, where a student is failed when any report failed, else pending when any is pending. The same line appears in the summary table.
+Only the reports on the student's current attempt are written: a report on a file a resubmission replaced is left out, so two values on one row are two files of the same attempt. A report that has not finished reads =pending=, and one the tool declined =not processed=. One that failed reads =failed= followed by Canvas's error code when it sends one, such as =failed (EULA_NOT_ACCEPTED)=: the student has not accepted Turnitin's end-user agreement, so Turnitin refused the file and filed no AI Writing report either. That one is fixed by the student accepting the agreement (Canvas shows the prompt on the upload page), which is a class announcement rather than a visit to SpeedGrader per student.
 
-The values are Canvas's: every refresh rewrites them, and a report gone from Canvas disappears from the heading, while typed scores, notes and drafts come back as always. When the column has no processor, nothing is written, not even the line. When the reports cannot be read, the log says so in one warning and the file is pulled without them. SpeedGrader still shows the reports themselves; the file says which students to open it for. Two GraphQL fields look like the answer and are not: =Assignment.hasPlagiarismTool= describes the legacy plagiarism framework (it reads false on a column with a processor attached) and =Submission.turnitinData= the legacy plugin; the reports are read from =ltiAssetReportsConnection=.
+Two results are not percentages, and are written as Turnitin shows them:
+
+- =--%= — AI Writing could not score the file, usually too little qualifying prose (under about 300 words, or prose such as lists and tables it does not count)
+- =*%= — Turnitin's asterisk for an AI Writing score between 1 and 19 percent, a band it does not print because its false-positive rate is high there
+
+A handed-in row with no report at all, on a column that has a processor, reads =:SIMILARITY: none=: the file was handed in and the processor filed nothing (on the reporter's course, files submitted before the processor was attached). Rows on a column without a processor stay silent.
+
+A =Reports:= line under the =Assignment:= line counts the students: =Reports: 36 processed, 7 failed, 0 pending=, where a student is failed when any report failed, else pending when any is pending. When some row has no report, or a report answered =--%=, the line names those too, counted apart from the scored ones: =Reports: 30 processed, 7 failed, 0 pending, 4 unscored, 3 without a report=. A student counts once, in the first of failed, pending, without a report, unscored and processed that applies; =*%= is a score and counts as processed. The same line appears in the summary table.
+
+The values are Canvas's: every refresh rewrites them, and a report gone from Canvas disappears from the heading, while typed scores, notes and drafts come back as always. When the column has no processor, nothing is written, not even the line; whether it has one is asked only when a handed-in row has no report. When the reports cannot be read, the log says so in one warning and the file is pulled without them. SpeedGrader still shows the reports themselves; the file says which students to open it for. Two GraphQL fields look like the answer and are not: =Assignment.hasPlagiarismTool= describes the legacy plagiarism framework (it reads false on a column with a processor attached) and =Submission.turnitinData= the legacy plugin; the reports are read from =ltiAssetReportsConnection=.
 
 ** The Comment Bank
 
@@ -3532,8 +3541,8 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 | =:ATTEMPT:= | Submission attempt at pull time; a change flags a resubmission |
 | =:GRADED_ATTEMPT:= | Written by a refresh that found a graded row resubmitted: the attempt the score was given on, from Canvas's attempt history; the next refresh rewrites it |
 | =:SUBMITTED_AT:= | Submission timestamp |
-| =:SIMILARITY:= | The document processor's Similarity report: a score, =pending=, =failed= or =not processed=; present only when Canvas holds one (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]) |
-| =:AI_WRITING:= | The AI Writing report, read the same way |
+| =:SIMILARITY:= | The document processor's Similarity report on the current attempt: a score, =pending=, =failed= (with its error code, such as =failed (EULA_NOT_ACCEPTED)=), =not processed=, or =none= for a handed-in file with no report on a column that has a processor; absent on a column without one (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]) |
+| =:AI_WRITING:= | The AI Writing report, read the same way; =--%= when Turnitin could not score the file, =*%= for 1 to 19 percent |
 | =:REPORT_<TYPE>:= | Any other report type, read the same way |
 | =:CANVAS_COMMENTS:= | Each sent comment's text digest, by its id, as last pulled or pushed, which tells a comment you rewrote from one you did not; present only when the student has comments |
 | =:CANVAS_COMMENT_BANK:= | On the =* Comment Bank= heading: each labelled saved comment's text digest as last read or written, which tells an edit here from one in SpeedGrader |
@@ -3603,8 +3612,10 @@ summary line above the table counts them. When a column someone
 submitted to has similarity or AI writing reports, a =Reports:= line
 follows, the students counted the way a grading file counts them and
 summed over the columns, naming the columns where a report failed:
-=Reports: 36 processed, 7 failed, 0 pending; failed in R6 (7)=. It
-costs one GraphQL query per such column; a column with no report
+=Reports: 36 processed, 7 failed, 0 pending; failed in R6 (7)=, with
+the unscored rows and the rows without a report named when there are
+some. It costs one GraphQL query per such column, and one more for a
+column where a handed-in file has no report; a column with no report
 adds nothing to it.
 
 Mean and Median come from one GraphQL read for the whole course

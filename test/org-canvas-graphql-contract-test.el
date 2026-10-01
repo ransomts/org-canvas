@@ -67,6 +67,7 @@
     org-canvas--assignment-processors-query
     org-canvas--assignment-schedules-query
     org-canvas--submissions-reports-query
+    org-canvas--submissions-processors-query
     org-canvas--submissions-status-statistics-query
     org-canvas--submissions-late-status-mutation
     org-canvas--submissions-bank-query
@@ -726,6 +727,18 @@ page of discussions."
           (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
         (expect (alist-get 'assignmentId (cdar sent)) :to-equal "1001")
         (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
+  (it "org-canvas--submissions-column-has-processor-p sends what its query declares"
+    (let ((sent nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                 (lambda (document &optional variables)
+                   (push (cons document variables) sent)
+                   '((assignment . ((ltiAssetProcessorsConnection
+                                     . ((nodes . [((_id . "7"))])))))))))
+        (expect (org-canvas--submissions-column-has-processor-p 1001) :to-be-truthy))
+      (expect (caar sent) :to-be org-canvas--submissions-processors-query)
+      (expect (org-canvas-graphql-contract--check-variables (caar sent) (cdar sent))
+              :to-equal nil)
+      (expect (alist-get 'assignmentId (cdar sent)) :to-equal "1001")))
   (it "org-canvas--submissions-status-fetch-statistics sends what its query declares, with and without a cursor"
     (with-org-canvas-test-config
       (let ((pages 0) (sent nil))

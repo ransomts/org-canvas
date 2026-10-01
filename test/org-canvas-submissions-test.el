@@ -3604,7 +3604,19 @@ With CURSOR the reply says another page follows after it."
   (it "counts each row once, failed before pending before processed"
     (expect (org-canvas--submissions-report-counts
              '(("33%" "0%") ("failed" "0%") ("not processed") ("pending" "5%") nil))
-            :to-equal '(:processed 1 :failed 2 :pending 1)))
+            :to-equal '(:processed 1 :unscored 0 :failed 2 :pending 1 :none 0)))
+  (it "counts a failure with its error code as failed (issue #436)"
+    (expect (org-canvas--submissions-report-counts
+             '(("failed (EULA_NOT_ACCEPTED)") ("not processed (X)") ("failedish")))
+            :to-equal '(:processed 1 :unscored 0 :failed 2 :pending 0 :none 0)))
+  (it "counts none and --% apart, after failed and pending (issue #436)"
+    (expect (org-canvas--submissions-report-counts
+             '(("none") ("12%" "--%") ("*%" "5%") ("--%" "pending") ("none" "failed")))
+            :to-equal '(:processed 1 :unscored 1 :failed 1 :pending 1 :none 1))
+    (expect (org-canvas--submissions-format-report-counts
+             '(:processed 1 :unscored 1 :failed 1 :pending 1 :none 1))
+            :to-equal
+            "Reports: 1 processed, 1 failed, 1 pending, 1 unscored, 1 without a report"))
   (it "is nil when no row has a report"
     (expect (org-canvas--submissions-report-counts '(nil nil)) :to-be nil)
     (expect (org-canvas--submissions-format-report-counts nil) :to-be nil)))
@@ -3639,6 +3651,197 @@ With CURSOR the reply says another page follows after it."
           (expect (org-canvas--submissions-fetch-reports "1001") :to-be nil)
           (expect (length warnings) :to-equal 1)
           (expect (car warnings) :to-match "document processor reports of assignment 1001"))))))
+
+;;;; Current attempt, error codes and missing reports (issue #436)
+
+(defun test-reports--asset-node (type progress result asset &optional code)
+  "Return a report node of TYPE at PROGRESS with RESULT on ASSET and CODE."
+  (append (test-reports--node type progress result)
+          `((errorCode . ,(or code :null)) (asset . ,asset))))
+
+(defun test-reports--submission (uid attempt files reports &optional submitted)
+  "Return a submission node for UID at ATTEMPT carrying FILES and REPORTS.
+SUBMITTED non-nil marks it handed in; REPORTS `null' answers a null
+connection."
+  `((userId . ,uid) (attempt . ,attempt)
+    (submittedAt . ,(if submitted "2026-09-20T12:00:00Z" :null))
+    (attachments . ,(vconcat (mapcar (lambda (id) `((_id . ,id))) files)))
+    (ltiAssetReportsConnection
+     . ,(if (eq reports 'null) :null `((nodes . ,(vconcat reports)))))))
+
+(defun test-reports--page (nodes)
+  "Return a one-page reports query reply holding the submission NODES."
+  `((assignment
+     . ((submissionsConnection
+         . ((pageInfo . ((hasNextPage . :json-false) (endCursor . :null)))
+            (nodes . ,(vconcat nodes))))))))
+
+(defun test-reports--graphql-with-processor (nodes processor &optional asked)
+  "Return a GraphQL stub answering NODES, and PROCESSOR for the processor query.
+ASKED, a cons, has its car incremented on each processor query."
+  (lambda (document &optional _variables)
+    (if (eq document org-canvas--submissions-processors-query)
+        (progn (when asked (setcar asked (1+ (car asked))))
+               `((assignment . ((ltiAssetProcessorsConnection
+                                 . ((nodes . ,(if processor [((_id . "9"))] []))))))))
+      (test-reports--page nodes))))
+
+(describe "org-canvas--submissions-report-value with an error code (issue #436)"
+  (it "writes the error code beside failed and not processed"
+    (expect (org-canvas--submissions-report-value
+             (test-reports--asset-node "originality" "Failed" nil nil "EULA_NOT_ACCEPTED"))
+            :to-equal "failed (EULA_NOT_ACCEPTED)")
+    (expect (org-canvas--submissions-report-value
+             (test-reports--asset-node "originality" "NotProcessed" nil nil "TOO_SMALL"))
+            :to-equal "not processed (TOO_SMALL)"))
+  (it "keeps a comma or parenthesis out of the value and ignores a blank code"
+    (expect (org-canvas--submissions-report-value
+             (test-reports--asset-node "originality" "Failed" nil nil "A, (B)"))
+            :to-equal "failed (A B)")
+    (expect (org-canvas--submissions-report-value
+             (test-reports--asset-node "originality" "Failed" nil nil " "))
+            :to-equal "failed"))
+  (it "writes --% and *% verbatim"
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "turnitin_aiwriting" "Processed" "--%"))
+            :to-equal "--%")
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "turnitin_aiwriting" "Processed" "*%"))
+            :to-equal "*%")))
+
+(describe "org-canvas--submissions-node-reports (issue #436)"
+  (it "keeps the reports on the files the submission carries now"
+    (let* ((node (test-reports--submission
+                  "5001" 2 '("11")
+                  (list (test-reports--asset-node "originality" "Processed" "31%"
+                                                  '((attachmentId . "10")
+                                                    (submissionAttempt . :null)))
+                        (test-reports--asset-node "originality" "Processed" "12%"
+                                                  '((attachmentId . "11")
+                                                    (submissionAttempt . :null))))
+                  t))
+           (split (org-canvas--submissions-node-reports node)))
+      (expect (mapcar (lambda (r) (alist-get 'result r)) (car split)) :to-equal '("12%"))
+      (expect (mapcar (lambda (r) (alist-get 'result r)) (cdr split)) :to-equal '("31%"))))
+  (it "goes by the asset's attempt when it names one"
+    (let ((node (test-reports--submission
+                 "5001" 2 nil
+                 (list (test-reports--asset-node "originality" "Processed" "1%"
+                                                 '((attachmentId . "10")
+                                                   (submissionAttempt . 2)))
+                       (test-reports--asset-node "originality" "Processed" "2%"
+                                                 '((submissionAttempt . 1)))
+                       (test-reports--asset-node "originality" "Processed" "3%"
+                                                 '((submissionAttempt . :null))))
+                 t)))
+      (expect (mapcar (lambda (r) (alist-get 'result r))
+                      (car (org-canvas--submissions-node-reports node)))
+              :to-equal '("1%" "3%"))))
+  (it "keeps a discussion entry's report, which has no file"
+    (let ((node (test-reports--submission
+                 "5001" 3 nil
+                 (list (test-reports--asset-node "originality" "Processed" "4%"
+                                                 '((attachmentId . :null)
+                                                   (submissionAttempt . 1)
+                                                   (discussionEntryVersion . ((_id . "77"))))))
+                 t)))
+      (expect (length (car (org-canvas--submissions-node-reports node))) :to-equal 1)))
+  (it "answers nil for a null connection"
+    (expect (org-canvas--submissions-node-reports
+             (test-reports--submission "5001" 1 nil 'null t))
+            :to-be nil)))
+
+(describe "org-canvas--submissions-fetch-reports and missing reports (issue #436)"
+  (it "writes none on a handed-in row without a report when the column has a processor"
+    (with-org-canvas-test-config
+      (let ((asked (list 0)))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (test-reports--graphql-with-processor
+                    (list (test-reports--submission "5001" 1 '("11") nil t)
+                          (test-reports--submission "5002" 1 nil nil t)
+                          (test-reports--submission "5003" 1 nil nil nil)
+                          (test-reports--submission "5004" 1 nil 'null t))
+                    t asked)))
+          (let ((map (org-canvas--submissions-fetch-reports "1001")))
+            (expect (gethash "5001" map) :to-equal '(("SIMILARITY" "none")))
+            (expect (gethash "5002" map) :to-equal '(("SIMILARITY" "none")))
+            (expect (gethash "5003" map) :to-be nil)
+            (expect (gethash "5004" map) :to-be nil)
+            (expect (car asked) :to-equal 1))))))
+  (it "stays silent on a column without a processor"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                 (test-reports--graphql-with-processor
+                  (list (test-reports--submission "5001" 1 '("11") nil t)) nil)))
+        (expect (hash-table-count (org-canvas--submissions-fetch-reports "1001"))
+                :to-equal 0))))
+  (it "does not ask about the processor when told, nor when every row has a report"
+    (with-org-canvas-test-config
+      (let ((asked (list 0)))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (test-reports--graphql-with-processor
+                    (list (test-reports--submission "5001" 1 nil nil t)) nil asked)))
+          (expect (gethash "5001" (org-canvas--submissions-fetch-reports "1001" t))
+                  :to-equal '(("SIMILARITY" "none"))))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (test-reports--graphql-with-processor
+                    (list (test-reports--submission
+                           "5001" 1 nil
+                           (list (test-reports--node "originality" "Processed" "5%"))
+                           t))
+                    t asked)))
+          (org-canvas--submissions-fetch-reports "1001"))
+        (expect (car asked) :to-equal 0))))
+  (it "leaves the rows blank after one warning when the processor read fails"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional _variables)
+                     (if (eq document org-canvas--submissions-processors-query)
+                         (signal 'org-canvas-api-error (list "GraphQL: nope"))
+                       (test-reports--page
+                        (list (test-reports--submission "5001" 1 nil nil t))))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+          (expect (hash-table-count (org-canvas--submissions-fetch-reports "1001"))
+                  :to-equal 0)
+          (expect (length warnings) :to-equal 1)
+          (expect (car warnings) :to-match "rows without a report left blank"))))))
+
+(describe "a grading file names refusals, replaced attempts and missing reports (issue #436)"
+  (it "writes the current attempt's values, the error code and none"
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                   (lambda (_id) (list (test-org-canvas-make-submission)
+                                       (test-refresh--bob))))
+                  ((symbol-function 'org-canvas--submissions-fetch-assignment)
+                   (lambda (_id) '((id . 1001))))
+                  ((symbol-function 'org-canvas--submissions-heading-for-assignment)
+                   (lambda (_id) nil))
+                  ((symbol-function 'org-canvas--graphql-query)
+                   (test-reports--graphql-with-processor
+                    (list (test-reports--submission
+                           "5001" 2 '("11")
+                           (list (test-reports--asset-node
+                                  "originality" "Processed" "31%" '((attachmentId . "10")))
+                                 (test-reports--asset-node
+                                  "originality" "Failed" nil '((attachmentId . "11"))
+                                  "EULA_NOT_ACCEPTED"))
+                           t)
+                          (test-reports--submission "5002" 1 '("12") nil t))
+                    t))
+                  ((symbol-function 'switch-to-buffer) (lambda (b) b))
+                  ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask")))
+                  ((symbol-function 'message) #'ignore))
+          (setq-local org-canvas-submissions--current-view 'detail)
+          (org-canvas-submissions-refresh))
+        (expect (buffer-string)
+                :to-match "^Reports: 0 processed, 1 failed, 0 pending, 1 without a report$")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SIMILARITY") :to-equal "failed (EULA_NOT_ACCEPTED)")
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "SIMILARITY") :to-equal "none")))))
 
 (describe "org-canvas--submissions-with-reports"
   (it "does not ask when nothing was handed in"
