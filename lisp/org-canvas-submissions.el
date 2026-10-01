@@ -895,13 +895,37 @@ submission, which is how every student rendered as Unknown (#112)."
 ;; reads them all; each row gets a property per report type, and the
 ;; header a count line.  A column without a processor answers no
 ;; reports, and then nothing is written.
+;;
+;; The connection answers every attempt's reports, so only those on the
+;; current attempt are kept (issue #436): a report on a file the
+;; submission no longer carries belongs to a replaced attempt.  A
+;; failed report carries its `errorCode', and a handed-in row with no
+;; report on a column that has a processor reads none.
 
 (defconst org-canvas--submissions-reports-query
-  "query ($assignmentId: ID!, $cursor: String) { assignment(id: $assignmentId) { submissionsConnection(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { userId ltiAssetReportsConnection { nodes { reportType processingProgress result } } } } } }"
+  "query ($assignmentId: ID!, $cursor: String) { assignment(id: $assignmentId) { submissionsConnection(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { userId attempt submittedAt attachments { _id } ltiAssetReportsConnection { nodes { reportType processingProgress result errorCode asset { attachmentId submissionAttempt discussionEntryVersion { _id } } } } } } } }"
   "The GraphQL query that reads a column's document processor reports.
-One page of submissions per request, each with its user id and its
-reports.  Checked against the Canvas schema by the GraphQL contract
+One page of submissions per request, each with its user id, attempt,
+hand-in time, current attachments and every report with the asset it
+is about.  Checked against the Canvas schema by the GraphQL contract
 test (issue #269), which names it by this symbol.")
+
+(defconst org-canvas--submissions-processors-query
+  "query ($assignmentId: ID!) { assignment(id: $assignmentId) { ltiAssetProcessorsConnection { nodes { _id } } } }"
+  "The GraphQL query asking whether one assignment has a document processor.
+Asked only when a handed-in row has no report, to tell a missing
+report from a column that never files one (issue #436).  Checked by
+the GraphQL contract test.")
+
+(defconst org-canvas--submissions-report-none "none"
+  "The SIMILARITY value of a handed-in row with no report (issue #436).")
+
+(defconst org-canvas--submissions-report-unscored "--%"
+  "The result Turnitin gives a file it could not score (issue #436).")
+
+(defconst org-canvas--submissions-report-count-keys
+  '(:processed :unscored :failed :pending :none)
+  "The buckets a row is counted in, in the order the Reports: line names them.")
 
 (defconst org-canvas--submissions-report-properties
   '(("originality" . "SIMILARITY")
@@ -930,25 +954,40 @@ second processor's report still lands somewhere a grader can see."
                          (replace-regexp-in-string "[^[:alnum:]]+" "_" type)
                          "_+" "_+"))))))
 
+(defun org-canvas--submissions-report-error-suffix (report)
+  "Return \" (CODE)\" for REPORT's `errorCode', or the empty string.
+A comma or parenthesis in the code becomes a space, so the value still
+splits at its commas when a grading file is read back."
+  (let ((code (org-canvas--alist-get-non-null 'errorCode report)))
+    (if (and (stringp code) (string-match-p "[[:alnum:]]" code))
+        (format " (%s)" (string-trim (replace-regexp-in-string
+                                      "[,()[:space:]]+" " " code)))
+      "")))
+
 (defun org-canvas--submissions-report-value (report)
   "Return the value one REPORT, a GraphQL report node, is written as.
 A processed report gives its result (\"33%\"), or processed when it has
 none; a failed one failed; one the tool declined, not processed; any
-other, pending."
+other, pending.  Failed and not processed carry the report's error
+code in parentheses when Canvas sends one (issue #436)."
   (let ((result (org-canvas--alist-get-non-null 'result report)))
     (pcase (cdr (assoc (alist-get 'processingProgress report)
                        org-canvas--submissions-report-progress))
       ('processed (if (and (stringp result) (not (string-empty-p result)))
                       result
                     "processed"))
-      ('failed "failed")
-      ('not-processed "not processed")
+      ('failed (concat "failed"
+                       (org-canvas--submissions-report-error-suffix report)))
+      ('not-processed (concat "not processed"
+                              (org-canvas--submissions-report-error-suffix
+                               report)))
       (_ "pending"))))
 
 (defun org-canvas--submissions-report-alist (reports)
   "Return REPORTS as ((PROPERTY . VALUES) ...), in the order they came.
 REPORTS are one submission's report nodes; a type reported twice (a
-report per uploaded file) keeps both values, oldest first."
+report per uploaded file of the attempt) keeps both values, oldest
+first."
   (let ((alist nil))
     (dolist (report (append reports nil))
       (when-let* ((property (org-canvas--submissions-report-property
@@ -960,24 +999,122 @@ report per uploaded file) keeps both values, oldest first."
             (push (list property value) alist)))))
     (nreverse alist)))
 
-(defun org-canvas--submissions-fetch-reports (assignment-id)
+(defun org-canvas--submissions-node-attachment-ids (node)
+  "Return the ids of the files submission NODE carries now, as strings."
+  (mapcar (lambda (file) (format "%s" (alist-get '_id file)))
+          (append (org-canvas--alist-get-non-null 'attachments node) nil)))
+
+(defun org-canvas--submissions-report-current-p (report attempt attachment-ids)
+  "Return non-nil when REPORT is about the submission's current attempt.
+ATTEMPT is the submission's attempt number and ATTACHMENT-IDS the ids
+of the files it carries now.  The rule of canvas-lms's own `latest'
+filter: a discussion entry's report is current (Canvas sends only the
+latest version's), a file's report is current when the file is still
+on the submission or its asset names this attempt, and any other
+asset is current unless it names another attempt."
+  (let* ((asset (org-canvas--alist-get-non-null 'asset report))
+         (attachment (org-canvas--alist-get-non-null 'attachmentId asset))
+         (asset-attempt (org-canvas--alist-get-non-null
+                         'submissionAttempt asset)))
+    (cond ((org-canvas--alist-get-non-null 'discussionEntryVersion asset) t)
+          ((and asset-attempt (equal asset-attempt attempt)) t)
+          (attachment (and (member (format "%s" attachment) attachment-ids) t))
+          (t (not (and asset-attempt attempt))))))
+
+(defun org-canvas--submissions-node-reports (node)
+  "Return submission NODE's reports as (CURRENT . REPLACED), or nil.
+CURRENT are the reports on the current attempt and REPLACED the rest,
+two lists in the order Canvas sent them.  Nil when the node carries
+no report connection at all, which is how Canvas answers a submission
+it runs no processor on (a discussion without the account flag)."
+  (when-let* ((connection (org-canvas--alist-get-non-null
+                           'ltiAssetReportsConnection node)))
+    (let ((attempt (org-canvas--alist-get-non-null 'attempt node))
+          (ids (org-canvas--submissions-node-attachment-ids node))
+          (current nil)
+          (replaced nil))
+      (dolist (report (append (org-canvas--alist-get-non-null 'nodes connection)
+                              nil))
+        (if (org-canvas--submissions-report-current-p report attempt ids)
+            (push report current)
+          (push report replaced)))
+      (cons (nreverse current) (nreverse replaced)))))
+
+(defun org-canvas--submissions-node-report-alist (node)
+  "Return submission NODE's current-attempt report alist, or a marker.
+The alist of `org-canvas--submissions-report-alist'; the symbol
+`unreported' when NODE was handed in and has no current report, which
+`org-canvas--submissions-settle-unreported' turns into none or
+nothing; nil otherwise."
+  (when-let* ((split (org-canvas--submissions-node-reports node)))
+    (or (org-canvas--submissions-report-alist (car split))
+        (and (org-canvas--alist-get-non-null 'submittedAt node)
+             'unreported))))
+
+(defun org-canvas--submissions-reports-node (node map)
+  "Store submission NODE's report alist in MAP under its user id."
+  (let ((user-id (org-canvas--alist-get-non-null 'userId node))
+        (reports (org-canvas--submissions-node-report-alist node)))
+    (when (and user-id reports)
+      (puthash (format "%s" user-id) reports map))))
+
+(defun org-canvas--submissions-column-has-processor-p (assignment-id)
+  "Return non-nil when ASSIGNMENT-ID has a document processor attached.
+A failed read is one warning and nil: the rows without a report are
+then left without the property, as before issue #436."
+  (condition-case err
+      (let* ((data (org-canvas--graphql-query
+                    org-canvas--submissions-processors-query
+                    (list (cons 'assignmentId (format "%s" assignment-id)))))
+             (connection (org-canvas--alist-get-non-null
+                          'ltiAssetProcessorsConnection
+                          (org-canvas--alist-get-non-null 'assignment data))))
+        (> (length (org-canvas--alist-get-non-null 'nodes connection)) 0))
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       (concat "[Submissions] Could not tell whether assignment %s has a"
+               " document processor (%s); rows without a report left blank")
+       assignment-id (error-message-string err))
+     nil)))
+
+(defun org-canvas--submissions-settle-unreported (assignment-id processor map)
+  "Resolve MAP's `unreported' rows for ASSIGNMENT-ID, and return MAP.
+On a column with a processor each becomes ((\"SIMILARITY\" \"none\"));
+on one without, it is dropped, so the row stays silent.  PROCESSOR
+non-nil says the column has one; nil asks Canvas, once, and only when
+some row is unreported."
+  (let ((unreported nil))
+    (maphash (lambda (uid reports)
+               (when (eq reports 'unreported) (push uid unreported)))
+             map)
+    (when unreported
+      (let ((none (or processor
+                      (org-canvas--submissions-column-has-processor-p
+                       assignment-id))))
+        (dolist (uid unreported)
+          (if none
+              (puthash uid (list (list "SIMILARITY"
+                                       org-canvas--submissions-report-none))
+                       map)
+            (remhash uid map)))))
+    map))
+
+(defun org-canvas--submissions-fetch-reports (assignment-id &optional processor)
   "Return ASSIGNMENT-ID's document processor reports by user id, or nil.
 The value is a hash from user id (a string) to the report alist of
-`org-canvas--submissions-report-alist', followed page by page.  A
+`org-canvas--submissions-report-alist', current attempt only, followed
+page by page; a handed-in row with no report reads none when the
+column has a processor (PROCESSOR non-nil says it has; nil asks).  A
 failed read is one warning and nil, the same as a column with no
 processor: the pull goes on without the reports."
   (condition-case err
-      (org-canvas--graphql-walk-pages
-       org-canvas--submissions-reports-query
-       (list (cons 'assignmentId (format "%s" assignment-id)))
-       '(assignment submissionsConnection)
-       (lambda (node map)
-         (let ((user-id (org-canvas--alist-get-non-null 'userId node))
-               (reports (org-canvas--submissions-report-alist
-                         (alist-get 'nodes (alist-get 'ltiAssetReportsConnection
-                                                      node)))))
-           (when (and user-id reports)
-             (puthash (format "%s" user-id) reports map)))))
+      (org-canvas--submissions-settle-unreported
+       assignment-id processor
+       (org-canvas--graphql-walk-pages
+        org-canvas--submissions-reports-query
+        (list (cons 'assignmentId (format "%s" assignment-id)))
+        '(assignment submissionsConnection)
+        #'org-canvas--submissions-reports-node))
     (error
      (org-canvas--log-warning org-canvas--logger
        (concat "[Submissions] Could not read the document processor reports"
@@ -1024,23 +1161,32 @@ Several reports of one type are joined with a comma."
   (dolist (cell (alist-get 'org-canvas-reports submission))
     (insert (format ":%s: %s\n" (car cell) (string-join (cdr cell) ", ")))))
 
+(defun org-canvas--submissions-report-failed-p (value)
+  "Return non-nil when the report VALUE is a failure.
+Failed or not processed, with or without its error code."
+  (string-match-p "\\`\\(?:failed\\|not processed\\)\\(?: (\\|\\'\\)" value))
+
 (defun org-canvas--submissions-report-bucket (values)
   "Return the count a row with report VALUES falls in, or nil.
 Failed when any report failed or was not processed, else pending when
-any is pending, else processed; nil when VALUES is empty."
+any is pending, else none when the row has no report on a column with
+a processor, else unscored when a report answered --% (the tool could
+not score the file), else processed; nil when VALUES is empty."
   (cond ((null values) nil)
-        ((cl-some (lambda (v) (member v '("failed" "not processed"))) values)
-         :failed)
+        ((cl-some #'org-canvas--submissions-report-failed-p values) :failed)
         ((member "pending" values) :pending)
+        ((member org-canvas--submissions-report-none values) :none)
+        ((member org-canvas--submissions-report-unscored values) :unscored)
         (t :processed)))
 
 (defun org-canvas--submissions-report-counts (rows)
-  "Return (:processed N :failed N :pending N) for ROWS, or nil.
-ROWS holds each row's report values, a list of strings; a row counts
-once, in the bucket of `org-canvas--submissions-report-bucket'.  Nil
-when no row has a report, so a column without a processor says
-nothing."
-  (let ((counts (list :processed 0 :failed 0 :pending 0))
+  "Return the report counts of ROWS, a plist, or nil.
+The keys are `org-canvas--submissions-report-count-keys'.  ROWS holds
+each row's report values, a list of strings; a row counts once, in
+the bucket of `org-canvas--submissions-report-bucket'.  Nil when no
+row has a report, so a column without a processor says nothing."
+  (let ((counts (mapcan (lambda (key) (list key 0))
+                        org-canvas--submissions-report-count-keys))
         (any nil))
     (dolist (values rows)
       (when-let* ((bucket (org-canvas--submissions-report-bucket values)))
@@ -1049,11 +1195,18 @@ nothing."
     (and any counts)))
 
 (defun org-canvas--submissions-format-report-counts (counts)
-  "Return the Reports: line for COUNTS, without its newline, or nil."
+  "Return the Reports: line for COUNTS, without its newline, or nil.
+Unscored rows and rows without a report are named only when there
+are some, so a column with neither reads as it did before issue #436."
   (when counts
-    (format "Reports: %d processed, %d failed, %d pending"
-            (plist-get counts :processed) (plist-get counts :failed)
-            (plist-get counts :pending))))
+    (let ((unscored (or (plist-get counts :unscored) 0))
+          (none (or (plist-get counts :none) 0)))
+      (concat
+       (format "Reports: %d processed, %d failed, %d pending"
+               (plist-get counts :processed) (plist-get counts :failed)
+               (plist-get counts :pending))
+       (if (> unscored 0) (format ", %d unscored" unscored) "")
+       (if (> none 0) (format ", %d without a report" none) "")))))
 
 (defun org-canvas--submissions-map-report-counts (map)
   "Return the report counts of MAP, the hash of the reports fetch, or nil."

@@ -1,0 +1,10 @@
+* Fixed
+- #436 =SIMILARITY= and =AI_WRITING= hold only the reports on the
+  student's current attempt: a report on a file a resubmission replaced
+  no longer shows up beside the current one as if it were a second
+  file.  A failed report names Canvas's error code
+  (=failed (EULA_NOT_ACCEPTED)=), =--%= (Turnitin could not score the
+  file) is counted as unscored rather than processed, and a handed-in
+  row with no report on a column that has a processor reads
+  =:SIMILARITY: none=, counted in the =Reports:= line
+  (=..., 4 unscored, 3 without a report=) and in the grading queue's.

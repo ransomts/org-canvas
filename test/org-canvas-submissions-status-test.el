@@ -532,7 +532,7 @@ Bounded by the number of lines; the match's end is read before
         (expect (plist-get (cl-find "R6" columns :key (lambda (c) (plist-get c :name))
                                     :test #'equal)
                            :reports)
-                :to-equal '(:processed 1 :failed 1 :pending 1))
+                :to-equal '(:processed 1 :unscored 0 :failed 1 :pending 1 :none 0))
         (expect (plist-get (cl-find "Quiz" columns :key (lambda (c) (plist-get c :name))
                                     :test #'equal)
                            :reports)
@@ -543,6 +543,25 @@ Bounded by the number of lines; the match's end is read before
                 "[Submissions status] Reports: 1 processed, 2 failed, 1 pending; failed in R6 (1), R7 (1)")
         ;; Nothing was handed in on Nobody, so it was not asked.
         (expect (sort (copy-sequence test-sstatus--graphql-calls) #'<) :to-equal '(1 2 3)))))
+
+  (it "counts unscored rows and rows without a report in the sum (issue #436)"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 1 "R6") (test-sstatus--assignment 2 "R7"))
+        (list (cons 1 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z"))))
+              (cons 2 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z")))))
+      (let* ((test-sstatus--reports
+              `((1 . ((101 ,(test-sstatus--report "originality" "Processed" "12%")
+                           ,(test-sstatus--report "turnitin_aiwriting" "Processed" "--%"))))
+                (2 . ((201 ,(test-sstatus--report "originality" "Failed"))))))
+             (columns (org-canvas--submissions-status-columns
+                       (org-canvas--submissions-status-fetch-assignments))))
+        (plist-put (cl-find "R7" columns :key (lambda (c) (plist-get c :name))
+                            :test #'equal)
+                   :reports
+                   (list :processed 0 :unscored 0 :failed 0 :pending 0 :none 2))
+        (expect (org-canvas--submissions-status-reports-line columns)
+                :to-equal
+                "Reports: 0 processed, 0 failed, 0 pending, 1 unscored, 2 without a report"))))
 
   (it "has no Reports line when no column has a report"
     (test-sstatus--with-course

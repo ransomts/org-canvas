@@ -444,13 +444,15 @@ all or leaves them out."
 Rows are counted once each, as in a grading file; the columns where a
 report failed are named with their count, since that is the one a
 grader acts on before grading."
-  (let ((total (list :processed 0 :failed 0 :pending 0))
+  (let ((total (mapcan (lambda (key) (list key 0))
+                       org-canvas--submissions-report-count-keys))
         (failing nil))
     (dolist (column columns)
       (when-let* ((reports (plist-get column :reports)))
-        (dolist (key '(:processed :failed :pending))
+        (dolist (key org-canvas--submissions-report-count-keys)
           (plist-put total key
-                     (+ (plist-get total key) (plist-get reports key))))
+                     (+ (plist-get total key)
+                        (or (plist-get reports key) 0))))
         (when (> (plist-get reports :failed) 0)
           (push (format "%s (%d)" (plist-get column :name)
                         (plist-get reports :failed))

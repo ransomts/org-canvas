@@ -4,6 +4,7 @@
   "lisp/org-canvas-discussions.el",
   "lisp/org-canvas-modules.el",
   "lisp/org-canvas-settings.el",
+  "lisp/org-canvas-submissions-reports.el",
   "lisp/org-canvas-submissions-status.el",
   "lisp/org-canvas-submissions.el"
  ],
@@ -110,6 +111,27 @@
      "SubmissionHistoryConnection",
      "SubmissionHistoryOrder",
      "SubmissionHistoryOrderField"
+    ]
+   },
+   {
+    "generated": "2026-10-01",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "DiscussionEntryVersion",
+     "LtiAsset"
+    ]
+   },
+   {
+    "generated": "2026-10-01",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "Enrollment",
+     "EnrollmentConnection",
+     "Section"
     ]
    }
   ]
@@ -2202,6 +2224,46 @@
    },
    "kind": "OBJECT"
   },
+  "DiscussionEntryVersion": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "message": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "messageIntro": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "version": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int!"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "DiscussionSortOrderType": {
    "kind": "ENUM",
    "values": {
@@ -2225,6 +2287,183 @@
     "side_comment": null,
     "threaded": null
    }
+  },
+  "Enrollment": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "assetString": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "associatedUser": {
+     "args": {},
+     "deprecated": null,
+     "type": "User"
+    },
+    "canBeRemoved": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "concluded": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "course": {
+     "args": {},
+     "deprecated": null,
+     "type": "Course"
+    },
+    "courseSectionId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "endAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "enrollmentState": {
+     "args": {},
+     "deprecated": null,
+     "type": "EnrollmentWorkflowState!"
+    },
+    "grades": {
+     "args": {
+      "gradingPeriodId": "ID"
+     },
+     "deprecated": null,
+     "type": "Grades"
+    },
+    "htmlUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "invitationSentAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "lastActivityAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "limitPrivilegesToCourseSection": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "role": {
+     "args": {},
+     "deprecated": null,
+     "type": "EnrollmentRole"
+    },
+    "roleLabel": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "section": {
+     "args": {},
+     "deprecated": null,
+     "type": "Section"
+    },
+    "sisImportId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "sisRole": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "sisSectionId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "startAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "state": {
+     "args": {},
+     "deprecated": null,
+     "type": "EnrollmentWorkflowState!"
+    },
+    "totalActivityTime": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "type": {
+     "args": {},
+     "deprecated": null,
+     "type": "EnrollmentType!"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "user": {
+     "args": {},
+     "deprecated": null,
+     "type": "User"
+    },
+    "userId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "uuid": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "EnrollmentConnection": {
+   "fields": {
+    "edges": {
+     "args": {},
+     "deprecated": null,
+     "type": "[EnrollmentEdge]"
+    },
+    "nodes": {
+     "args": {},
+     "deprecated": null,
+     "type": "[Enrollment]"
+    },
+    "pageInfo": {
+     "args": {},
+     "deprecated": null,
+     "type": "TotalCountPageInfo!"
+    }
+   },
+   "kind": "OBJECT"
   },
   "ExternalTool": {
    "fields": {
@@ -2523,6 +2762,41 @@
     "missing": null,
     "none": null
    }
+  },
+  "LtiAsset": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "attachmentId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "attachmentName": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "discussionEntryVersion": {
+     "args": {},
+     "deprecated": null,
+     "type": "DiscussionEntryVersion"
+    },
+    "submissionAttempt": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "submissionId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    }
+   },
+   "kind": "OBJECT"
   },
   "LtiAssetProcessor": {
    "fields": {
@@ -4269,6 +4543,80 @@
      "args": {},
      "deprecated": null,
      "type": "DateTime!"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "Section": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "allStudents": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "UserConnection"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "gradesPosted": {
+     "args": {
+      "assignmentId": "ID"
+     },
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "gradesPresent": {
+     "args": {
+      "assignmentId": "ID!"
+     },
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "name": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "sisId": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "students": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "UserConnection"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "userCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int!"
     }
    },
    "kind": "OBJECT"
