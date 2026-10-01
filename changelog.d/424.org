@@ -1,0 +1,16 @@
+* Fixed
+- #424 =scripts/org-canvas= no longer runs stale byte-compiled code: a
+  checkout compiled in place keeps =.elc= files that a pull or a
+  straight rebuild never refreshes, and Emacs loaded them over the newer
+  sources ("Source file ... newer than byte-compiled file; using older
+  file"), so the first command after an update could fail with an
+  arity error or run an older push.  The script and
+  =org-canvas-batch.el= set =load-prefer-newer= before anything loads,
+  and the directory the script sits in (or =ORG_CANVAS_LISP=) stays
+  ahead of any org-canvas package.el or straight installed.
+
+* Added
+- #424 =scripts/org-canvas --version= (=-V=, or the =version= command)
+  prints the package version, the commit of the git checkout it was
+  loaded from, and the directory, source or byte-compiled; it needs no
+  course directory.

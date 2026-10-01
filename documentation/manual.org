@@ -114,8 +114,9 @@ cd ~/courses/ethics
 #+end_src
 
 The course directory is the current one unless =-C DIR= (=--course DIR=)
-names another.  The script runs =emacs --batch -l lisp/org-canvas-batch.el
--f org-canvas-batch -- ARGS=, which is also the line to use without it.
+names another.  The script runs =emacs --batch --eval '(setq
+load-prefer-newer t)' -l lisp/org-canvas-batch.el -f org-canvas-batch --
+ARGS=, which is also the line to use without it.
 
 | Command                       | Runs                                               | Exits 1 when       |
 |-------------------------------+----------------------------------------------------+--------------------|
@@ -128,6 +129,7 @@ names another.  The script runs =emacs --batch -l lisp/org-canvas-batch.el
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
+| =version= (=--version=, =-V=) | the version, commit and directory loaded           |                    |
 
 Two kinds of "pull" are kept apart by name.  =grades= takes assignments,
 by exact name or Canvas id, and writes their grading files (always the
@@ -154,6 +156,37 @@ directory under =~/.emacs.d/straight/build= and =~/.emacs.d/elpa=.
 =EMACS= names the Emacs to run and =ORG_CANVAS_LISP= the directory
 holding =org-canvas-batch.el=, if the script has been copied away from
 the checkout.
+
+The org-canvas that runs is the one beside the script (or in
+=ORG_CANVAS_LISP=), never another copy straight or package.el
+installed: that directory, then =ORG_CANVAS_LOAD_PATH='s, stay first on
+=load-path= even after package.el has put its own in front.  A script
+run from a development checkout runs that checkout's code, edits and
+all, and a straight install's script, in =straight/repos=, runs the
+same source its build directory links to.  Defaulting to the build
+directory instead would make a checkout's script run an installed
+copy it was not asked for (#424).
+
+The script also sets =load-prefer-newer= before anything loads, and
+=org-canvas-batch.el= sets it again for a caller who loads that file
+directly, for the rest of the process so a library loaded later
+through an autoload is covered too.  A checkout that was ever
+byte-compiled in place keeps its =.elc= files, which =git pull= and
+=straight-rebuild-package= never refresh; Emacs used to load them over
+the newer sources ("Source file ... newer than byte-compiled file;
+using older file") and run old code against the new entry point, an
+arity error at best (#424).  =--version= (=-V=, or the =version=
+command) shows what was loaded, with no course needed:
+
+#+begin_example
+$ scripts/org-canvas --version
+org-canvas 0.1.0 (commit c6ff558)
+Loaded from /home/me/.emacs.d/straight/repos/org-canvas/lisp/ (source)
+#+end_example
+
+The commit is that of the git checkout holding the loaded file,
+symbolic links followed, and is left out when there is none or git is
+missing; "byte-compiled" in place of "source" says a =.elc= was loaded.
 
 A script that still wants Lisp calls =org-canvas-batch-setup= instead of
 the bootstrap:
