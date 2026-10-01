@@ -1,0 +1,9 @@
+* Changed
+- #433 The orchestration specs mock the tier functions through one
+  macro, =with-mocked-sync-fns= for a sync and =with-mocked-pull-fns=
+  for a pull, instead of hand-copying a two-dozen-function cl-letf
+  block per spec; the four degenerate specs that asserted nothing
+  (three =t =to-be t= tautologies and one "No error = success") now
+  assert the behavior they were named for.  Adding a sync or pull
+  function is an edit to one list in test-helper.el, not to eight
+  blocks; the duplicated mock of quiz accommodations is gone.

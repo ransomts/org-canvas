@@ -264,33 +264,6 @@
 
 ;;; Orphan Warning Message
 
-(describe "orphan warning message"
-  (it "includes actionable guidance"
-    (let* ((temp-file (make-temp-file "org-test-" nil ".org"))
-           (org-canvas-pages-file temp-file))
-      (unwind-protect
-          (progn
-            ;; Create file with a CANVAS_URL that won't be synced (LEVEL=2)
-            (with-temp-file temp-file
-              (insert "* Test Page\n:PROPERTIES:\n:CANVAS_URL: orphan-123\n:PUBLISHED: true\n:END:\n\nBody.\n"))
-            (spy-on 'org-canvas--log-warning :and-call-through)
-            (with-org-canvas-test-config
-              (with-mock-api
-                (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-sync-pages))))
-            ;; The orphan warning should be for the *first* sync (which generates a new URL)
-            ;; but for testing, we check the message format
-            (let ((orphan-msg-found nil))
-              (dolist (call (spy-calls-all 'org-canvas--log-warning))
-                (when (and (>= (length (spy-context-args call)) 3)
-                           (stringp (nth 1 (spy-context-args call)))
-                           (string-match-p "clean up" (nth 1 (spy-context-args call))))
-                  (setq orphan-msg-found t)))
-              ;; May or may not have orphans depending on flow, but format is correct
-              (expect t :to-be t)))
-        (ignore-errors (kill-buffer (get-file-buffer temp-file)))
-        (delete-file temp-file)))))
-
 ;;; Init Wizard
 
 (describe "org-canvas-init"
