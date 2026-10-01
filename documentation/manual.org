@@ -3680,7 +3680,7 @@ command also takes rows a script has already filtered:
 
 A grading file carries one column's reports (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]); the pattern across columns is in none of them. One 40% AI Writing score on one recitation is a different conversation from the same student at 80% on three, and a student whose files were refused on every column shows in no single file.
 
-=M-x org-canvas-submissions-reports= (transient: Submissions, =I=) reads every assignment that has a document processor and each one's reports on the students' current attempts, and shows one read-only report in =*canvas-document-processor-reports*=:
+=M-x org-canvas-submissions-reports= (transient: Submissions, =y=) reads every assignment that has a document processor and each one's reports on the students' current attempts, and shows one read-only report in =*canvas-document-processor-reports*=:
 
 - *Summary by column* — per column, the students who handed in, then the rows processed, unscored (=--%=), failed, pending and without a report, each student counted once as a grading file's =Reports:= line counts them, and how many rows also carry reports on a replaced attempt (left out of the cells)
 - *Every student* — sorted by name, with their sections, and a Similarity and an AI Writing cell per column, read as in a grading file (=12%=, =*%=, =--%=, =failed (EULA_NOT_ACCEPTED)=, =none=, =pending=; blank when nothing was handed in)
@@ -4397,7 +4397,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-pull-peer-reviews= | Pull who reviews whom on an assignment into read-only tables (=w=) |
 | =org-canvas-submissions-status= | The grading queue: which columns need pulling, grading or posting, one read-only table (=Q=) |
 | =org-canvas-submissions-pull-queue= | Pull every column the grading queue marks =pull= or =refresh=, with attachments, and report each one's changes (=U=) |
-| =org-canvas-submissions-reports= | Similarity and AI Writing across every column with a document processor, one row per student, read-only; with a prefix argument also saved under the submissions directory (=I=) |
+| =org-canvas-submissions-reports= | Similarity and AI Writing across every column with a document processor, one row per student, read-only; with a prefix argument also saved under the submissions directory (=y=) |
 | =org-canvas-submissions-status-rows= | The grading queue's rows as plists (=:name=, =:id=, =:next=, ...), for scripts |
 | =org-canvas-open-submissions= | Reopen a saved grading file; from Lisp, by path or name |
 | =org-canvas-submissions-refresh-file= | Reopen a grading file and re-pull it in one step, returning the buffer (see [[*Batch Use][Batch Use]]) |

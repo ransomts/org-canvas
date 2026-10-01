@@ -1,5 +1,5 @@
 * Added
-- #437 =org-canvas-submissions-reports= (transient: Submissions, =I=;
+- #437 =org-canvas-submissions-reports= (transient: Submissions, =y=;
   =scripts/org-canvas reports [--save]=) shows the Similarity and AI
   Writing reports of every column with a document processor in one
   read-only report: a summary per column, one row per student with
