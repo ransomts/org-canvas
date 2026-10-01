@@ -117,18 +117,21 @@
 
 ;;;; Helper Functions
 
-(defconst org-canvas--file-to-item-type-alist
-  '(("pages" . "Page") ("assignments" . "Assignment") ("discussions" . "Discussion")
-    ("quizzes" . "Quiz") ("files" . "File") ("announcements" . "Discussion"))
-  "Alist mapping Org filename stems to Canvas module item types.")
-
 (defun org-canvas--module-item-type-from-file (filepath)
   "Determine the Canvas module item type from FILEPATH.
 Returns one of: File, Page, Discussion, Assignment, Quiz,
-SubHeader, ExternalUrl."
-  (let ((stem (file-name-base filepath)))
-    (or (alist-get stem org-canvas--file-to-item-type-alist nil nil #'equal)
-        "Page")))
+SubHeader, ExternalUrl.  The basenames compared are the course's own
+file vars', read at call time, so a course that renames one keeps its
+module items typed; a link into any other file reads as Page, the
+original default (#435)."
+  (let ((basename (file-name-nondirectory filepath)))
+    (cond
+     ((equal basename (file-name-nondirectory org-canvas-assignments-file)) "Assignment")
+     ((equal basename (file-name-nondirectory org-canvas-quizzes-file)) "Quiz")
+     ((equal basename (file-name-nondirectory org-canvas-discussions-file)) "Discussion")
+     ((equal basename (file-name-nondirectory org-canvas-announcements-file)) "Discussion")
+     ((equal basename (file-name-nondirectory org-canvas-files-file)) "File")
+     (t "Page"))))
 
 (defun org-canvas--module-resolve-file-path (file modules-file-dir)
   "Resolve FILE relative to MODULES-FILE-DIR, with basename fallback.
@@ -1457,14 +1460,20 @@ nil."
 (defun org-canvas--module-item-live-p (module-id id)
   "Return non-nil when module MODULE-ID of this course lists item ID.
 The REST read answers only for an item that is not deleted, in a
-module of the configured course."
-  (condition-case nil
+module of the configured course.  A read that fails says so with one
+warning and answers not live: a swallow here read as an empty module
+and left nothing to debug (#435)."
+  (condition-case err
       (let ((item (org-canvas-api-request
                    'GET (org-canvas-api-course-endpoint
                          "modules/%s/items/%s" module-id id))))
         (and (listp item)
              (equal (format "%s" (alist-get 'id item)) (format "%s" id))))
-    (error nil)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Module Item] Could not read module %s's item %s to ask whether it is live (%s); assuming it is not"
+       module-id id (error-message-string err))
+     nil)))
 
 (defun org-canvas--module-item-live-home (id module-id)
   "Return the module other than MODULE-ID holding live item ID, or nil."
@@ -2067,13 +2076,17 @@ left behind (issues #177, #179).  Returns the number deleted."
 
 ;;;; Pull
 
-(defconst org-canvas--module-type-to-file-map
-  '(("Page" . "pages.org")
-    ("Assignment" . "assignments.org")
-    ("Quiz" . "quizzes.org")
-    ("Discussion" . "discussions.org")
-    ("File" . "files.org"))
-  "Map Canvas module item types to their corresponding Org files.")
+(defun org-canvas--module-file-for-type (item-type)
+  "Return the course file holding ITEM-TYPE's headings, or nil.
+The file vars are read at call time, so a course that renames one
+keeps its module-item links resolving (#435)."
+  (pcase item-type
+    ("Page" org-canvas-pages-file)
+    ("Assignment" org-canvas-assignments-file)
+    ("Quiz" org-canvas-quizzes-file)
+    ("Discussion" org-canvas-discussions-file)
+    ("File" org-canvas-files-file)
+    (_ nil)))
 
 (defun org-canvas--module-resolve-file-item-link (content-id title)
   "Resolve a File-typed module item to a direct file link.
@@ -2087,7 +2100,7 @@ This bypasses the indirection through files.org so that clicking
 the module item opens the file directly, and avoids the brittle
 `*[[file:...][...]]' search target that arises when the files.org
 heading is itself a link."
-  (let ((files-org (expand-file-name (org-canvas--path "files.org"))))
+  (let ((files-org (expand-file-name org-canvas-files-file)))
     (cond
      ((not (file-exists-p files-org))
       (or title "Untitled"))
@@ -2119,13 +2132,16 @@ heading is itself a link."
 ITEM-TYPE is one of `Page', `Assignment', `Quiz', or `Discussion'.
 CONTENT-ID is the Canvas ID (or page URL for Pages).  TITLE is the
 display title."
-  (let* ((org-file (alist-get item-type org-canvas--module-type-to-file-map
-                              nil nil #'equal))
+  (let* ((org-file (org-canvas--module-file-for-type item-type))
          (id-prop (if (equal item-type "Page") "CANVAS_URL" "CANVAS_ID")))
     (if (not org-file)
         (or title "Untitled")
-      (let ((file-path (expand-file-name
-                        (org-canvas--path org-file))))
+      (let* ((file-path (expand-file-name org-file))
+             ;; The link carries the path relative to the module file, so
+             ;; it stays a plain filename wherever the defcustoms point
+             (link-path (file-relative-name
+                         file-path
+                         (file-name-directory (expand-file-name org-canvas-modules-file)))))
         (if (not (file-exists-p file-path))
             (or title "Untitled")
           (let ((heading-name nil))
@@ -2144,7 +2160,7 @@ display title."
                 (let ((unescaped (replace-regexp-in-string
                                   "\\\\\\([][]\\)" "\\1" heading-name)))
                   (org-link-make-string
-                   (format "file:%s::*%s" org-file unescaped)
+                   (format "file:%s::*%s" link-path unescaped)
                    (or title unescaped)))
               (or title "Untitled"))))))))
 

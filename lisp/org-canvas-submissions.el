@@ -696,11 +696,18 @@ Returns a list of alists with `id' and `name' keys."
 (defun org-canvas--submissions-fetch-assignment (assignment-id)
   "Fetch ASSIGNMENT-ID's assignment object, or nil when the request fails.
 The object carries `rubric_settings' and `rubric' for the grading file
-header; a refresh needs it because only the pull had the object."
-  (condition-case nil
+header; a refresh needs it because only the pull had the object.  A
+failed read says so with one warning — a swallow here rendered the
+grading file without its rubric header and left nothing to debug
+\(#435)."
+  (condition-case err
       (org-canvas-api-request
        'GET (org-canvas-api-course-endpoint "assignments/%s" assignment-id))
-    (error nil)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Submissions] Could not read assignment %s (%s); the grading file renders without its rubric header"
+       assignment-id (error-message-string err))
+     nil)))
 
 (defun org-canvas--submissions-fetch-for-assignment (assignment-id)
   "Fetch all submissions for ASSIGNMENT-ID with comments, rubric, and user info.
@@ -3523,13 +3530,29 @@ Students without attachments are skipped; the count is reported."
     (message "Downloaded attachments for %d student(s)" students)))
 
 (defun org-canvas--submissions-download-file (url directory filename)
-  "Download URL to DIRECTORY as FILENAME using Bearer auth."
+  "Download URL to DIRECTORY as FILENAME using the token query parameter.
+The access_token parameter, not an Authorization header, is deliberate:
+Canvas's download route 302-redirects to a presigned S3 or InstFS URL
+whose own signature lives in the query string, and a request carrying
+both that signature and an Authorization header is rejected (S3 allows
+one auth mechanism only).  The headerless fetch `url-copy-file' makes
+is the one that survives the redirect chain (#435)."
   (let ((output-path (expand-file-name filename directory)))
-    (url-copy-file
-     (concat url
-             (if (string-match-p "\\?" url) "&" "?")
-             "access_token=" (org-canvas--api-token))
-     output-path t)))
+    (condition-case err
+        (url-copy-file
+         (concat url
+                 (if (string-match-p "\\?" url) "&" "?")
+                 "access_token=" (org-canvas--api-token))
+         output-path t)
+      ;; url-copy-file puts the whole URL, token included, into the
+      ;; error data; redact it before the signal reaches the user
+      ;; (issue #154's rule applied to a URL rather than a body).
+      (error (signal (car err)
+                     (mapcar (lambda (datum)
+                               (if (stringp datum)
+                                   (org-canvas--log-redact datum)
+                                 datum))
+                             (cdr err)))))))
 
 (defun org-canvas--submissions-sanitize-filename (name)
   "Sanitize NAME for use as a directory/filename.

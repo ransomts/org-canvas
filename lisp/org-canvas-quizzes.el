@@ -76,6 +76,10 @@
 ;; reached the way assignments reach the override table in sections.el.
 (declare-function org-canvas--accommodation-write-table "org-canvas-quiz-accommodations"
                   (quiz-id))
+;; A pulled quiz's GROUP link resolves through assignments.el; declared
+;; rather than required, so quizzes stay loadable without it (#435).
+(declare-function org-canvas--assignment-resolve-group-link "org-canvas-assignments"
+                  (group-id))
 
 ;;;; Configuration
 
@@ -1126,7 +1130,10 @@ FILE is the quizzes.org path, used for group link resolution."
                    (org-canvas--alist-get-non-null (nth 0 spec) quiz)
                  (alist-get (nth 0 spec) quiz))))
       (org-canvas--quiz-pull-set-single-property pos (nth 1 spec) val (nth 2 spec))))
-  ;; Resolve assignment group link (special case)
+  ;; Resolve assignment group link (special case).  The fboundp guard
+  ;; exists because quizzes.el declares, never requires, the
+  ;; assignments.el resolver (declared above): a quizzes-only setup
+  ;; skips GROUP links rather than erroring (#435).
   (let ((group-id (alist-get 'assignment_group_id quiz)))
     (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
       (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
