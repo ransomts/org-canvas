@@ -90,9 +90,157 @@
                (lambda (&rest _) (error "Broken archive"))))
       (expect (org-canvas-batch--try-package-initialize) :to-be nil)))
 
+  (it "keeps its own directory and the named ones ahead of package.el's"
+    (let ((load-path '("/existing")) (calls 0)
+          (process-environment (cons "ORG_CANVAS_LOAD_PATH=/a" process-environment)))
+      (cl-letf (((symbol-function 'locate-library)
+                 (lambda (&rest _) (and (> (cl-incf calls) 1) "/pkg/plz/plz.el")))
+                ((symbol-function 'org-canvas-batch--try-package-initialize)
+                 (lambda () (push "/elpa/org-canvas-0.1.0" load-path) t)))
+        (let ((added (org-canvas-batch-ensure-load-path)))
+          (expect load-path :to-equal
+                  (list org-canvas-batch--own-directory "/a"
+                        "/elpa/org-canvas-0.1.0" "/existing"))
+          (expect (member "/elpa/org-canvas-0.1.0" added) :to-be-truthy)))))
+
   (it "ignores an empty ORG_CANVAS_LOAD_PATH"
     (let ((process-environment (cons "ORG_CANVAS_LOAD_PATH=" process-environment)))
       (expect (org-canvas-batch--env-directories) :to-be nil))))
+
+;;;; Stale byte-compiled files (#424)
+
+(defconst test-batch--root
+  (file-name-directory
+   (directory-file-name (file-name-directory (locate-library "org-canvas-batch"))))
+  "The checkout root: the directory above lisp/.")
+
+(defun test-batch--source-forms (file)
+  "Return the top-level forms of FILE, in order."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (let (forms)
+      (condition-case nil
+          (while t (push (read (current-buffer)) forms))
+        (end-of-file nil))
+      (nreverse forms))))
+
+(describe "load-prefer-newer in the batch entry point"
+  (it "is set before org-canvas is required, for the whole process"
+    (let* ((forms (test-batch--source-forms
+                   (expand-file-name "lisp/org-canvas-batch.el" test-batch--root)))
+           (prefer (cl-position '(setq load-prefer-newer t) forms :test #'equal))
+           (require-pos (cl-position '(require 'org-canvas) forms :test #'equal)))
+      (expect prefer :to-be-truthy)
+      (expect require-pos :to-be-truthy)
+      (expect (< prefer require-pos) :to-be t)
+      (expect (default-value 'load-prefer-newer) :to-be t)))
+
+  (it "is set by the script before org-canvas-batch.el loads"
+    (let ((text (with-temp-buffer
+                  (insert-file-contents
+                   (expand-file-name "scripts/org-canvas" test-batch--root))
+                  (buffer-string))))
+      (expect text :to-match
+              "--eval '(setq load-prefer-newer t)'[ \\\n]*-l \"\\$lisp/org-canvas-batch\\.el\"")))
+
+  (it "lets the script print the version with no stale-file warning"
+    (let* ((emacs (expand-file-name invocation-name invocation-directory))
+           (process-environment
+            (append (list (concat "EMACS=" emacs)
+                          (concat "ORG_CANVAS_LOAD_PATH="
+                                  (mapconcat #'identity load-path path-separator)))
+                    process-environment))
+           (status nil)
+           (out (with-temp-buffer
+                  (setq status (call-process
+                                "sh" nil t nil
+                                (expand-file-name "scripts/org-canvas" test-batch--root)
+                                "--version"))
+                  (buffer-string))))
+      (expect status :to-equal 0)
+      (expect out :to-match "^org-canvas [0-9.]+")
+      (expect out :to-match "^Loaded from .*lisp/")
+      (expect out :not :to-match "using older file"))))
+
+;;;; Version
+
+(describe "org-canvas-batch-version-text"
+  (it "names the version, the commit and the directory loaded"
+    (let ((file (expand-file-name "lisp/org-canvas.el" test-batch--root))
+          (git-dir nil))
+      (cl-letf (((symbol-function 'org-canvas-batch--loaded-file) (lambda () file))
+                ((symbol-function 'process-lines)
+                 (lambda (program &rest args)
+                   (setq git-dir (list program args default-directory))
+                   '("abc1234"))))
+        (expect (org-canvas-batch-version-text) :to-equal
+                (format "org-canvas %s (commit abc1234)\nLoaded from %s (source)\n"
+                        (org-canvas-version) (file-name-directory file)))
+        (expect git-dir :to-equal
+                (list "git" '("rev-parse" "--short" "HEAD")
+                      (file-name-directory (file-truename file)))))))
+
+  (it "leaves the commit out when git fails or is missing"
+    (let ((file (expand-file-name "lisp/org-canvas.el" test-batch--root)))
+      (dolist (err '((error "fatal: not a git repository")
+                     (file-missing "Searching for program" "No such file" "git")))
+        (cl-letf (((symbol-function 'org-canvas-batch--loaded-file) (lambda () file))
+                  ((symbol-function 'process-lines)
+                   (lambda (&rest _) (signal (car err) (cdr err)))))
+          (expect (org-canvas-batch-version-text) :to-match
+                  (format "\\`org-canvas %s\nLoaded from "
+                          (regexp-quote (org-canvas-version))))))))
+
+  (it "finds no commit outside a checkout"
+    (test-batch--with-temp-dir dir
+      (let ((process-environment (cons (concat "GIT_CEILING_DIRECTORIES="
+                                               (directory-file-name
+                                                (file-name-directory
+                                                 (directory-file-name dir))))
+                                       process-environment)))
+        (expect (org-canvas-batch--git-commit dir) :to-be nil))))
+
+  (it "says a byte-compiled file was loaded, its version unknown without a source"
+    (cl-letf (((symbol-function 'org-canvas-batch--loaded-file)
+               (lambda () "/no/such/dir/org-canvas.elc"))
+              ((symbol-function 'process-lines) (lambda (&rest _) (error "No repo"))))
+      (expect (org-canvas-batch-version-text) :to-equal
+              "org-canvas unknown\nLoaded from /no/such/dir/ (byte-compiled)\n")))
+
+  (it "names the file org-canvas was loaded from"
+    (expect (file-name-nondirectory (org-canvas-batch--loaded-file))
+            :to-match "\\`org-canvas\\.elc?\\'"))
+
+  (it "refuses when org-canvas is not loaded"
+    (cl-letf (((symbol-function 'org-canvas-batch--loaded-file) #'ignore))
+      (expect (org-canvas-batch-version-text) :to-throw 'error))))
+
+(describe "the version command"
+  (it "prints the version under --version, -V and version, with no course"
+    (let ((setup nil))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup)
+                 (lambda (&rest _) (setq setup t)))
+                ((symbol-function 'org-canvas-batch-version-text)
+                 (lambda () "org-canvas 9.9.9\n")))
+        (dolist (args '(("--version") ("-V") ("version") ("-C" "/nowhere" "--version")
+                        ("-V" "diff")))
+          (let ((out (with-output-to-string
+                       (expect (org-canvas-batch-main args) :to-equal 0))))
+            (expect out :to-equal "org-canvas 9.9.9\n")))
+        (expect setup :not :to-be-truthy))))
+
+  (it "gives --help the precedence over --version"
+    (let ((out (with-output-to-string
+                 (expect (org-canvas-batch-main '("--version" "--help")) :to-equal 0))))
+      (expect out :to-match "Usage: org-canvas")
+      (expect out :to-match "--version")))
+
+  (it "exits 3 when the version cannot be read"
+    (let (messages)
+      (test-batch--quietly messages
+        (cl-letf (((symbol-function 'org-canvas-batch--loaded-file) #'ignore))
+          (expect (test-batch--run '("--version")) :to-equal 3)))
+      (expect (car messages) :to-match "not loaded"))))
 
 ;;;; Setup
 

@@ -23,6 +23,10 @@
 ;; bare batch Emacs (`org-canvas-batch-ensure-load-path'): directories
 ;; named in ORG_CANVAS_LOAD_PATH, then package.el's packages, then the
 ;; straight and elpa build directories under `user-emacs-directory'.
+;; The directory this file sits in always comes first, so the checkout
+;; the script was run from is the code that runs, and
+;; `load-prefer-newer' is set, so a stale byte-compiled file left in that
+;; checkout never shadows the source beside it (issue #424).
 ;;
 ;; This is a command file: it sits above every feature module and no
 ;; module requires it.
@@ -30,6 +34,20 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'lisp-mnt)
+(require 'loadhist)
+
+;; Set before anything below loads, for the rest of this process: a
+;; checkout compiled in place keeps .elc files that `git pull' and
+;; `straight-rebuild-package' never refresh, and Emacs would otherwise
+;; load them over newer sources ("Source file ... newer than
+;; byte-compiled file; using older file"), running old code against
+;; this entry point (issue #424).  A `let' around the require below
+;; would not do: org-canvas loads libraries later, through autoloads and
+;; optional requires, and those must prefer the newer file too.
+;; `scripts/org-canvas' sets it on the command line as well, so this
+;; file itself is never read from a stale .elc.
+(setq load-prefer-newer t)
 
 ;;;; Load Path
 
@@ -76,16 +94,23 @@ variable ORG_CANVAS_LOAD_PATH names to `load-path'.  Then, if the
 dependency plz still cannot be found, activate package.el's
 packages, and failing that add every build directory under
 straight/build and elpa in `user-emacs-directory'.  Return the
-directories added."
-  (let ((before load-path))
-    (dolist (dir (reverse (cons org-canvas-batch--own-directory
-                                (org-canvas-batch--env-directories))))
+directories added.
+This file's directory, then the named ones, end up first, ahead of
+any directory package.el put in front, so an org-canvas that
+package.el or straight installed never shadows the copy asked
+for (issue #424)."
+  (let ((before load-path)
+        (first (cons org-canvas-batch--own-directory
+                     (org-canvas-batch--env-directories))))
+    (dolist (dir (reverse first))
       (add-to-list 'load-path dir))
     (unless (locate-library "plz")
       (org-canvas-batch--try-package-initialize))
     (unless (locate-library "plz")
       (dolist (dir (org-canvas-batch--scan-directories))
         (add-to-list 'load-path dir t)))
+    (setq load-path (append first (cl-set-difference load-path first
+                                                     :test #'equal)))
     (cl-set-difference load-path before :test #'equal)))
 
 (org-canvas-batch-ensure-load-path)
@@ -151,10 +176,14 @@ copy silently.  Return the credentials file loaded, or nil."
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
      "Validate the Org files offline; exit 1 on errors.")
     ("sync" org-canvas-batch--cmd-sync 0 0 ""
-     "Push every enabled feature; exit 1 if any item failed."))
-  "The subcommands: (NAME FUNCTION MIN-ARGS MAX-ARGS SYNOPSIS DOC).
+     "Push every enabled feature; exit 1 if any item failed.")
+    ("version" org-canvas-batch--cmd-version 0 0 ""
+     "Print the version, commit and directory loaded (also --version)."
+     no-course))
+  "The subcommands: (NAME FUNCTION MIN-ARGS MAX-ARGS SYNOPSIS DOC [NO-COURSE]).
 MAX-ARGS nil means any number.  FUNCTION takes the parsed command
-line and returns the exit status.")
+line and returns the exit status.  NO-COURSE non-nil means the
+command runs without a course directory, its credentials unread.")
 
 (defun org-canvas-batch--help-text ()
   "Return the usage text, one line per subcommand."
@@ -162,7 +191,8 @@ line and returns the exit status.")
    "Usage: org-canvas [-C DIR] [--dry-run] COMMAND [ARGS...]\n\n"
    "  -C, --course DIR  course directory (default: the current directory)\n"
    "  -n, --dry-run     push and sync send nothing\n"
-   "  -h, --help        print this text\n\nCommands:\n"
+   "  -h, --help        print this text\n"
+   "  -V, --version     print the version and where it was loaded from\n\nCommands:\n"
    (mapconcat (lambda (c)
                 (format "  %-30s %s" (string-trim (format "%s %s" (nth 0 c) (nth 4 c)))
                         (nth 5 c)))
@@ -184,18 +214,24 @@ Return (PARSED . REST) with any value ARG took consumed from REST."
     (cons (plist-put parsed :dry-run t) rest))
    ((member arg '("-h" "--help"))
     (cons (plist-put parsed :help t) rest))
+   ((member arg '("-V" "--version"))
+    (cons (plist-put parsed :version t) rest))
    (t (org-canvas-batch--usage "Unknown option %s" arg))))
 
 (defun org-canvas-batch-parse-args (args)
   "Parse ARGS, the words after the program name, into a plist.
 The plist holds :directory, :dry-run, :help, :command (the entry of
 `org-canvas-batch--commands') and :args.  A leading \"--\" is
-dropped.  Anything malformed signals `org-canvas-batch-usage-error'."
-  (let ((parsed (list :directory nil :dry-run nil :help nil))
+dropped.  --version stands for the version command, whatever
+follows it; --help, or no command at all, asks for the help.
+Anything malformed signals `org-canvas-batch-usage-error'."
+  (let ((parsed (list :directory nil :dry-run nil :help nil :version nil))
         (rest (if (equal (car args) "--") (cdr args) args)))
     (while (and rest (string-prefix-p "-" (car rest)))
       (let ((step (org-canvas-batch--parse-option (car rest) (cdr rest) parsed)))
         (setq parsed (car step) rest (cdr step))))
+    (when (plist-get parsed :version)
+      (setq rest (list "version")))
     (if (or (plist-get parsed :help) (null rest))
         (plist-put parsed :help t)
       (let ((command (assoc (car rest) org-canvas-batch--commands)))
@@ -314,14 +350,60 @@ Return 1 if any item failed."
          (counters (org-canvas-sync)))
     (if (> (or (plist-get counters :fail) 0) 0) 1 0)))
 
+;;;; Version
+
+(defun org-canvas-batch--loaded-file ()
+  "Return the file org-canvas was loaded from, or nil if it is not loaded."
+  (and (featurep 'org-canvas) (feature-file 'org-canvas)))
+
+(defun org-canvas-batch--header-version (file)
+  "Return the Version header of FILE's source, or \"unknown\"."
+  (let ((source (replace-regexp-in-string "\\.elc\\'" ".el" file)))
+    (or (and (file-readable-p source)
+             (with-temp-buffer
+               (insert-file-contents source)
+               (lm-version)))
+        "unknown")))
+
+(defun org-canvas-batch--git-commit (directory)
+  "Return the short commit of the git checkout holding DIRECTORY, or nil.
+Nil when git is missing, DIRECTORY is not in a checkout, or git
+fails in any other way."
+  (condition-case nil
+      (let ((default-directory (file-name-as-directory directory)))
+        (car (process-lines "git" "rev-parse" "--short" "HEAD")))
+    (error nil)))
+
+(defun org-canvas-batch-version-text ()
+  "Return the version text: version, commit and the directory loaded.
+The commit is that of the checkout holding the loaded file, symbolic
+links followed, so a straight build directory names the commit of
+the repository it links into."
+  (let* ((file (or (org-canvas-batch--loaded-file)
+                   (error "Org-canvas is not loaded")))
+         (commit (org-canvas-batch--git-commit
+                  (file-name-directory (file-truename file)))))
+    (format "org-canvas %s%s\nLoaded from %s (%s)\n"
+            (org-canvas-batch--header-version file)
+            (if commit (format " (commit %s)" commit) "")
+            (file-name-directory file)
+            (if (string-suffix-p ".elc" file) "byte-compiled" "source"))))
+
+(defun org-canvas-batch--cmd-version (_parsed)
+  "Print the version text; return 0."
+  (princ (org-canvas-batch-version-text))
+  0)
+
 ;;;; Entry Points
 
 (defun org-canvas-batch--run (parsed)
   "Set up the course PARSED names and run its command; return the status."
-  (if (plist-get parsed :help)
-      (progn (princ (org-canvas-batch--help-text)) 0)
-    (org-canvas-batch-setup (plist-get parsed :directory))
-    (funcall (nth 1 (plist-get parsed :command)) parsed)))
+  (let ((command (plist-get parsed :command)))
+    (if (plist-get parsed :help)
+        (progn (princ (org-canvas-batch--help-text)) 0)
+      (unless (nth 6 command)
+        (org-canvas-batch-setup (plist-get parsed :directory)))
+      (funcall (nth 1 command) parsed))))
 
 (defun org-canvas-batch-main (args)
   "Run the org-canvas command line ARGS and return its exit status.

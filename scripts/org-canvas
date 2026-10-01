@@ -2,7 +2,7 @@
 # org-canvas --- run an org-canvas command against a course from the shell
 #
 #   scripts/org-canvas [-C DIR] [--dry-run] COMMAND [ARGS...]
-#   scripts/org-canvas --help
+#   scripts/org-canvas --help | --version
 #
 # The course directory defaults to the current one; its
 # org-canvas-credentials.el is loaded.  EMACS names the Emacs to run
@@ -12,7 +12,13 @@
 # separated by colons.  The exit status is the command's own: 0 done,
 # 1 drift, validation errors or a failed item, 2 usage, 3 error
 # (issue #416).
+#
+# The org-canvas that runs is the one in ORG_CANVAS_LISP, ahead of any
+# copy straight or package.el installed, and load-prefer-newer is set
+# before anything loads, so a stale .elc left in a checkout compiled in
+# place never shadows the source beside it (issue #424).  --version
+# names the version, commit and directory that were loaded.
 script=$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")
 lisp=${ORG_CANVAS_LISP:-$(dirname "$script")/../lisp}
-exec "${EMACS:-emacs}" --batch -l "$lisp/org-canvas-batch.el" \
-     -f org-canvas-batch -- "$@"
+exec "${EMACS:-emacs}" --batch --eval '(setq load-prefer-newer t)' \
+     -l "$lisp/org-canvas-batch.el" -f org-canvas-batch -- "$@"
