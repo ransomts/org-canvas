@@ -221,6 +221,7 @@ You have completed the auto-graded portion.  The file upload above will be grade
 :SHOW_CORRECT_ANSWERS: true
 :SHOW_CORRECT_ANSWERS_AT: <2026-09-08 Tue 08:00>
 :HIDE_CORRECT_ANSWERS_AT: <2026-12-11 Fri 23:59>
+:NO_MODULE: true
 :CANVAS_ID: 639493
 :LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
@@ -240,3 +241,33 @@ Which library is the standard tool for data manipulation in Python?
 - [X] pandas
 - [ ] Matplotlib
 - [ ] scikit-learn
+
+* Mid-Semester Feedback Survey
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:PUBLISHED: true
+:ANONYMOUS_SUBMISSIONS: true
+:UNLOCK_AT: <2026-10-12 Mon 08:00>
+:LOCK_AT:  <2026-10-23 Fri 23:59>
+:END:
+
+Tell us how the course is going.  Responses are anonymous: a survey is made anonymous before anyone answers, never after.
+
+** Question: Pace
+:PROPERTIES:
+:TYPE:     multiple_choice_question
+:POINTS:   0
+:END:
+
+The pace of the course so far is:
+- [ ] Too slow
+- [ ] About right
+- [ ] Too fast
+
+** Question: One Change
+:PROPERTIES:
+:TYPE:     essay_question
+:POINTS:   0
+:END:
+
+What is one thing that would help you learn more in the second half?

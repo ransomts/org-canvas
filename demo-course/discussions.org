@@ -50,6 +50,7 @@ You must post your response *before* you can see other students' answers.
 :GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
 :GROUP_CATEGORY: 1
 :SPECIFIC_SECTIONS: Section A - MWF 9:00am
+:NO_MODULE: true
 :END:
 
 This is a graded discussion worth 10 points.
@@ -59,3 +60,22 @@ Post at least one question you have about the material covered in Weeks 1-7.  Th
 Grading criteria:
 - Original question shows genuine engagement with the material (5 pts)
 - Responses are helpful and substantive (5 pts)
+
+* Debate: Is More Data Always Better?
+:PROPERTIES:
+:PUBLISHED: true
+:DISCUSSION_TYPE: threaded
+:GRADING_TYPE: points
+:GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
+:RUBRIC_LINK: [[file:rubrics.org::*Peer Review Rubric][Peer Review Rubric]]
+:CHECKPOINT_TOPIC_POINTS: 12
+:CHECKPOINT_TOPIC_DUE_AT: <2026-10-28 Wed 23:59>
+:CHECKPOINT_REPLY_POINTS: 8
+:CHECKPOINT_REPLY_DUE_AT: <2026-10-31 Sat 23:59>
+:CHECKPOINT_REPLIES_REQUIRED: 2
+:LOCK_AT:  <2026-11-04 Wed 23:59>
+:END:
+
+A checkpointed discussion: the first post and the replies to peers are graded separately, each with its own points and due date, so there is no =DUE_AT= and no =POINTS= here.
+
+Take a side: does collecting more data always lead to a better analysis?  Post your position with one concrete example by Wednesday, then answer two classmates who took the other side by Saturday.  Replies close the following Wednesday.

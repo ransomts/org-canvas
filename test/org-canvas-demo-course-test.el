@@ -4,7 +4,7 @@
 ;;; Commentary:
 
 ;; Integration test that runs the offline validation engine over the bundled
-;; demo-course/ (16 .org files covering every content type) and asserts it has
+;; demo-course/ (18 .org content files covering every content type) and asserts it has
 ;; zero validation errors.  This dogfoods the example users learn from on REAL
 ;; representative data, so it can't silently rot, and it exercises
 ;; parse/validate/link-resolution across all modules at once.
@@ -46,6 +46,7 @@
          (org-canvas-sections-file (expand-file-name "sections.org" org-canvas-demo--dir))
          (org-canvas-settings-file (expand-file-name "settings.org" org-canvas-demo--dir))
          (org-canvas-grading-schemes-file (expand-file-name "grading-schemes.org" org-canvas-demo--dir))
+         (org-canvas-grading-periods-file (expand-file-name "grading-periods.org" org-canvas-demo--dir))
          (org-canvas-messages-file (expand-file-name "messages.org" org-canvas-demo--dir)))
      (unwind-protect
          (progn ,@body)
