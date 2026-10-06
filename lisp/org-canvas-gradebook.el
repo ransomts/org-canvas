@@ -54,7 +54,10 @@
 ;; `org-canvas-gradebook-file' and, with `org-canvas-gradebook-groups',
 ;; `org-canvas-gradebook-scores-file': every student's score on every
 ;; assignment with their user ids, kept for
-;; `org-canvas-gradebook-what-if'.  Keep both out of a repository.
+;; `org-canvas-gradebook-what-if'.  Keep both out of a repository; when
+;; the course directory is in a git work tree the scores file is added
+;; to the .gitignore beside it, unless git ignores it already, and a
+;; tracked one is warned about rather than touched.
 ;;
 ;; API NOTES
 ;; =========
@@ -768,17 +771,65 @@ shows letters.  A refusal is logged and answered with `refused' (the
        (error-message-string err))
      'refused)))
 
+(defun org-canvas--gradebook-git (directory &rest args)
+  "Return the exit status of git run with ARGS in DIRECTORY.
+Nil when git cannot be run at all (not installed, say); its output
+is discarded."
+  (condition-case nil
+      (let ((default-directory (file-name-as-directory directory)))
+        (apply #'process-file "git" nil nil nil args))
+    (error nil)))
+
+(defun org-canvas--gradebook-append-ignore (directory name)
+  "Add NAME as a line of the .gitignore in DIRECTORY, creating the file."
+  (let ((ignore (expand-file-name ".gitignore" directory)))
+    (with-temp-buffer
+      (when (file-exists-p ignore)
+        (insert-file-contents ignore))
+      (goto-char (point-max))
+      (unless (or (bobp) (bolp)) (insert "\n"))
+      (insert name "\n")
+      (write-region nil nil ignore nil 'silent))))
+
+(defun org-canvas--gradebook-ignore-scores (file)
+  "Keep the scores FILE out of the git work tree its directory is in.
+Answer what was done: nil outside a work tree (or without git),
+`ignored' when git already ignores FILE, `tracked' when git already
+tracks it (logged as a warning, nothing touched: removing it from the
+index is the user's call), and `added' when FILE's name was added to
+the .gitignore beside it, which is created when missing."
+  (let ((directory (file-name-directory file))
+        (name (file-name-nondirectory file)))
+    (cond
+     ((not (eql 0 (org-canvas--gradebook-git directory "rev-parse" "--is-inside-work-tree")))
+      nil)
+     ((eql 0 (org-canvas--gradebook-git directory "ls-files" "--error-unmatch" "--" name))
+      (org-canvas--log-warning org-canvas--logger
+        "[Gradebook] %s is tracked by git: every student's scores travel with the repository.  Run git rm --cached on it and ignore it"
+        file)
+      'tracked)
+     ((eql 0 (org-canvas--gradebook-git directory "check-ignore" "-q" "--" name))
+      'ignored)
+     (t
+      (org-canvas--gradebook-append-ignore directory name)
+      (org-canvas--log-info org-canvas--logger
+        "[Gradebook] Added %s to %s" name (expand-file-name ".gitignore" directory))
+      'added))))
+
 (defun org-canvas--gradebook-write-scores (scores)
-  "Write SCORES to `org-canvas-gradebook-scores-file' for the what-if."
+  "Write SCORES to `org-canvas-gradebook-scores-file' for the what-if.
+The file is then kept out of git by `org-canvas--gradebook-ignore-scores'."
   (let ((coding-system-for-write 'utf-8-unix)
         (print-length nil)
-        (print-level nil))
-    (with-temp-file (expand-file-name org-canvas-gradebook-scores-file)
+        (print-level nil)
+        (file (expand-file-name org-canvas-gradebook-scores-file)))
+    (with-temp-file file
       (insert ";; -*- mode: lisp-data; coding: utf-8 -*-\n"
               ";; org-canvas gradebook scores: every student's score on every assignment.\n"
               ";; Written by `org-canvas-pull-gradebook'; keep it out of a course repository.\n")
       (prin1 scores (current-buffer))
-      (insert "\n"))))
+      (insert "\n"))
+    (org-canvas--gradebook-ignore-scores file)))
 
 (defun org-canvas--gradebook-read-scores ()
   "Return the scores the last gradebook pull kept, or nil when there are none."

@@ -2348,7 +2348,12 @@ keep it out of a course repository (add it to =.gitignore=) and out
 of anything you share.  The same goes, more so, for
 =gradebook-scores.eld=, written when =org-canvas-gradebook-groups= is
 on: every student's score on every assignment, with their Canvas user
-ids.
+ids.  When the course directory is in a git work tree, the pull keeps
+it out for you: it adds =gradebook-scores.eld= to the =.gitignore= in
+the same directory (creating that file if needed) unless git already
+ignores it.  If git already tracks it, the pull touches nothing and
+logs a warning instead; remove it from the index yourself
+(=git rm --cached gradebook-scores.eld=).  Without git, nothing is done.
 
 ** grading-schemes.org
 
