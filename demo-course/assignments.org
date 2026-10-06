@@ -39,6 +39,7 @@ Download the [[file:files.org::*\[\[file:content/labs/lab01-starter.py\]\[lab01-
 :MAX_ATTEMPTS: 3
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
 :RUBRIC_LINK: [[file:rubrics.org::*Lab Rubric][Lab Rubric]]
+:RUBRIC_USE_FOR_GRADING: true
 :POSITION: 2
 :CANVAS_UPDATED_AT: 2026-02-15T14:38:15Z
 :CANVAS_ID: 2391129
@@ -70,6 +71,8 @@ Your submission will be graded using the Lab Rubric.
 :PEER_REVIEW_COUNT: 2
 :PEER_REVIEW_DUE_AT: <2026-09-28 Mon 23:59>
 :AUTOMATIC_PEER_REVIEWS: true
+:WANT_DOCUMENT_PROCESSOR: Turnitin
+:DOCUMENT_PROCESSOR: Turnitin (asset processor 12345)
 :POSITION: 1
 :CANVAS_UPDATED_AT: 2026-02-15T14:38:17Z
 :CANVAS_ID: 2391130
@@ -97,6 +100,9 @@ Submit as a PDF.  Your work will be peer-reviewed by two classmates using the Pe
 :ALLOWED_EXTENSIONS: pdf
 :GROUP:    [[file:assignment-groups.org::*Exams][Exams]]
 :MUTED:    true
+:POST_POLICY: manual
+:POST_COMMENTS_AT: <2026-10-26 Mon 08:00>
+:POST_GRADES_AT: <2026-10-26 Mon 12:00>
 :ANONYMOUS_GRADING: true
 :ONLY_VISIBLE_TO_OVERRIDES: false
 :POSITION: 1
@@ -114,6 +120,8 @@ This exam covers all material from the first half of the course: Python fundamen
 - 2-hour time limit
 - Upload your answers as a single PDF
 
+Grades stay hidden while the exam is marked and are posted on a schedule, comments first.
+
 #+NAME: overrides
 | Section                | Due At                  | Unlock At               | Lock At                 |
 |------------------------+-------------------------+-------------------------+-------------------------|
@@ -130,6 +138,7 @@ This exam covers all material from the first half of the course: Python fundamen
 :SUBMISSION: online_upload,online_url
 :GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
 :RUBRIC_LINK: [[file:rubrics.org::*Project Rubric][Project Rubric]]
+:RUBRIC_HIDE_SCORE_TOTAL: true
 :MODERATED_GRADING: true
 :GRADER_COUNT: 2
 :GRADING_STANDARD_ID: 0
@@ -166,6 +175,7 @@ Graded using the Project Rubric by two independent graders (moderated grading).
 :SUBMISSION: online_url
 :GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
 :OMIT_FROM_GRADES: true
+:NO_MODULE: true
 :POSITION: 2
 :CANVAS_UPDATED_AT: 2026-02-15T14:38:21Z
 :CANVAS_ID: 2391133
@@ -208,6 +218,7 @@ Topics are first-come, first-served -- sign up in the discussion board.
 :DUE_AT:   <2026-10-19 Mon 23:59>
 :SUBMISSION: external_tool
 :EXTERNAL_TOOL_URL: https://www.gradescope.com/auth/lti/callback
+:EXTERNAL_TOOL_ID: 48213
 :EXTERNAL_TOOL_NEW_TAB: true
 :GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
 :POSITION: 2
@@ -217,4 +228,4 @@ Topics are first-come, first-served -- sign up in the discussion board.
 
 Submitted and graded through Gradescope; the Canvas assignment is the launch point.
 
-Find the launch URL for a tool installed in your own course with =M-x org-canvas-list-external-tools=.
+Find the launch URL and the id of a tool installed in your own course with =M-x org-canvas-list-external-tools=; either one names the tool, and both may be given.

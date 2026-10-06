@@ -2,7 +2,7 @@
 
 * Overview
 
-This directory contains a complete, self-contained demo course that showcases every feature of =org-canvas=.  It is designed as a realistic 15-week university course to illustrate how all content types, properties, and linking patterns work together.
+This directory contains a complete, self-contained demo course that showcases every content type =org-canvas= pushes and every property you can set on one.  It is designed as a realistic 15-week university course to illustrate how all content types, properties, and linking patterns work together.
 
 *This is a reference example, not a live course.*  The =sections.org= file contains representative CANVAS_ID values for demonstrating override links.  PDF files in =content/= are placeholders.
 
@@ -13,24 +13,26 @@ This directory contains a complete, self-contained demo course that showcases ev
 | File                  | Content Type      | Key Features Demonstrated                     |
 |-----------------------+-------------------+-----------------------------------------------|
 | =settings.org=          | Course settings   | Late policy, visibility, all boolean settings |
-| =assignment-groups.org= | Assignment groups | Weighted groups, drop rules, position         |
-| =assignments.org=       | Assignments       | Rubric links, peer reviews, overrides table,  |
-|                       |                   | moderated grading, group assignments          |
-| =pages.org=             | Pages             | Front page, editing roles, TODO date          |
-| =discussions.org=       | Discussions       | Threaded, graded, ratings, post-first         |
+| =assignment-groups.org= | Assignment groups | Weighted groups, drop rules, never-drop, position |
+| =assignments.org=       | Assignments       | Rubric links and rubric grading, peer reviews, overrides table, |
+|                       |                   | moderated grading, group assignments, LTI tool launch, |
+|                       |                   | post policy and scheduled posting, document processor intent |
+| =pages.org=             | Pages             | Front page, editing roles, TODO date, scheduled publish |
+| =discussions.org=       | Discussions       | Threaded, graded, ratings, post-first, checkpoints, rubric, lock date |
 | =announcements.org=     | Announcements     | Delayed posting, section-specific             |
-| =quizzes.org=           | Quizzes           | Every classic question type, a question group, access code, IP filter, a per-student accommodations table |
-| =new-quizzes.org=       | New Quizzes       | Quiz settings, rubric link, every pushable item type |
+| =quizzes.org=           | Quizzes           | Every classic question type, a question group, access code, IP filter, a per-student accommodations table, an anonymous survey |
+| =new-quizzes.org=       | New Quizzes       | Quiz settings, assignment group, rubric link, every pushable item type |
 | =group-categories.org=  | Group categories  | Self sign-up, group limits, auto leader       |
 | =calendar.org=          | Calendar events   | Timed and all-day events, locations           |
 | =rubrics.org=           | Rubrics           | Simple, multi-level, and mixed criteria       |
 | =outcomes.org=          | Learning outcomes | Multiple calculation methods, rating levels   |
-| =files.org=             | File uploads      | Folder hierarchy, usage rights, date locks    |
+| =files.org=             | File uploads      | Folder hierarchy, usage rights, date locks, a hidden (unlisted) file |
 | =modules.org=           | Modules           | Cross-file links, completion requirements,    |
 |                       |                   | external URLs, prerequisites, SubHeaders      |
-| =sections.org=          | Sections          | Pull-only, date restrictions                  |
-| =grading-schemes.org=   | Grading schemes   | Letter-grade cutoffs; created, never edited in place |
-| =messages.org=          | Messages          | Inbox messages to students; one sent, one to try on yourself |
+| =sections.org=          | Sections          | Pull-only, date restrictions, meeting times (=MEETS=) |
+| =grading-schemes.org=   | Grading schemes   | Letter-grade cutoffs and a points-based 4.0 scale; created, never edited in place |
+| =grading-periods.org=   | Grading periods   | Pull-only: dates, weights, a closed period    |
+| =messages.org=          | Messages          | Inbox messages to students; one sent, one to try on yourself, one group conversation |
 
 ** Quiz Question Types
 
@@ -61,12 +63,25 @@ This directory contains a complete, self-contained demo course that showcases ev
 - *Completion requirements* -- must_view, must_submit, must_contribute, min_score
 - *Practice quiz* -- Ungraded self-assessment with show/hide correct answer dates
 - *Graded discussion* -- Midterm Study Group with points and assignment group link
+- *Checkpointed discussion* -- the Debate grades the first post and the replies separately, each with its own due date
+- *Kept out of modules on purpose* -- =NO_MODULE: true= on Student Resources, the practice quiz, Midterm Study Group, the extra-credit assignment and =lab02-data.csv=; every other published item is linked from =modules.org=, so =org-canvas-validate= has no "in no module" notes
+- *Scheduled publishing* -- the Midterm Review Guide page (=PUBLISH_AT=), the Week 03 module and the Quiz 02 module item
+- *Post policy and scheduled posting* -- Midterm Exam hides its grades and posts them on a schedule, comments first
+- *Rubric as the grade* -- Lab 02 (=RUBRIC_USE_FOR_GRADING=); the Final Project hides the rubric's score total
+- *LTI assignment* -- Homework 02 launches Gradescope, named by URL and by tool id
+- *Document processor intent* -- Homework 01 asks for Turnitin (=WANT_DOCUMENT_PROCESSOR=) beside the =DOCUMENT_PROCESSOR= a pull recorded
+- *Anonymous survey* -- Mid-Semester Feedback Survey in =quizzes.org=
+- *Section meeting times* -- =MEETS= in =sections.org=, read when a grading file is scored by section window
+
+** What It Leaves Out
+
+Some files are written only by a pull and hold students' names, posts or grades: =people.org=, =groups.org=, =discussion-replies.org=, =gradebook.org= and =quiz-results.org= (with =rubric-results.org= beside it).  The manual says to keep them out of a course repository, so the demo ships none of them.  The grading files under the submissions directory are left out for the same reason.
 
 * How to Use
 
 1. Copy this directory and configure =org-canvas-credentials.el= with your Canvas URL and API token
 2. Set =org-canvas-directory= to point to your copy
-3. Run =M-x org-canvas-validate= to check for issues
+3. Run =M-x org-canvas-validate= to check for issues.  The demo validates with no errors; the three "sync it first" warnings name headings that have never been pushed and go away after the first sync
 4. Run =M-x org-canvas-sync= to push everything to Canvas
 
 * Content Files
