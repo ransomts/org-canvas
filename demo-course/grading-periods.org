@@ -1,0 +1,25 @@
+#+TITLE: Grading Periods
+#+LAST_SYNCED: [2026-08-17 Mon 09:00]
+# Sync command: M-x org-canvas-pull-grading-periods
+#
+# Pull-only: grading periods belong to the term and are set by the
+# institution, so nothing in this file is pushed.
+
+* First Half
+:PROPERTIES:
+:CANVAS_ID: 8101
+:START_DATE: <2026-08-19 Wed 00:00>
+:END_DATE: <2026-10-09 Fri 23:59>
+:CLOSE_DATE: <2026-10-16 Fri 23:59>
+:WEIGHT:   40
+:IS_CLOSED: true
+:END:
+
+* Second Half
+:PROPERTIES:
+:CANVAS_ID: 8102
+:START_DATE: <2026-10-10 Sat 00:00>
+:END_DATE: <2026-12-11 Fri 23:59>
+:CLOSE_DATE: <2026-12-18 Fri 23:59>
+:WEIGHT:   60
+:END:
