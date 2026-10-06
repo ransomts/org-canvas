@@ -5,6 +5,7 @@
 :ONE_AT_A_TIME: true
 :ALLOWED_ATTEMPTS: 2
 :SCORING_POLICY: keep_highest
+:GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
 :RUBRIC_LINK: [[file:rubrics.org::*Lab Rubric][Lab Rubric]]
 :CANVAS_ASSIGNMENT_ID: 2391125
 :LAST_SYNCED: [2026-02-15 Sun 09:37]
@@ -161,7 +162,7 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: choice
 :POINTS: 2
-:OUTCOME: [[file:../outcomes.org::*Python Proficiency][Python Proficiency]]
+:OUTCOME: [[file:outcomes.org::*Python Proficiency][Python Proficiency]]
 :CANVAS_ITEM_ID: 70034
 :LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:

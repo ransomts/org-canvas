@@ -113,3 +113,47 @@
 :CANVAS_ID: 5440939
 :LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
+
+** [[file:assignments.org::*Homework 01: Statistics Review][Homework 01: Statistics Review]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_submit
+:END:
+
+** [[file:discussions.org::*Dataset Ethics Discussion][Dataset Ethics Discussion]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_contribute
+:END:
+
+* Week 08: Midterm
+:PROPERTIES:
+:PUBLISHED: false
+:POSITION: 4
+:UNLOCK_AT: <2026-10-12 Mon 08:00>
+:END:
+
+** [[file:pages.org::*Midterm Review Guide][Midterm Review Guide]]
+
+** [[file:assignments.org::*Midterm Exam][Midterm Exam]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_submit
+:END:
+
+** [[file:quizzes.org::*Mid-Semester Feedback Survey][Mid-Semester Feedback Survey]]
+
+* Weeks 10-15: Projects
+:PROPERTIES:
+:PUBLISHED: false
+:POSITION: 5
+:END:
+
+** [[file:discussions.org::*Debate: Is More Data Always Better?][Debate: Is More Data Always Better?]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_contribute
+:END:
+
+** [[file:assignments.org::*Group Presentation][Group Presentation]]
+
+** [[file:assignments.org::*Final Project: Data Analysis][Final Project: Data Analysis]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_submit
+:END:

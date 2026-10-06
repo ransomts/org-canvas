@@ -41,6 +41,7 @@
 :PROPERTIES:
 :PUBLISHED: true
 :USE_JUSTIFICATION: public_domain
+:NO_MODULE: true
 :CANVAS_UPDATED_AT: 2026-02-15T14:36:55Z
 :CANVAS_ID: 29672562
 :LAST_SYNCED: [2026-02-15 Sun 09:36]
@@ -50,6 +51,7 @@
 ** [[file:content/resources/cheatsheet.pdf][Python Cheatsheet.pdf]]
 :PROPERTIES:
 :PUBLISHED: true
+:HIDDEN:   true
 :USE_JUSTIFICATION: used_by_permission
 :USAGE_LICENSE: cc_by
 :COPYRIGHT: Original Author 2025
