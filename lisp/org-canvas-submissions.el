@@ -48,6 +48,7 @@
 ;; v  summary <-> detail
 ;; d  download attachments for the student at point
 ;; D  download attachments for every student
+;; u  the text of every downloaded upload, pairs grouped (SAME_AS)
 ;; c  post a comment on the student at point
 ;; S  push grade changes (and new saved comments)
 ;; B  read the comment bank into the Comment Bank heading
@@ -781,15 +782,33 @@ by CANVAS_ID with no Canvas request.  Return non-nil when either changed."
            (org-canvas--submissions-sanitize-filename student-name))
    (org-canvas--submissions-dir)))
 
-(defun org-canvas--submissions-local-attachment (assignment-name student-name filename)
+(defun org-canvas--submissions-local-attachment (assignment-name student-name filename
+                                                                 &optional attachment)
   "Return FILENAME's link path, relative to the grading file, if downloaded.
 Nil otherwise.  ASSIGNMENT-NAME and STUDENT-NAME locate the download
-directory."
+directory.  With ATTACHMENT, the Canvas attachment an entry lists, a
+copy that is not its download is nil too
+\(`org-canvas--submissions-stale-copy-p')."
   (when (and assignment-name student-name filename)
     (let ((path (expand-file-name
                  filename (org-canvas--submissions-attachment-dir assignment-name student-name))))
-      (when (file-exists-p path)
+      (when (and (file-exists-p path)
+                 (not (org-canvas--submissions-stale-copy-p path attachment)))
         (file-relative-name path (org-canvas--submissions-dir))))))
+
+(defun org-canvas--submissions-stale-copy-p (path attachment)
+  "Return non-nil when the file at PATH is not the download of ATTACHMENT.
+That is when Canvas gives ATTACHMENT a size and the file's differs,
+or the file was written before Canvas received ATTACHMENT: a
+resubmission under the same name, whose earlier copy would otherwise
+be linked and graded as the new one (issue #457)."
+  (let ((size (alist-get 'size attachment))
+        (created (org-canvas--alist-get-non-null 'created_at attachment))
+        (attributes (file-attributes path)))
+    (or (and (numberp size) (/= size (file-attribute-size attributes)))
+        (and (stringp created)
+             (time-less-p (file-attribute-modification-time attributes)
+                          (date-to-time created))))))
 
 (defun org-canvas--submissions-attachment-line (name url local)
   "Return the Attachments list line for NAME at URL.
@@ -2388,6 +2407,40 @@ before the buffer was re-rendered."
       (when (org-canvas--submissions-goto-user (car entry))
         (org-canvas--submissions-restore-entry (cdr entry))))))
 
+;;;; Shared Uploads Across a Refresh (issue #457)
+
+;; SAME_AS names the students who uploaded the same document as the
+;; one at point; `org-canvas-submissions-upload-text' writes it from
+;; the downloaded files.  A refresh re-renders every heading, so the
+;; value is carried over, for a student whose attempt is still the one
+;; it was worked out from.  A new attempt drops it: the pairing has to
+;; be worked out again from the new file.
+
+(defun org-canvas--submissions-same-as-carryover ()
+  "Return (USER-ID ATTEMPT SAME-AS) for every heading carrying SAME_AS."
+  (let ((carry nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^[ \t]*:SAME_AS:" nil t)
+        (org-back-to-heading t)
+        (when-let* ((user-id (org-entry-get (point) "USER_ID")))
+          (push (list (string-to-number user-id)
+                      (org-entry-get (point) "ATTEMPT")
+                      (org-entry-get (point) "SAME_AS"))
+                carry))
+        (org-end-of-meta-data)))
+    carry))
+
+(defun org-canvas--submissions-restore-same-as (carry)
+  "Write CARRY's SAME_AS back on the headings whose attempt is unchanged.
+CARRY is what `org-canvas--submissions-same-as-carryover' read before
+the re-render."
+  (save-excursion
+    (dolist (entry carry)
+      (when (and (org-canvas--submissions-goto-user (nth 0 entry))
+                 (equal (org-entry-get (point) "ATTEMPT") (nth 1 entry)))
+        (org-entry-put (point) "SAME_AS" (nth 2 entry))))))
+
 ;;;; What a Refresh Changed (issue #282)
 
 ;; A refresh is the grader's "what happened since I last looked".  The
@@ -2543,7 +2596,8 @@ FOUND is the plist of `org-canvas--submissions-changes-since';
 PREVIOUS supplies the PULLED_AT the no-change line names.  Each kind
 present is counted; the students who left say how many headings were
 kept for the work under them.  FOUND's :conflicted, the headings left
-marked CONFLICT, are named (issue #440)."
+marked CONFLICT, are named (issue #440), and so are its :undownloaded,
+the attachments listed and not on disk (issue #457)."
   (let ((parts nil))
     (dolist (label org-canvas--submissions-change-labels)
       (when-let* ((pairs (plist-get found (car label))))
@@ -2557,7 +2611,8 @@ marked CONFLICT, are named (issue #440)."
          (format "Refreshed %s: %s" name (string-join (nreverse parts) ", "))
        (format "Refreshed %s: no changes since %s" name
                (or (plist-get previous :pulled-at) "the last pull")))
-     (org-canvas--submissions-describe-conflicted (plist-get found :conflicted)))))
+     (org-canvas--submissions-describe-conflicted (plist-get found :conflicted))
+     (org-canvas--submissions-describe-undownloaded (plist-get found :undownloaded)))))
 
 (defun org-canvas--submissions-describe-conflicted (conflicted)
   "Return the refresh line's note naming CONFLICTED students, or \"\".
@@ -2567,6 +2622,57 @@ CONFLICTED is a list of (USER-ID NAME REASON), as
       (format "; CONFLICT on %d: %s" (length conflicted)
               (mapconcat (lambda (c) (format "%s (%s)" (nth 1 c) (nth 2 c)))
                          conflicted "; "))
+    ""))
+
+(defun org-canvas--submissions-undownloaded-at-point (assignment-name)
+  "Return the attachments of the student at point not on disk.
+Each is (STUDENT FILENAME OLDER), OLDER non-nil when a copy under that
+name is on disk but is not the attachment listed, an earlier attempt's
+\(`org-canvas--submissions-stale-copy-p').  ASSIGNMENT-NAME locates the
+download folder."
+  (let ((name (org-get-heading t t t t)))
+    (mapcar (lambda (entry)
+              (list name (plist-get entry :name)
+                    (file-exists-p
+                     (expand-file-name
+                      (plist-get entry :name)
+                      (org-canvas--submissions-attachment-dir assignment-name name)))))
+            (cl-remove-if (lambda (entry) (plist-get entry :local))
+                          (org-canvas--submissions-attachment-entries)))))
+
+(defun org-canvas--submissions-undownloaded (assignment-name)
+  "Return the attachments this grading file lists and its folder lacks.
+A list of `org-canvas--submissions-undownloaded-at-point' values over
+the students still enrolled.  Nil unless ASSIGNMENT-NAME's attachment
+folder exists: a column nobody downloaded is not missing anything, and
+every refresh would say otherwise (issue #457)."
+  (when (file-directory-p
+         (expand-file-name
+          (format "files/%s/" (org-canvas--submissions-sanitize-filename assignment-name))
+          (org-canvas--submissions-dir)))
+    (let ((missing nil))
+      (save-excursion
+        (goto-char (point-min))
+        (while (re-search-forward "^\\* " nil t)
+          (org-back-to-heading t)
+          (when (and (org-entry-get (point) "USER_ID")
+                     (not (org-canvas--submissions-left-p)))
+            (setq missing (append missing (org-canvas--submissions-undownloaded-at-point
+                                           assignment-name))))
+          (forward-line 1)))
+      missing)))
+
+(defun org-canvas--submissions-describe-undownloaded (missing)
+  "Return the refresh line's note naming MISSING attachments, or \"\".
+MISSING is a list of (STUDENT FILENAME OLDER), as
+`org-canvas--submissions-undownloaded' returns it (issue #457)."
+  (if missing
+      (format "; %d attachment(s) not on disk, D downloads them: %s"
+              (length missing)
+              (mapconcat (lambda (m)
+                           (format "%s (%s%s)" (nth 0 m) (nth 1 m)
+                                   (if (nth 2 m) ", an older copy is there" "")))
+                         missing "; "))
     ""))
 
 (defun org-canvas--submissions-log-changes (found)
@@ -2596,6 +2702,8 @@ Return the summary line, or nil on a first pull."
       (org-canvas--submissions-mark-resubmitted (plist-get changes :resubmitted) submissions)
       (setq changes (plist-put changes :conflicted
                                (org-canvas--submissions-conflicted-headings)))
+      (setq changes (plist-put changes :undownloaded
+                               (org-canvas--submissions-undownloaded name)))
       (org-canvas--submissions-log-changes changes)
       (when assignment-id
         (org-canvas--submissions-report-attempts
@@ -2723,7 +2831,9 @@ kept heading, since Canvas has nowhere to post it (issue #282)."
 (defun org-canvas--submissions-render-attachments (attachments &optional assignment-name student-name)
   "Render ATTACHMENTS as a sub-heading with links.
 With ASSIGNMENT-NAME and STUDENT-NAME, an attachment already downloaded
-links to the local copy first, with the Canvas link beside it."
+links to the local copy first, with the Canvas link beside it.  An
+earlier attempt's copy under the same name is not that download, and
+the entry links Canvas alone until D fetches it (issue #457)."
   (when (and attachments (> (length attachments) 0))
     (insert "\n** Attachments\n")
     (dolist (att (append attachments nil))
@@ -2733,7 +2843,7 @@ links to the local copy first, with the Canvas link beside it."
           (insert (org-canvas--submissions-attachment-line
                    filename url
                    (org-canvas--submissions-local-attachment
-                    assignment-name student-name filename))))))))
+                    assignment-name student-name filename att))))))))
 
 (defun org-canvas--submissions-comment-org-text (comment)
   "Return COMMENT's text for its Comments item, or an empty string.
@@ -4138,6 +4248,7 @@ and what changed since the last render is reported
              (carry (and detail (org-canvas--submissions-collect-carryover)))
              (comments (and detail (org-canvas--submissions-comment-edits-by-student)))
              (bank (and detail (org-canvas--submissions-bank-carryover)))
+             (same-as (and detail (org-canvas--submissions-same-as-carryover)))
              (changed nil))
         (if (not detail)
             (org-canvas--submissions-render-summary
@@ -4151,6 +4262,7 @@ and what changed since the last render is reported
             (org-canvas--submissions-restore-bank bank))
           (org-canvas--submissions-restore-carryover carry)
           (org-canvas--submissions-restore-comments comments)
+          (org-canvas--submissions-restore-same-as same-as)
           (setq changed (org-canvas--submissions-report-changes
                          assignment-name previous submissions carry
                          assignment-id)))

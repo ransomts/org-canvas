@@ -1,0 +1,5 @@
+* Added
+- #457 =org-canvas-submissions-upload-text= (=u= in a grading file, =L= in the menu) shows the text of every downloaded upload in a column, one block per student: PDFs through pdftotext, .docx and its kin through pandoc, text files as they are, with a line saying so when the program is missing. Students who uploaded the same document (the same Google Doc id in the text or the PDF's links, else the same file) are grouped: each heading gets =SAME_AS= naming the others, the groups are listed at the top and a pair's text is shown once. A refresh keeps =SAME_AS= while the attempt is unchanged
+
+* Fixed
+- #457 A refresh says which attachments it lists that are not on disk (=N attachment(s) not on disk, D downloads them=), once anything in the column has been downloaded, and a file a resubmission replaced under the same name is no longer linked as the local copy: an older or differently sized copy is treated as not downloaded, so =D= fetches the new one
