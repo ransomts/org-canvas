@@ -215,6 +215,12 @@ The gradebook and roster files live in a temp directory."
     (expect (org-canvas--gradebook-mean '(90.0 nil 70.0)) :to-equal 80.0)
     (expect (org-canvas--gradebook-mean '(nil)) :to-be nil)))
 
+(describe "org-canvas--gradebook-median"
+  (it "takes the middle number, the mean of the middle two, and nothing of blanks"
+    (expect (org-canvas--gradebook-median '(90 nil 70 80)) :to-equal 80.0)
+    (expect (org-canvas--gradebook-median '(90 70 80.5 60)) :to-equal 75.25)
+    (expect (org-canvas--gradebook-median '(nil :null)) :to-be nil)))
+
 (describe "org-canvas-pull-gradebook"
   (it "writes the students table sorted by name and the sections table with means"
     (test-gradebook--with-course
@@ -391,8 +397,37 @@ The gradebook and roster files live in a temp directory."
 
   (it "writes the empty-file note for a course with no students"
     (test-gradebook--with-course nil nil nil
-      (org-canvas-pull-gradebook)
-      (expect (test-gradebook--file) :to-match "Canvas returned 0 items")))
+      (expect (org-canvas-pull-gradebook) :to-be nil)
+      (expect (test-gradebook--file) :to-match "Canvas returned 0 items")
+      (expect (org-canvas-gradebook-summary-text nil) :to-equal
+              "Course: 0 students; current mean -, median -; final mean -, median -\n")))
+
+  (it "returns the student rows, summed up with the Sections table (issue #451)"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0)
+              (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0)
+              (test-gradebook--enrollment 3 "Cruz, Cal" 20 80.0 :null))
+        '(((id . 10) (name . "Lecture")) ((id . 20) (name . "Recitation")))
+        nil
+      (let* ((rows (org-canvas-pull-gradebook))
+             (text (org-canvas-gradebook-summary-text rows)))
+        (expect (mapcar (lambda (r) (plist-get r :name)) rows)
+                :to-equal '("Adams, Alice" "Beta, Bob" "Cruz, Cal"))
+        (expect text :to-match "\\`| Section +| Students +| Mean current")
+        (expect text :to-match "^| Lecture +| +2 | +80.8 |")
+        (expect text :to-match "^| Recitation +| +1 | +80.0 | -")
+        (expect text :not :to-match "Student +| Sections\\|Assignment")
+        (expect text :to-match
+                "|\n\nCourse: 3 students; current mean 80.5, median 80.0; final mean 76.5, median 76.5\n\\'"))))
+
+  (it "sums up without a table when gradebook.org has no Sections heading"
+    (test-gradebook--with-course nil nil nil
+      (with-temp-file org-canvas-gradebook-file (insert "* Students\n"))
+      (expect (org-canvas-gradebook-summary-text (list (list :current 90 :final 85)))
+              :to-equal
+              "Course: 1 student; current mean 90.0, median 90.0; final mean 85.0, median 85.0\n")
+      (with-temp-file org-canvas-gradebook-file (insert "* Students\n* Sections\n| Lecture | 1 |\n"))
+      (expect (org-canvas--gradebook-sections-table) :to-equal "| Lecture | 1 |")))
 
   (it "is in the pull tiers after people"
     (let ((names (mapcar #'car (apply #'append org-canvas--pull-tiers))))

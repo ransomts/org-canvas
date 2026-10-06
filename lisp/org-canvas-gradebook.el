@@ -330,6 +330,14 @@ table column each after Last activity."
   (let ((numbers (cl-remove-if-not #'numberp values)))
     (and numbers (/ (apply #'+ numbers) (float (length numbers))))))
 
+(defun org-canvas--gradebook-median (values)
+  "Return the median of the numbers in VALUES, or nil when there are none."
+  (let* ((numbers (sort (cl-remove-if-not #'numberp values) #'<))
+         (n (length numbers)))
+    (cond ((zerop n) nil)
+          ((cl-oddp n) (float (nth (/ n 2) numbers)))
+          (t (/ (+ (nth (1- (/ n 2)) numbers) (nth (/ n 2) numbers)) 2.0)))))
+
 (defun org-canvas--gradebook-insert-sections (rows names summaries)
   "Insert the Sections table for ROWS at point, one line per section in NAMES.
 SUMMARIES is `refused' when the Missing column is unavailable."
@@ -427,7 +435,9 @@ columns; one table of sections with their means; and one table of
 assignments with the class's score spread on each.  Read-only, and
 the tables are derived: every pull rewrites them.  The file holds
 every student's scores afterwards; keep it out of a course
-repository."
+repository.
+Return the student rows (see `org-canvas--gradebook-rows'), nil for
+a course with no students."
   (interactive)
   (org-canvas--start-operation "PULLING GRADEBOOK")
   (let* ((file (expand-file-name org-canvas-gradebook-file))
@@ -435,7 +445,9 @@ repository."
          (was-fresh (org-canvas--pull-was-fresh-p file)))
     (org-canvas--pull-confirm-unsaved file "gradebook")
     (if (null enrollments)
-        (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "gradebook"))
+        (progn
+          (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "gradebook"))
+          nil)
       (let* ((summaries (org-canvas--gradebook-fetch-summaries))
              (names (org-canvas--gradebook-fetch-section-names))
              (columns (org-canvas--gradebook-fetch-columns))
@@ -463,7 +475,45 @@ repository."
             "Gradebook pull complete: %d students, %d sections, %d assignments, %d with missing work"
             (length rows) (length names) (if (listp assignments) (length assignments) 0) missing)
           (message "Gradebook pull complete: %d students, %d sections, %d with missing work."
-                   (length rows) (length names) missing))))))
+                   (length rows) (length names) missing))
+        rows))))
+
+;;;; Summary
+
+(defun org-canvas--gradebook-sections-table ()
+  "Return the Sections table of `org-canvas-gradebook-file' as text, or nil.
+Nil when the file or its Sections heading is missing."
+  (let ((file (expand-file-name org-canvas-gradebook-file)))
+    (when (file-readable-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (when (re-search-forward "^\\* +Sections[ \t]*$" nil t)
+          (let ((start (point))
+                (end (if (re-search-forward "^\\* " nil t)
+                         (match-beginning 0)
+                       (point-max))))
+            (string-trim (buffer-substring-no-properties start end))))))))
+
+(defun org-canvas--gradebook-spread (rows key)
+  "Return \"mean M, median D\" of the scores under KEY in ROWS."
+  (let ((scores (mapcar (lambda (r) (plist-get r key)) rows)))
+    (format "mean %s, median %s"
+            (org-canvas--gradebook-number (org-canvas--gradebook-mean scores))
+            (org-canvas--gradebook-number (org-canvas--gradebook-median scores)))))
+
+(defun org-canvas-gradebook-summary-text (rows)
+  "Return the class standing after a gradebook pull, as text to print.
+The Sections table of `org-canvas-gradebook-file', then one line with
+the course's mean and median current and final scores over ROWS, the
+student rows `org-canvas-pull-gradebook' returns.  This is what the
+shell's gradebook command prints (issue #451)."
+  (let ((table (org-canvas--gradebook-sections-table)))
+    (concat (if table (concat table "\n\n") "")
+            (format "Course: %d student%s; current %s; final %s\n"
+                    (length rows) (if (= (length rows) 1) "" "s")
+                    (org-canvas--gradebook-spread rows :current)
+                    (org-canvas--gradebook-spread rows :final)))))
 
 (provide 'org-canvas-gradebook)
 ;;; org-canvas-gradebook.el ends here

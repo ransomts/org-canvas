@@ -436,6 +436,18 @@
       (test-batch--quietly messages
         (expect (test-batch--run '("grades" "--download")) :to-equal 2))))
 
+  (it "pulls gradebook.org and prints the class standing (#451)"
+    (let ((out nil) (status nil))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-pull-gradebook)
+                 (lambda () (list (list :name "Adams, Alice"))))
+                ((symbol-function 'org-canvas-gradebook-summary-text)
+                 (lambda (rows) (format "Course: %d student\n" (length rows)))))
+        (setq out (with-output-to-string
+                    (setq status (org-canvas-batch-main '("gradebook"))))))
+      (expect status :to-equal 0)
+      (expect out :to-equal "Course: 1 student\n")))
+
   (it "says pull-queue is not available until #415 defines it"
     (let (messages)
       (cl-letf (((symbol-function 'org-canvas-submissions-pull-queue) nil))

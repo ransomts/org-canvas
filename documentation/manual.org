@@ -124,6 +124,7 @@ ARGS=, which is also the line to use without it.
 | =overview=                    | =org-canvas-status= (local, no API call)           |                    |
 | =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
+| =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores | |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
@@ -165,6 +166,10 @@ into an empty course directory as well as a full one; it prints the
 pull summary and the closing line.  A content type the enrolment may
 not read (a Designer's or a TA's 403) is a skip and leaves the status
 0; a type that failed, or an item lost to an error, makes it 1 (#458).
+=gradebook= refreshes =gradebook.org= and prints its Sections table,
+then one line with the course's mean and median current and final
+scores, so a script can read class standing without opening the file
+(#451).
 
 The exit status is 0 when the command succeeded, 1 as the table says,
 2 for a command line it could not read and 3 when an error stopped it
@@ -2301,6 +2306,10 @@ column is free text about a student, the most sensitive cell in the
 file.  Treat =gradebook.org= as you treat the submissions directory:
 keep it out of a course repository (add it to =.gitignore=) and out
 of anything you share.
+
+From the shell, =scripts/org-canvas gradebook= pulls the file and
+prints the Sections table and the course's mean and median scores
+(see [[*Running from the Shell][Running from the Shell]]).
 
 ** grading-schemes.org
 
