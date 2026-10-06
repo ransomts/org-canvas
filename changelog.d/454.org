@@ -1,0 +1,2 @@
+* Changed
+- #454 The demo course shows every property a heading can set, and validates with no errors and no "in no module" notes.  It gains a checkpointed discussion, an anonymous survey, a page published on a schedule, an assignment with a post policy and scheduled posting, a points-based grading scheme and a pull-only =grading-periods.org=; every published item is linked from =modules.org= or carries =NO_MODULE: true=.  The duplicate =Course Home= page is gone and two mangled file links in =pages.org= are repaired

@@ -24,3 +24,12 @@ token's owner, nobody else.
 :END:
 Proposals are due Friday at 23:59 through the Project Proposal
 assignment.  One page is enough.
+
+* Section B: room change for Thursday
+:PROPERTIES:
+:TO: Section: Section B - TTh 1:30pm
+:BULK: false
+:END:
+Thursday's class meets in Science Hall 210.  BULK: false makes this one
+group conversation the whole section can reply in; without it every
+student gets a private copy.

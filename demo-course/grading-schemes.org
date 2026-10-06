@@ -20,3 +20,19 @@
 | D     |     60 |
 | F     |      0 |
 
+* DS 101 GPA Scale
+:PROPERTIES:
+:POINTS_BASED: true
+:SCALING_FACTOR: 4.0
+:END:
+
+A points-based scheme: grades show out of 4.0, and the cutoffs stay percents of it.
+
+#+NAME: scheme
+| Grade | Cutoff |
+|-------+--------|
+| A     |     90 |
+| B     |     75 |
+| C     |     50 |
+| D     |     25 |
+| F     |      0 |

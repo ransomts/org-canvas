@@ -144,6 +144,7 @@ caught by the checksum comparison instead of dirtying the repo."
                  (org-canvas-sections-file (expand-file-name "sections.org" ,dir-var))
                  (org-canvas-settings-file (expand-file-name "settings.org" ,dir-var))
                  (org-canvas-grading-schemes-file (expand-file-name "grading-schemes.org" ,dir-var))
+                 (org-canvas-grading-periods-file (expand-file-name "grading-periods.org" ,dir-var))
                  (org-canvas-messages-file (expand-file-name "messages.org" ,dir-var)))
              ,@body))
        (org-canvas-dry-run--kill-buffers-under tmp-root)
