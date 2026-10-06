@@ -2447,14 +2447,20 @@ group 4, the way the modules whose headings are links read it, since
 
 (defun org-canvas--sync-heading-matches-p (target by id-property)
   "Return non-nil when the heading at point is the one TARGET names.
-With BY nil or `title', TARGET is the heading's exact text, either as
-written or as `org-get-heading' reads it (the two differ only by link
-markup).  With BY `canvas-id', TARGET is the value of ID-PROPERTY, a
-string or an integer.  Any other BY is a `user-error'."
+With BY nil or `title', TARGET is the heading's exact text: as
+written, as `org-get-heading' reads it, or with each link reduced to
+its description, so the files.org heading
+[[file:../syllabus.pdf][syllabus.pdf]] also answers to \"syllabus.pdf\".
+`org-get-heading' keeps link markup before Org 9.7 and strips it after,
+so only the reduced form names a link heading by its description on
+every Emacs (issue #446).  With BY `canvas-id', TARGET is the value of
+ID-PROPERTY, a string or an integer.  Any other BY is a `user-error'."
   (pcase by
     ((or 'nil 'title)
-     (or (equal target (org-canvas--sync-heading-text))
-         (equal target (string-trim (or (org-get-heading t t t t) "")))))
+     (let ((text (org-canvas--sync-heading-text)))
+       (member target (list text
+                            (and text (org-link-display-format text))
+                            (string-trim (or (org-get-heading t t t t) ""))))))
     ('canvas-id
      (equal (format "%s" target) (org-entry-get (point) id-property)))
     (_ (user-error "Sync by heading: BY must be nil, `title' or `canvas-id', not %S" by))))
