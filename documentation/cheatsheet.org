@@ -349,7 +349,7 @@ Tier 2:    modules
 | =B=   | Read SpeedGrader's comment library into =* Comment Bank=    |
 | =x=   | Delete the Comment Bank item at point on Canvas (asks)     |
 
-Per student: =SCORE= (or =EX=), =LATE_STATUS= (late, missing, extended, none), a =Rubric= table, a =Comment to post= draft.  Written by pull: =CANVAS_SCORE=, =CANVAS_LATE_STATUS=, =DAYS_LATE=, =ATTEMPT=, =GRADED_ATTEMPT=, =SIMILARITY=, =AI_WRITING=, =CONFLICT=.
+Per student: =SCORE= (or =EX=), =LATE_STATUS= (late, missing, extended, none), a =Rubric= table (a =Score= cell of =none= clears that row on Canvas), a =Comment to post= draft.  Written by pull: =CANVAS_SCORE=, =CANVAS_LATE_STATUS=, =DAYS_LATE=, =ATTEMPT=, =GRADED_ATTEMPT=, =SIMILARITY=, =AI_WRITING=, =CONFLICT=.
 
 * Drift Report Keys
 

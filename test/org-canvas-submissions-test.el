@@ -3568,10 +3568,17 @@ SCORE COMMENT), written as the table and the comment items under it."
                                "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
       (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 2)
       (expect (org-canvas--submissions-pending-count) :to-equal 1)))
-  (it "does not treat a table emptied by hand as a change"
+  (it "refuses a table emptied by hand over an assessment, naming none"
     (with-rubric-file (concat test-rubric-file-header
                                (test-rubric-entry "Adams, Alice" 5001
                                                   ":SCORE: 2\n:CANVAS_SCORE: 2\n:CANVAS_RUBRIC: abcdef012345\n"
+                                                  test-rubric-blank-rows))
+      (expect (org-canvas--submissions-collect-grade-changes)
+              :to-throw 'user-error
+              '("Adams, Alice: the Rubric rows are empty but Canvas holds an assessment; write none in their Score cells to clear it"))))
+  (it "sees no change in an empty table where Canvas holds no assessment"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 2\n:CANVAS_SCORE: 2\n"
                                                   test-rubric-blank-rows))
       (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
 
@@ -3862,6 +3869,111 @@ REPLIES is the mock API's response alist."
         (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
         (delete-directory dir t)))))
 
+
+(defconst test-clear-rows--digest
+  (org-canvas--submissions-rubric-digest '(("_7104" "12" "Strong") ("_7105" "4" nil)))
+  "The CANVAS_RUBRIC of an assessment the grading file clears.")
+
+(describe "clearing rubric rows with none (issue #449)"
+  (it "reads none as a cleared row, sent with empty points and its comment"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001
+                                                  (format ":SCORE: 16\n:CANVAS_SCORE: 16\n:CANVAS_RUBRIC: %s\n"
+                                                          test-clear-rows--digest)
+                                                  '(("_7104" "Thesis" 2 "none" nil) ("_7105" "Evidence" 3 " - " "Kept.")
+                                                    ("_7106" "Style" 1 nil nil))))
+      (let* ((change (car (org-canvas--submissions-collect-grade-changes)))
+             (fields (org-canvas--submissions-grade-fields change)))
+        (expect (plist-get change :triples)
+                :to-equal '(("_7104" nil nil t) ("_7105" nil "Kept." t) ("_7106" nil nil)))
+        (expect (plist-get change :cleared) :to-equal 2)
+        (expect (plist-get change :new-rubric)
+                :to-equal (org-canvas--submissions-rubric-digest '(("_7105" nil "Kept."))))
+        (expect (alist-get 'rubric_assessment fields)
+                :to-equal '((_7104 . ((points . "") (comments . "")))
+                            (_7105 . ((points . "") (comments . "Kept.")))))
+        (expect (plist-get change :grade-after) :to-be t)
+        (expect (org-canvas--submissions-describe-changes (list change))
+                :to-equal "  Adams, Alice: 16 → 16 (rubric 0/3, 2 cleared)"))))
+
+  (it "sees no change in rows cleared where Canvas holds no assessment"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ""
+                                                  '(("_7104" "Thesis" 2 "none" nil))))
+      (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))
+
+  (it "lets SCORE none stand beside rows that carry no points, and not beside points"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001
+                                                  (format ":SCORE: none\n:CANVAS_SCORE: 16\n:CANVAS_RUBRIC: %s\n"
+                                                          test-clear-rows--digest)
+                                                  '(("_7104" "Thesis" 2 "none" nil) ("_7105" "Evidence" 3 "none" nil))))
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :clear) :to-be t)
+        (expect (plist-get change :grade-after) :to-be nil)
+        (expect (alist-get 'posted_grade (org-canvas--submissions-grade-fields change))
+                :to-equal ""))
+      (org-canvas--submissions-goto-user 5001)
+      (org-canvas--submissions-rubric-set-row "_7104" "1" nil)
+      (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error)))
+
+  (it "clears the rows, then sends the ruled score, and records both"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-rubric-file (concat test-rubric-file-header
+                                   (test-rubric-entry "Adams, Alice" 5001
+                                                      (format ":SCORE: 0\n:CANVAS_SCORE: 16\n:CANVAS_RUBRIC: %s\n"
+                                                              test-clear-rows--digest)
+                                                      '(("_7104" "Thesis" 2 "none" nil)
+                                                        ("_7105" "Evidence" 3 "none" nil)
+                                                        ("_7106" "Style" 1 nil nil))))
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t)))
+              (org-canvas--submissions-push-current t)))
+          (let ((calls (reverse test-org-canvas-api-calls)))
+            (expect (mapcar #'car calls) :to-equal '(PUT PUT))
+            (expect (nth 2 (nth 0 calls))
+                    :to-equal '((rubric_assessment . ((_7104 . ((points . "") (comments . "")))
+                                                      (_7105 . ((points . "") (comments . "")))))))
+            (expect (nth 2 (nth 1 calls)) :to-equal '((submission . ((posted_grade . "0"))))))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_RUBRIC") :to-be nil)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "0")
+          (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+                  :to-equal '(nil nil nil))
+          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+
+  (it "keeps rows emptied or cleared by hand across a refresh"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (shown (list nil))
+           (assessed (test-org-canvas-make-submission
+                      '((score . 3) (rubric_assessment . ((_7104 . ((points . 2) (comments . "Sharp")))
+                                                          (_7105 . ((points . 1)))))))))
+      (unwind-protect
+          (progn
+            (test-rubric--display (list assessed) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (dolist (id '("_7104" "_7105" "_7106"))
+                (org-canvas--submissions-rubric-set-row id nil nil))
+              (save-buffer))
+            (test-rubric--display (list assessed) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (mapcar (lambda (r) (list (nth 3 r) (nth 4 r)))
+                              (org-canvas--submissions-rubric-rows))
+                      :to-equal '((nil nil) (nil nil) (nil nil)))
+              (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+              (org-canvas--submissions-rubric-set-row "_7104" "none" nil)
+              (save-buffer))
+            (test-rubric--display (list assessed) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+                      :to-equal '("none" nil nil))))
+        (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
+        (delete-directory dir t)))))
 
 ;;;; Document processor reports (issue #351)
 
