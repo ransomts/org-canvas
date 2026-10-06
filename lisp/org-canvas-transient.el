@@ -126,6 +126,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("K" "Check this file's comments (missing, flagged, shared)" org-canvas-submissions-check-comments)
    ("H" "Export this file's comments as JSON" org-canvas-submissions-export-comments)
    ("I" "Import comment text from JSON" org-canvas-submissions-import-comments)
+   ("Y" "Verify a push: read the column back from Canvas" org-canvas-submissions-verify)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)
    ("C" "Push only edited and deleted sent comments" org-canvas-push-submission-comment-edits

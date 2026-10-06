@@ -181,6 +181,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
     ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
+    ("verify" org-canvas-batch--cmd-verify 1 nil "[--hidden] ASSIGNMENT..."
+     "Read pushed columns back from Canvas; exit 1 on a difference (#450).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -425,6 +427,19 @@ Return 1 if any check found an error."
                            (org-canvas-submissions-check-comments file)))
                         (plist-get parsed :args))))
     (if (cl-every #'zerop errors) 0 1)))
+
+(defun org-canvas-batch--cmd-verify (parsed)
+  "Read back each column PARSED names and compare it with its grading file.
+--hidden counts a posted submission as a difference.  Return 1 if any
+column differs (`org-canvas-submissions-verify')."
+  (let* ((args (plist-get parsed :args))
+         (hidden (and (member "--hidden" args) t))
+         (targets (remove "--hidden" args)))
+    (unless targets
+      (org-canvas-batch--usage "verify takes [--hidden] ASSIGNMENT..."))
+    (if (cl-every (lambda (r) (zerop (plist-get r :differences)))
+                  (org-canvas-submissions-verify targets hidden))
+        0 1)))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."

@@ -2402,7 +2402,17 @@ the header.  Return the path."
     (with-submissions-dir
       (with-temp-file (expand-file-name "HW.org" dir)
         (insert test-grading-file-header))
-      (expect (org-canvas-submissions-refresh-file) :to-throw 'error '("must not prompt")))))
+      (expect (org-canvas-submissions-refresh-file) :to-throw 'error '("must not prompt"))))
+  (it "re-pulls a list of files and returns their buffers (issue #450)"
+    (with-submissions-dir
+      (let ((file (expand-file-name "HW.org" dir))
+            (refreshed 0))
+        (with-temp-file file (insert test-grading-file-header))
+        (cl-letf (((symbol-function 'org-canvas--submissions-refresh-buffer)
+                   (lambda () (cl-incf refreshed) (current-buffer))))
+          (let ((bufs (org-canvas-submissions-refresh-file '("HW" "1001"))))
+            (expect refreshed :to-equal 2)
+            (expect (mapcar #'buffer-file-name bufs) :to-equal (list file file))))))))
 
 (describe "org-canvas-submissions-download-all-attachments"
   (it "downloads for every student with attachments and skips the rest"
@@ -5217,6 +5227,19 @@ Progress by default).  No prompt may be asked.  Return a plist:
               (expect (plist-get result :state) :to-be nil)
               (expect (plist-get result :posted) :to-be t)
               (expect posted :to-equal "1001")))))))
+
+  (it "pushes a list of columns and returns one plist per column (issue #450)"
+    (with-org-canvas-test-config
+      (test-batch-push--with-dir (concat test-grading-file-header
+                                         "* A\n:PROPERTIES:\n:USER_ID: 1\n:SCORE: 5\n:CANVAS_SCORE: 5\n:END:\n")
+        (cl-letf (((symbol-function 'message) #'ignore))
+          (let ((results (org-canvas-push-submission-grades '("1001" "HW"))))
+            (expect (length results) :to-equal 2)
+            (dolist (result results)
+              (expect (plist-get result :pushed) :to-equal 0)
+              (expect (plist-get result :posted) :to-be nil)))
+          (expect (org-canvas-push-submission-grades '("1001") t '(1))
+                  :to-throw 'user-error)))))
 
   (it "refuses an id no grading file names"
     (with-org-canvas-test-config

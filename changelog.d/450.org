@@ -1,0 +1,3 @@
+* Added
+- #450 =org-canvas-submissions-verify= (=Y=) reads a pushed column back from Canvas, read-only, and counts what differs from the grading file: posted submissions, duplicate comments, mismatched scores and Rubric rows, comment counts and text, undeleted =DELETE= items and unsent drafts; =scripts/org-canvas verify [--hidden] ASSIGNMENT...= exits 1 on a difference.
+- #450 =org-canvas-push-submission-grades= and =org-canvas-submissions-refresh-file= take a list of columns, returning one result per column; the push's result plist documents its types (=:pushed= is an integer).
