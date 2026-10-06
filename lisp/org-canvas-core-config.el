@@ -332,7 +332,7 @@ Populated at module load time by `org-canvas-register-feature'.")
 PLIST has keys :name :endpoint :file-var :id-field :id-property
 :title-field and optionally :list-params :item-params :skip-fn
 :skip-reason :delete-skip-fn :delete-skip-reason :modified-field
-:pull-whole-entry.
+:scheduled-dates-fn :pull-whole-entry.
 
 A feature that does not list under the course also names a
 `:list-url-fn' (no arguments) and an `:item-url-fn' (one argument,
@@ -352,6 +352,9 @@ for their own dates rather than a student's extension on both (issue
 default `updated_at'.  Files declare `modified_at', the content
 timestamp: Canvas bumps their `updated_at' on metadata-only touches
 \(issue #94).  See `org-canvas--feature-modified-field'.
+`:scheduled-dates-fn' names the dates at which Canvas moves that
+timestamp itself, with nothing edited: an assignment's unlock and lock
+dates (issue #453).  See `org-canvas--feature-scheduled-dates-fn'.
 `:skip-reason' is a short phrase naming why `:skip-fn' holds an item
 back; the drift report and the orphan scan print it so a suppressed
 item is not silently absent (issue #81).  `:pull-item-fn' is filled in

@@ -99,6 +99,15 @@ module-item relink — none of which change what a student downloads, so
 drift decided from it re-flagged unchanged files forever (issue #94)."
   (or (plist-get feature :modified-field) 'updated_at))
 
+(defun org-canvas--feature-scheduled-dates-fn (feature)
+  "Return FEATURE's `:scheduled-dates-fn', or nil when it declares none.
+The function takes an item as Canvas returned it and answers the
+dates at which Canvas touches that item on its own, as a list of
+\(LABEL . ISO8601): an assignment's `updated_at' moves a few seconds
+after its `unlock_at' passes, with nothing edited (issue #453).  See
+`org-canvas--conflict-scheduled-bump'."
+  (plist-get feature :scheduled-dates-fn))
+
 (defun org-canvas--feature-delete-skip (feature)
   "Return (SKIP-FN . REASON) for the items no delete of FEATURE may remove.
 `:delete-skip-fn' and `:delete-skip-reason' when FEATURE declares them,

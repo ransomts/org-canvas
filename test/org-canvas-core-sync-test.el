@@ -3526,6 +3526,148 @@ Returns the :remote-titles of the run context the push received."
           (expect (car warnings)
                   :to-equal "[Conflict] 'syllabus.pdf': remote modified_at 2026-09-01T09:00:00Z is newer than CANVAS_UPDATED_AT 2026-08-31T18:34:37Z"))))))
 
+;;; A scheduled date explains a newer timestamp (issue #453)
+
+(defconst test-453--entry "* Column
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-10-05T13:04:21Z
+:END:
+"
+  "An assignment heading stamped at its last push, before it unlocked.")
+
+(defun test-453--time (iso)
+  "Parse ISO for the scheduled-bump specs."
+  (org-canvas--parse-iso8601-time iso))
+
+(defun test-453--reply (&rest _)
+  "The live column, bumped five seconds after it unlocked."
+  '((id . 61) (updated_at . "2026-10-05T14:10:05Z")
+    (unlock_at . "2026-10-05T14:10:00Z")))
+
+(describe "org-canvas--conflict-scheduled-bump (issue #453)"
+  (let ((base "2026-10-05T13:04:21Z")
+        (dates '(("unlock_at" . "2026-10-05T14:10:00Z"))))
+    (it "explains a bump a few seconds after a date passed since the baseline"
+      (expect (org-canvas--conflict-scheduled-bump
+               (test-453--time base) (test-453--time "2026-10-05T14:10:05Z")
+               dates)
+              :to-equal '("unlock_at" . "2026-10-05T14:10:00Z")))
+
+    (it "explains a bump at the date itself"
+      (expect (org-canvas--conflict-scheduled-bump
+               (test-453--time base) (test-453--time "2026-10-05T14:10:00Z")
+               dates)
+              :to-be-truthy))
+
+    (it "does not explain a bump past the window"
+      (expect (org-canvas--conflict-scheduled-bump
+               (test-453--time base)
+               (test-453--time "2026-10-05T14:11:01Z") dates)
+              :to-be nil))
+
+    (it "does not explain a bump before the date"
+      (expect (org-canvas--conflict-scheduled-bump
+               (test-453--time base)
+               (test-453--time "2026-10-05T14:09:59Z") dates)
+              :to-be nil))
+
+    (it "does not explain a date that had passed before the baseline"
+      (expect (org-canvas--conflict-scheduled-bump
+               (test-453--time "2026-10-05T14:10:00Z")
+               (test-453--time "2026-10-05T14:10:05Z") dates)
+              :to-be nil))
+
+    (it "skips a date that does not parse and finds a later one"
+      (expect (org-canvas--conflict-scheduled-bump
+               (test-453--time base) (test-453--time "2026-10-05T15:00:03Z")
+               '(("unlock_at" . :null)
+                 ("override 9 lock_at" . "2026-10-05T15:00:00Z")))
+              :to-equal '("override 9 lock_at" . "2026-10-05T15:00:00Z")))))
+
+(describe "org-canvas--conflict-check with scheduled dates (issue #453)"
+  (it "lets the push past a bump its unlock date explains, and says why"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-453--entry
+        (org-back-to-heading)
+        (let ((infos nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request) #'test-453--reply)
+                    ((symbol-function 'org-canvas--log-info)
+                     (lambda (_l fmt &rest args)
+                       (push (apply #'format fmt args) infos))))
+            (expect (org-canvas--conflict-check
+                     "assignments" "61" (point) "Column" nil nil nil
+                     (lambda (item)
+                       (list (cons "unlock_at" (alist-get 'unlock_at item)))))
+                    :to-be nil))
+          (expect (car infos)
+                  :to-equal "[Conflict] 'Column': remote updated_at 2026-10-05T14:10:05Z is newer than CANVAS_UPDATED_AT 2026-10-05T13:04:21Z, but it follows unlock_at 2026-10-05T14:10:00Z, a bump Canvas makes itself; not a conflict")))))
+
+  (it "still reports the conflict without a scheduled-dates function"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-453--entry
+        (org-back-to-heading)
+        (cl-letf (((symbol-function 'org-canvas-api-request) #'test-453--reply))
+          (expect (car (org-canvas--conflict-check
+                        "assignments" "61" (point) "Column"))
+                  :to-equal 'conflict)))))
+
+  (it "keeps the conflict, with a warning, when the dates cannot be read"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-453--entry
+        (org-back-to-heading)
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request) #'test-453--reply)
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_l fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (expect (car (org-canvas--conflict-check
+                          "assignments" "61" (point) "Column" nil nil nil
+                          (lambda (_item) (error "HTTP 500"))))
+                    :to-equal 'conflict))
+          (expect (cl-some (lambda (w)
+                             (string-match-p "Could not read the scheduled dates of 'Column' (HTTP 500)" w))
+                           warnings)
+                  :to-be-truthy))))))
+
+(describe "org-canvas--sync-item-scheduled-fn (issue #453)"
+  (it "answers the running feature's scheduled-dates function"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Widgets" :scheduled-dates-fn #'ignore))))
+      (expect (org-canvas--sync-item-scheduled-fn
+               (org-canvas--sync-make-ctx :feature-name "widgets"))
+              :to-be #'ignore)))
+
+  (it "answers nil without a run context"
+    (expect (org-canvas--sync-item-scheduled-fn nil) :to-be nil)))
+
+(describe "org-canvas--push-to-api over a scheduled bump (issue #453)"
+  (it "sends the PUT that a bump at the item's unlock date stopped before"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-453--entry
+        (org-back-to-heading)
+        (let ((org-canvas-detect-conflicts t)
+              (org-canvas-conflict-strategy nil)
+              (org-canvas--feature-registry
+               (list (list :name "Widgets" :endpoint "widgets"
+                           :scheduled-dates-fn
+                           (lambda (item)
+                             (list (cons "unlock_at"
+                                         (alist-get 'unlock_at item)))))))
+              (calls nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (push (cons method url) calls)
+                       (if (eq method 'GET)
+                           (test-453--reply)
+                         '((id . 61) (updated_at . "2026-10-06T09:00:00Z"))))))
+            (org-canvas--push-to-api
+             (list :title "Column" :canvas-id "61" :pom (point-marker))
+             '((name . "Column"))
+             :endpoint "widgets"
+             :ctx (org-canvas--sync-make-ctx :feature-name "widgets")))
+          (expect (mapcar #'car (reverse calls)) :to-equal '(GET PUT)))))))
+
 (describe "org-canvas--finalize-item :updated-field (issue #94)"
   (it "stamps CANVAS_UPDATED_AT from the declared field"
     (with-temp-org-buffer "* syllabus.pdf\n"

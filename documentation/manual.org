@@ -2698,7 +2698,13 @@ flags a conflict if that is newer than the baseline.  For files both this
 check and the drift snapshot read =modified_at= instead, the content
 timestamp: Canvas bumps a file's =updated_at= on metadata-only touches -- a
 lock, a usage-rights edit, a module-item relink -- none of which change what
-a student downloads (#94).  This applies to updates,
+a student downloads (#94).  An assignment's =updated_at= also moves a
+few seconds after its unlock or lock date, or an override's, passes, with
+nothing edited; a newer timestamp within a minute after such a date that
+passed since the baseline is taken for that bump, not a conflict, and the
+log names the date (#453).  A web edit made before that date is hidden by
+the bump, so check the drift report first when one may have been made.
+This applies to updates,
 not creates, and an entry with no baseline at all (a first sync) is never
 flagged.  The log line names the baseline it actually compared:
 
