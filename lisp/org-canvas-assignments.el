@@ -488,7 +488,7 @@ Pure function — no buffer access."
     (when (plist-get data :assignment_group_id)
       (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s"
                   (plist-get data :assignment_group_id)))
-   (unless (plist-get data :rubric-id)
+   (when (plist-get data :rubric-id)
       (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s"
                   (plist-get data :rubric-id)))
 
@@ -653,38 +653,22 @@ by the GraphQL contract test, which names it by this symbol.")
 (add-hook 'org-canvas--operation-start-hook
           #'org-canvas--assignment-processors-forget)
 
-(defun org-canvas--assignment-graphql-page (query node-value map cursor)
-  "Read one page of the course-wide assignments QUERY after CURSOR into MAP.
-NODE-VALUE is a function of one assignment node returning what MAP
-keeps for it under the node's `_id'.  Returns the cursor of the next
-page, or nil when this was the last."
-  (let* ((data (org-canvas--graphql-query
-                query
-                (append (list (cons 'courseId
-                                    (format "%s" org-canvas-course-id)))
-                        (when cursor (list (cons 'cursor cursor))))))
-         (connection (alist-get 'assignmentsConnection
-                                (alist-get 'course data)))
-         (info (alist-get 'pageInfo connection)))
-    (dolist (node (append (alist-get 'nodes connection) nil))
-      (puthash (format "%s" (alist-get '_id node))
-               (funcall node-value node)
-               map))
-    (and (eq (alist-get 'hasNextPage info) t)
-         (org-canvas--alist-get-non-null 'endCursor info))))
-
 (defun org-canvas--assignment-graphql-read (query node-value what fallback)
   "Read the course-wide assignments QUERY into a hash by assignment id.
-NODE-VALUE is as for `org-canvas--assignment-graphql-page'.  Returns
-the symbol `refused' when the request fails, after one warning naming
-WHAT was read and FALLBACK, what the command does instead: the
-assignments still pull and report (the #171 rule)."
+NODE-VALUE is a function of one assignment node returning what the map
+keeps for it under the node's `_id'.  Returns the symbol `refused' when
+the request fails, after one warning naming WHAT was read and FALLBACK,
+what the command does instead: the assignments still pull and report
+\(the #171 rule)."
   (condition-case err
-      (let ((map (make-hash-table :test 'equal))
-            (cursor nil))
-        (while (setq cursor (org-canvas--assignment-graphql-page
-                             query node-value map cursor)))
-        map)
+      (org-canvas--graphql-walk-pages
+       query
+       (list (cons 'courseId (format "%s" org-canvas-course-id)))
+       '(course assignmentsConnection)
+       (lambda (node map)
+         (puthash (format "%s" (alist-get '_id node))
+                  (funcall node-value node)
+                  map)))
     (org-canvas-api-error
      (org-canvas--log-warning org-canvas--logger
        "[GraphQL] Could not read %s by GraphQL (%s); %s"

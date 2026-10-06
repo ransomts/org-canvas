@@ -124,9 +124,14 @@ ARGS=, which is also the line to use without it.
 | =overview=                    | =org-canvas-status= (local, no API call)           |                    |
 | =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
+| =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =push FEATURE:TITLE...=       | =org-canvas-sync-headings=                         | any heading failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
+| =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
+| =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
+| =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
+| =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
@@ -144,7 +149,14 @@ colon or hash sign, so a title may hold either.  =--dry-run= (=-n=)
 before the command makes =push=, =push-comments= and =sync= send
 nothing.  =push-comments= takes grading files, by assignment id or
 name, and sends only their rewritten and deleted sent comments (see
-[[*Editing Sent Comments][Editing Sent Comments]]).  =pull-queue=
+[[*Editing Sent Comments][Editing Sent Comments]]).  =push-grades= takes
+one grading file, by assignment id or name, and sends what =S= would,
+or with =--only 5001,5002= only those students' rows (see
+[[*Pushing Some Rows][Pushing Some Rows]]); it never posts.  Its
+=--dry-run= may also follow the command, and prints one line per
+student with the fields that would be sent.  It exits 1 when a grade
+did not land, a row was held as a conflict, a sent-comment change was
+not sent, or an =--only= id had no row or nothing to send.  =pull-queue=
 needs a version of org-canvas that defines
 =org-canvas-submissions-pull-queue= (#415), and says so otherwise.
 
@@ -3370,6 +3382,8 @@ twenty-four (#169).
 
 Pulling an assignment's submissions produces a *grading file*: an Org file with one heading per student, saved under =org-canvas-submissions-directory= (by default =submissions/= inside the course directory) as =<assignment>.org=. Grading happens in that file and can span sessions: pull today, grade tomorrow, push when done.
 
+The file is named after the column, but it belongs to the column's id: the =CANVAS_ASSIGNMENT_ID= in its header. Every command that maps a column to its file (the pull, the grading queue, =org-canvas-open-submissions=, the section-window scoring and the push) looks for the file whose header names the id first and for the name second, so a column renamed on Canvas or in =assignments.org= keeps its file and every score typed in it. The next pull renames that file to the new name, moves its =files/<assignment>/= attachment directory with it, rewrites the links to the attachments and the =#+TITLE= and =CANVAS_ASSIGNMENT_NAME= header lines, and logs one line saying so; a buffer visiting the file follows it. When that buffer holds unsaved changes, or a different file already has the new name, the pull stops with a message instead, and nothing is moved. When two files claim one id (left behind, say, by a pull made before this was in place), nothing picks one: the pull and open name both and stop, and the grading queue names both above its table and shows the column with no Pulled date. Keep one, merge what was typed in the other into it, and delete the other.
+
 ** Workflow
 
 1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment (from Lisp, name it: the command takes an assignment id or exact name, and a second argument to download every attachment as well — see [[*Batch Use][Batch Use]]); the grading file is written, saved, and visited. Its =Assignment:= line links the assignment's heading in the assignments file (when one carries the id), its Canvas page, and SpeedGrader, and every student heading carries an =Open in SpeedGrader= link. When the assignment has a rubric, a =Rubric:= line follows, linking the rubric's heading in the rubrics file and its Canvas page, and then the rubric itself in the shape of =rubrics.org=: a =* Rubric= heading with one sub-heading per criterion — its description and points, its long description as prose, and a =| Rating | Points | Description |= table — so the work can be read against the rubric offline, the text that separates one rating from the next included. Set =org-canvas-submissions-include-rubric-criteria= to =summary= for one =| Criterion | Points | Ratings |= line per criterion instead, or to nil for just the =Rubric:= line. The =* Rubric= heading carries no =USER_ID=, so nothing that walks the students takes it for one. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
@@ -3392,9 +3406,18 @@ When the assignment has a document processor attached (Turnitin as an LTI asset 
 - =:AI_WRITING:= — Turnitin's AI Writing report (=turnitin_aiwriting=): its score, such as =0%=
 - =:REPORT_<TYPE>:= — any other report type, its name upcased (=REPORT_GRAMMAR_CHECK=), so a second processor still shows up
 
-A report that has not finished reads =pending=, one that failed =failed= (for an uploaded PDF that is usually an image-only scan, worth knowing before you grade), and one the tool declined =not processed=. Two reports of one type, one per uploaded file, are joined with a comma. A =Reports:= line under the =Assignment:= line counts the students: =Reports: 36 processed, 7 failed, 0 pending=, where a student is failed when any report failed, else pending when any is pending. The same line appears in the summary table.
+Only the reports on the student's current attempt are written: a report on a file a resubmission replaced is left out, so two values on one row are two files of the same attempt. A report that has not finished reads =pending=, and one the tool declined =not processed=. One that failed reads =failed= followed by Canvas's error code when it sends one, such as =failed (EULA_NOT_ACCEPTED)=: the student has not accepted Turnitin's end-user agreement, so Turnitin refused the file and filed no AI Writing report either. That one is fixed by the student accepting the agreement (Canvas shows the prompt on the upload page), which is a class announcement rather than a visit to SpeedGrader per student.
 
-The values are Canvas's: every refresh rewrites them, and a report gone from Canvas disappears from the heading, while typed scores, notes and drafts come back as always. When the column has no processor, nothing is written, not even the line. When the reports cannot be read, the log says so in one warning and the file is pulled without them. SpeedGrader still shows the reports themselves; the file says which students to open it for. Two GraphQL fields look like the answer and are not: =Assignment.hasPlagiarismTool= describes the legacy plagiarism framework (it reads false on a column with a processor attached) and =Submission.turnitinData= the legacy plugin; the reports are read from =ltiAssetReportsConnection=.
+Two results are not percentages, and are written as Turnitin shows them:
+
+- =--%= — AI Writing could not score the file, usually too little qualifying prose (under about 300 words, or prose such as lists and tables it does not count)
+- =*%= — Turnitin's asterisk for an AI Writing score between 1 and 19 percent, a band it does not print because its false-positive rate is high there
+
+A handed-in row with no report at all, on a column that has a processor, reads =:SIMILARITY: none=: the file was handed in and the processor filed nothing (on the reporter's course, files submitted before the processor was attached). Rows on a column without a processor stay silent.
+
+A =Reports:= line under the =Assignment:= line counts the students: =Reports: 36 processed, 7 failed, 0 pending=, where a student is failed when any report failed, else pending when any is pending. When some row has no report, or a report answered =--%=, the line names those too, counted apart from the scored ones: =Reports: 30 processed, 7 failed, 0 pending, 4 unscored, 3 without a report=. A student counts once, in the first of failed, pending, without a report, unscored and processed that applies; =*%= is a score and counts as processed. The same line appears in the summary table.
+
+The values are Canvas's: every refresh rewrites them, and a report gone from Canvas disappears from the heading, while typed scores, notes and drafts come back as always. When the column has no processor, nothing is written, not even the line; whether it has one is asked only when a handed-in row has no report. When the reports cannot be read, the log says so in one warning and the file is pulled without them. SpeedGrader still shows the reports themselves; the file says which students to open it for. Two GraphQL fields look like the answer and are not: =Assignment.hasPlagiarismTool= describes the legacy plagiarism framework (it reads false on a column with a processor attached) and =Submission.turnitinData= the legacy plugin; the reports are read from =ltiAssetReportsConnection=.
 
 ** The Comment Bank
 
@@ -3445,6 +3468,52 @@ or =scripts/org-canvas push-comments 2573836= (see [[*Running from the Shell][Ru
 
 A refresh keeps an edit or a =DELETE= mark you have not pushed, against the text it was made against; when Canvas's copy moved meanwhile, the log says so and the next push leaves that comment alone. An edit Canvas already holds is simply confirmed. A comment gone from Canvas takes the change with it, and the log quotes the text you had typed. Items without an id — in a file pulled before ids were written, or a comment just posted from =Comment to post= (recorded as =*You*=) — cannot be changed until a refresh renders them with one.
 
+** Exporting, Importing and Checking Comments
+
+A course-wide rewrite of feedback — a new feedback guide, a voice pass — touches every row comment, draft and sent comment in a dozen grading files.  Three commands give those comments to a script or a rewriter as data and take the new text back, through the same readers and writers the push uses, so no script has to parse the file.  All three are local: nothing is read from Canvas and nothing is sent.  Each takes its grading file as =org-canvas-push-submission-comment-edits= does: the grading buffer at hand, else an assignment id or the file's path or name, asking only when there is none.
+
+=M-x org-canvas-submissions-export-comments= (transient: Submissions, =H=) writes every student's comments as JSON:
+
+#+begin_src js
+{"assignment_id": "1001", "assignment": "Essay 1",
+ "students": [
+  {"user_id": "5001", "name": "Adams, Alice", "status": "graded", "score": "8",
+   "posted": null,
+   "rows": [{"criterion_id": "_812", "criterion": "Thesis", "max": "5", "score": "3",
+             "comment": "The claim needs a reason given early."}],
+   "draft": "Draft text, or null",
+   "sent": [{"id": "48213", "author": "Prof", "time": "<2026-09-28 Mon 14:02>",
+             "delete": false, "text": "Good start."}],
+   "notes": "Your notes, or null"}]}
+#+end_src
+
+Every student is exported; =posted= holds =POSTED_AT=, so a rewriter can leave the posted ones out.  From Lisp, =(org-canvas-submissions-export-comments FILE OUTPUT)= returns the same as plists (=:user-id=, =:rows= of =(:criterion-id :criterion :max :score :comment)=, =:draft=, =:sent= of =(:id :author :time :delete :text)=, ...) and writes the JSON when OUTPUT names a file, or prints it for ="-"=.
+
+=M-x org-canvas-submissions-import-comments= (=I=) takes a file of that shape — the whole export, only the keys to change, or a bare array of students — and writes:
+
+- a row's =comment= into its =- ID ::= item under =** Rubric=, found by =user_id= and =criterion_id=;
+- =draft= under =** Comment to post=, below its template;
+- a sent comment's =text= over its =** Comments= item, found by =user_id= and =id=.
+
+Nothing else in the file moves, and a text equal to the file's is no change, so importing an unchanged export leaves the file byte for byte as it was.  The rows and drafts go out with the next =S=.  A rewritten sent comment is left exactly as a hand edit leaves it — new text, the =CANVAS_COMMENTS= baseline untouched — so =C= sends it, checked as any edit is (see [[*Editing Sent Comments][Editing Sent Comments]]); an emptied one is refused, since a sent comment is deleted only by its =DELETE= mark.  A draft with a line starting with =#= is refused too: Org reads that line as a comment and the push would leave it out.  A student whose grade is already posted keeps every change back, since they may have read the comment; =(org-canvas-submissions-import-comments FILE DATA t)=, or =--posted= on the command line, lets the changes through.  The echo area (stderr in batch) names every key that matched nothing (=user 5001 criterion _9=) and every change kept back.  Under a dry run (=-n=) nothing is written and the counts are the same.  From Lisp DATA is the JSON file's name or a list of student plists, and a plist comes back: =:rows=, =:drafts=, =:sent=, =:unmatched=, =:skipped= and =:dry-run=.
+
+=M-x org-canvas-submissions-check-comments= (=K=) checks the students not yet posted (and not departed) before a push, and lists:
+
+- *errors*: a =Rubric= row scored below its =Max= with no comment; a row comment, draft or sent comment matching one of =org-canvas-submissions-comment-flag-regexps= (empty by default — a course puts the dashes or words its feedback guide bans there);
+- *warnings*: a sentence of =org-canvas-submissions-comment-sentence-min-length= (25) characters or more given word for word to more than =org-canvas-submissions-comment-shared-threshold= (3) students in the column; nil turns the count off.
+
+The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence is only a warning: a stock line can be meant.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
+
+A course-wide pass from the shell:
+
+#+begin_src sh
+scripts/org-canvas export-comments Essay_1 essay1.json
+# ... rewrite essay1.json ...
+scripts/org-canvas -n import-comments Essay_1 essay1.json   # counts, nothing written
+scripts/org-canvas import-comments Essay_1 essay1.json
+scripts/org-canvas check-comments Essay_1
+#+end_src
+
 ** Scoring by Section Window
 
 An in-class check — attendance, an in-room closer — is graded by when it arrived: full credit when a student submitted during their own section's meeting, 0 otherwise. =M-x org-canvas-submissions-score-by-window= (transient: Submissions, =W=) does that for a grading file, locally; nothing is read from Canvas and nothing is sent.
@@ -3487,9 +3556,9 @@ From Lisp, =(org-canvas-submissions-score-by-window FILE GRACE OVERWRITE POINTS)
 The grading workflow repeats every week per column, and the interactive path is right for one column and wrong for six. Every entry point therefore takes its target as an argument and prompts only when it is nil, so a script, a keyboard macro or a tool built on org-canvas can drive it without the minibuffer:
 
 - =(org-canvas-pull-submissions ASSIGNMENT &optional DOWNLOAD)=: ASSIGNMENT is a Canvas assignment id (an integer or a string of digits, one request) or an assignment's exact name (found in the course's list). With DOWNLOAD non-nil the grading file is the view whatever =org-canvas-submissions-default-view= says, and every student's attachments are downloaded beside it, the way =D= does. Returns the buffer.
-- =(org-canvas-open-submissions FILE)=: FILE is an absolute path, or a name under the submissions directory with or without its =.org= — the file's name or the assignment's. Returns the buffer.
+- =(org-canvas-open-submissions FILE)=: FILE is a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, whatever the file is called), an absolute path, or a name under the submissions directory with or without its =.org= — the file's name or the assignment's. Returns the buffer.
 - =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= to follow in code.
-- =(org-canvas-push-submission-grades ASSIGNMENT &optional POST)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments, sent comments rewritten or marked =DELETE=, and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back: =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:edited=, =:deleted=, =:refused=, =:failed= and =:dry-run= (sent comments rewritten, deleted, not sent, refused by Canvas and only previewed), =:conflicts= and =:posted=.
+- =(org-canvas-push-submission-grades ASSIGNMENT &optional POST ONLY)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments, sent comments rewritten or marked =DELETE=, and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back (with =org-canvas--dry-run= bound nothing is sent and the file is left as it was, drafts and all; the plist then counts what a push would send): =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:edited=, =:deleted=, =:refused=, =:failed= and =:dry-run= (sent comments rewritten, deleted, not sent, refused by Canvas and only previewed), =:conflicts= and =:conflict-names= (the headings held back as conflicts, see [[*Conflicts][Conflicts]]) and =:posted=. With ONLY, a list of Canvas user ids, only those students' rows are pushed, and =:missing= and =:unchanged= name the ids that sent nothing; see [[*Pushing Some Rows][Pushing Some Rows]].
 - =(org-canvas-push-submission-comment-edits ASSIGNMENT)=: the same target, but only the sent comments rewritten or marked =DELETE= are sent (see [[*Editing Sent Comments][Editing Sent Comments]]); confirmed through =org-canvas--confirm=, which a batch Emacs answers yes.
 
 An id or name that matches nothing is a =user-error= naming it, and nothing in these five prompts when Emacs runs in batch. So, from a shell:
@@ -3504,9 +3573,30 @@ emacs --batch -l ~/.emacs.d/init.el \
 
 The last line pushes that column and leaves its grades held; =(org-canvas-push-submission-grades "2573836" t)= posts them as well. =S= in a grading file confirms through the same question the rest of the package asks, so =org-canvas-assume-yes= or a batch Emacs answers it yes; the offer to post that follows a push under a manual policy is made only interactively, and =org-canvas-assume-yes= never answers it, since posting is what students see.
 
+** Pushing Some Rows
+
+=S= sends every changed row in the file. When only some students' grades are decided — held papers, an authorship question ruled one student at a time, a regrade — push those rows alone:
+
+- =s= (=org-canvas-submissions-push-at-point=) pushes the student heading point is in, from anywhere in its subtree: the score, the =Rubric= rows, the late status, the drafted comment and any sent-comment edits. It is =S= restricted to that student — the same conflict check, the same question (=Push 1 grade change(s) and 1 comment(s)?=), the same baselines recorded and the file saved — so a heading marked =:CONFLICT:= sends nothing here either. Comment Bank items are not sent, since they belong to no row, and posting is never offered, since posting shows the whole column.
+- =(org-canvas-push-submission-grades ASSIGNMENT nil '(5001 5002))= does the same for a list of Canvas user ids (integers or strings of digits), with no prompt. POST cannot go with them: that is an error, because posting would release every grade in the column. The plist names under =:missing= the ids with no row in the file and under =:unchanged= those whose row had nothing to send, and the closing message says so (=; no row for 9999; nothing to send for 5003=).
+- From the shell, =scripts/org-canvas push-grades 2573836 --only 5001,5002= (add =--dry-run= to see first).
+
+A dry run of any push (=org-canvas--dry-run=, or =--dry-run= on the command line) sends nothing, changes nothing in the file, and says per student what would be sent — the grade fields as Canvas would receive them, the late status and the comment — in the log, in the plist's =:would-send= and, from the shell, on standard output:
+
+#+begin_example
+Adams, Alice: {"posted_grade":"0"}; comment "Your upload came in after your section's Monday due time."
+#+end_example
+
 ** Conflicts
 
-Before pushing from a saved file, org-canvas re-reads the assignment once and compares. A student whose grade on Canvas no longer matches the file's =CANVAS_SCORE= (someone graded in SpeedGrader since the pull), whose =attempt= changed (a resubmission), whose rubric assessment on Canvas no longer matches =CANVAS_RUBRIC= when the push carries rubric rows, or whose late status on Canvas no longer matches =CANVAS_LATE_STATUS= when the push sets one, is skipped and gets a =:CONFLICT:= property naming what moved and what Canvas holds: =score: Canvas has 93=, =attempt: Canvas has 2=, =rubric: assessed on Canvas since the pull=, or =late status: Canvas has missing=. A re-pull marks a typed =LATE_STATUS= the same way when Canvas's status moved under it. Resolve it by pulling again, or by setting =CANVAS_SCORE= to Canvas's value to say the override is intended (the push's closing message says so too); the property is cleared on the next successful push. A re-pull keeps the =SCORE= and the =Rubric= rows you typed and, when Canvas's grade or assessment moved since you typed them, marks the heading =:CONFLICT:= the same way (=score: Canvas has 93=, or =rubric: assessed on Canvas since these rows were typed=), since what is shown is yours and not what Canvas holds; a typed score Canvas now agrees with is simply confirmed. A refresh marks a resubmission the same way (=attempt: 2 submitted after grading=) when the row already carried a grade, so the mark is there while you read, not only when you push. Set =org-canvas-submissions-check-conflicts= to nil to push without the check.
+Before pushing from a saved file, org-canvas re-reads the assignment once and compares. A student whose grade on Canvas no longer matches the file's =CANVAS_SCORE= (someone graded in SpeedGrader since the pull), whose =attempt= changed (a resubmission), whose rubric assessment on Canvas no longer matches =CANVAS_RUBRIC= when the push carries rubric rows, or whose late status on Canvas no longer matches =CANVAS_LATE_STATUS= when the push sets one, is skipped and gets a =:CONFLICT:= property naming what moved and what Canvas holds: =score: Canvas has 93=, =attempt: Canvas has 2=, =rubric: assessed on Canvas since the pull=, or =late status: Canvas has missing=. A re-pull marks a typed =LATE_STATUS= the same way when Canvas's status moved under it. A re-pull keeps the =SCORE= and the =Rubric= rows you typed and, when Canvas's grade or assessment moved since you typed them, marks the heading =:CONFLICT:= the same way (=score: Canvas has 93=, or =rubric: assessed on Canvas since these rows were typed=), since what is shown is yours and not what Canvas holds; a typed score Canvas now agrees with is simply confirmed. A refresh marks a resubmission the same way (=attempt: 2 submitted after grading=) when the row already carried a grade, so the mark is there while you read, not only when you push, and its closing line names every student it marked (=Refreshed R5: 1 scored on Canvas since the pull; CONFLICT on 1: Adams, Alice (score: Canvas has 0)=).
+
+A heading marked =:CONFLICT:= is not pushed: =S= and =org-canvas-push-submission-grades= send nothing of it — not the score, the =Rubric= rows, the late status or the drafted comment — whatever its value says, and name it in the closing message (=1 conflict(s) not sent (Adams, Alice)=) and in the returned plist (=:conflicts= counts the headings held back, whether marked before the push or by its own check, and =:conflict-names= lists them). A refresh is the routine way to pick up late uploads, so it must not be the way a conflict is overridden; the mark stays until you resolve it on the heading:
+
+- =t= (=org-canvas-submissions-take-canvas=) takes Canvas's grade. It reads the student's submission, and =SCORE=, =LATE_STATUS= and the =Rubric= rows become what Canvas holds, as do their baselines. What you had typed is kept as one line under =Notes= (=- Typed before taking Canvas's grade <2026-10-01 Thu 10:12>: SCORE 10; Rubric _7104 6, _7105 3, _7106 1=). A drafted comment stays drafted, for you to send or clear.
+- =k= (=org-canvas-submissions-keep-mine=) keeps what you typed. It reads the student's submission and makes it the heading's baseline (=CANVAS_SCORE=, =CANVAS_RUBRIC=, =CANVAS_LATE_STATUS=, =ATTEMPT=), so the next push sends your values over Canvas's on purpose.
+
+Both clear =:CONFLICT:= and save the file. A successful push of a heading also clears it, which only a heading resolved with =k= or never marked reaches. Set =org-canvas-submissions-check-conflicts= to nil to push without the push's own check; a heading already marked is held back either way.
 
 ** Properties in a Grading File
 
@@ -3532,8 +3622,8 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 | =:ATTEMPT:= | Submission attempt at pull time; a change flags a resubmission |
 | =:GRADED_ATTEMPT:= | Written by a refresh that found a graded row resubmitted: the attempt the score was given on, from Canvas's attempt history; the next refresh rewrites it |
 | =:SUBMITTED_AT:= | Submission timestamp |
-| =:SIMILARITY:= | The document processor's Similarity report: a score, =pending=, =failed= or =not processed=; present only when Canvas holds one (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]) |
-| =:AI_WRITING:= | The AI Writing report, read the same way |
+| =:SIMILARITY:= | The document processor's Similarity report on the current attempt: a score, =pending=, =failed= (with its error code, such as =failed (EULA_NOT_ACCEPTED)=), =not processed=, or =none= for a handed-in file with no report on a column that has a processor; absent on a column without one (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]) |
+| =:AI_WRITING:= | The AI Writing report, read the same way; =--%= when Turnitin could not score the file, =*%= for 1 to 19 percent |
 | =:REPORT_<TYPE>:= | Any other report type, read the same way |
 | =:CANVAS_COMMENTS:= | Each sent comment's text digest, by its id, as last pulled or pushed, which tells a comment you rewrote from one you did not; present only when the student has comments |
 | =:CANVAS_COMMENT_BANK:= | On the =* Comment Bank= heading: each labelled saved comment's text digest as last read or written, which tells an edit here from one in SpeedGrader |
@@ -3603,8 +3693,10 @@ summary line above the table counts them. When a column someone
 submitted to has similarity or AI writing reports, a =Reports:= line
 follows, the students counted the way a grading file counts them and
 summed over the columns, naming the columns where a report failed:
-=Reports: 36 processed, 7 failed, 0 pending; failed in R6 (7)=. It
-costs one GraphQL query per such column; a column with no report
+=Reports: 36 processed, 7 failed, 0 pending; failed in R6 (7)=, with
+the unscored rows and the rows without a report named when there are
+some. It costs one GraphQL query per such column, and one more for a
+column where a handed-in file has no report; a column with no report
 adds nothing to it.
 
 Mean and Median come from one GraphQL read for the whole course
@@ -3663,6 +3755,21 @@ the counts only, leaving out the statistics and reports. The pull
 command also takes rows a script has already filtered:
 =(org-canvas-submissions-pull-queue ROWS)= pulls those of them marked
 =pull= or =refresh=.
+
+** Similarity and AI Writing Across Columns
+
+A grading file carries one column's reports (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]); the pattern across columns is in none of them. One 40% AI Writing score on one recitation is a different conversation from the same student at 80% on three, and a student whose files were refused on every column shows in no single file.
+
+=M-x org-canvas-submissions-reports= (transient: Submissions, =y=) reads every assignment that has a document processor and each one's reports on the students' current attempts, and shows one read-only report in =*canvas-document-processor-reports*=:
+
+- *Summary by column* — per column, the students who handed in, then the rows processed, unscored (=--%=), failed, pending and without a report, each student counted once as a grading file's =Reports:= line counts them, and how many rows also carry reports on a replaced attempt (left out of the cells)
+- *Every student* — sorted by name, with their sections, and a Similarity and an AI Writing cell per column, read as in a grading file (=12%=, =*%=, =--%=, =failed (EULA_NOT_ACCEPTED)=, =none=, =pending=; blank when nothing was handed in)
+- *Refused files* — each failed report, with its code and whether Canvas lets the student send the file again
+- *Handed in, no report* — each submission with no report on its current attempt, when it was submitted and its files
+
+It writes nothing to Canvas and does not read or write any grading file; none needs to exist, so a column whose file holds unpushed scores is not touched. The names and sections come with the same GraphQL read (each submission's user and enrollments), so people.org is not needed either. It costs one GraphQL query per hundred assignments and one per fifty submissions of each column with a processor. A column it cannot read shows =?= in the summary after one warning, and the others are still read.
+
+With a prefix argument (=C-u M-x org-canvas-submissions-reports=), or =(org-canvas-submissions-reports t)= from Lisp, the report is also written to =document-processor-reports-YYYY-MM-DD.org= under the submissions directory, which keeps student data out of version control (see [[*Privacy][Privacy]]). From the shell, =scripts/org-canvas reports= prints it and =reports --save= also saves it. From Lisp the command returns a plist of =:columns= (each with its =:summary=), =:students= and =:file=.
 
 ** Privacy
 
@@ -4370,15 +4477,22 @@ These commands delete the item at the current cursor position:
 | =org-canvas-pull-peer-reviews= | Pull who reviews whom on an assignment into read-only tables (=w=) |
 | =org-canvas-submissions-status= | The grading queue: which columns need pulling, grading or posting, one read-only table (=Q=) |
 | =org-canvas-submissions-pull-queue= | Pull every column the grading queue marks =pull= or =refresh=, with attachments, and report each one's changes (=U=) |
+| =org-canvas-submissions-reports= | Similarity and AI Writing across every column with a document processor, one row per student, read-only; with a prefix argument also saved under the submissions directory (=y=) |
 | =org-canvas-submissions-status-rows= | The grading queue's rows as plists (=:name=, =:id=, =:next=, ...), for scripts |
 | =org-canvas-open-submissions= | Reopen a saved grading file; from Lisp, by path or name |
 | =org-canvas-submissions-refresh-file= | Reopen a grading file and re-pull it in one step, returning the buffer (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
-| =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, posting only when asked; returns what was done (see [[*Batch Use][Batch Use]]) |
+| =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, or only some students' rows, posting only when asked; returns what was done (see [[*Batch Use][Batch Use]]) |
+| =org-canvas-submissions-push-at-point= | Push the student heading at point alone, confirmed as =S= is (=s=) |
 | =org-canvas-push-submission-comment-edits= | Push only the sent comments rewritten or marked =DELETE=, nothing else (=C=); from Lisp, by id or name |
+| =org-canvas-submissions-take-canvas= | Resolve the =CONFLICT= at point by taking Canvas's grade, the typed one kept under =Notes= (=t=) |
+| =org-canvas-submissions-keep-mine= | Resolve the =CONFLICT= at point by keeping the typed grade, which the next push sends (=k=) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-score-by-window= | Score by submission time against each student's section window, outliers listed first (=W=) |
+| =org-canvas-submissions-export-comments= | A grading file's row comments, drafts, sent comments and notes as data, or JSON (=H=) |
+| =org-canvas-submissions-import-comments= | Write new comment text back by user, criterion and comment id, nothing else (=I=) |
+| =org-canvas-submissions-check-comments= | Deducted rows without a comment, flagged text, sentences many students share (=K=) |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |

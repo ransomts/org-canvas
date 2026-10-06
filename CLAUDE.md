@@ -67,6 +67,8 @@ lisp/
 ├── org-canvas-peer-reviews.el   # Read-only tables of who reviews whom on an assignment (requires submissions)
 ├── org-canvas-submissions-status.el # Grading queue: per-column submitted/graded/posted counts and the next action (requires submissions)
 ├── org-canvas-submissions-window.el # Score a grading file by SUBMITTED_AT against each student's section window (requires submissions)
+├── org-canvas-submissions-comments.el # Export, import and check a grading file's comments as data/JSON (requires submissions)
+├── org-canvas-submissions-reports.el # Similarity and AI Writing across every column with a processor, one row per student, read-only (requires submissions)
 ├── org-canvas-messages.el       # Send Canvas conversations from messages.org; never part of org-canvas-sync
 ├── org-canvas-new-quiz-items.el # New Quizzes item/question pipeline (sub-module of new-quizzes)
 ├── org-canvas-{feature}.el      # Feature modules: announcements, assignment-groups, assignments,
@@ -87,7 +89,7 @@ lisp/
 - Feature modules must NOT depend on each other. The one sanctioned exception is a sub-module: `org-canvas-new-quizzes` requires `org-canvas-new-quiz-items`, which itself requires only core
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
-- Command files (status, publish, adopt, orphans, browse, search, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status and submissions-window require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table); no feature module may require a command file
+- Command files (status, publish, adopt, orphans, browse, search, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, submissions-comments, submissions-reports, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status, submissions-window, submissions-comments and submissions-reports require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table; submissions-reports declares assignments.el's course-wide GraphQL reader, `org-canvas--assignment-graphql-read`); no feature module may require a command file
 - batch.el sits above everything: it requires `org-canvas` itself (after putting the dependencies on `load-path`) and nothing requires it; a batch Emacs loads it with `-l` (#416)
 - diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
@@ -185,6 +187,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 **`api-interaction.org`**
 
+- a log write never takes a lock nor fails its caller, and an error in Emacs is never counted as Canvas's (#443)
 - a role refusal is a skip (#155), for a body file link (#390) and a settings sub-read (#397) too
 - conflict baseline and strategy rules (#48, #72, #86, #104, #124)
 - copy-pasteable curl commands for debugging
@@ -206,7 +209,11 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a bulk grade push waits for Canvas's `update_grades` job through its Progress, within a timeout, and records baselines and offers posting only once the job completed (#382)
 - a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
 - a column is scored by section window: SUBMITTED_AT against the student's own sections' windows from the overrides table or a local-only `MEETS`, compared as wall-clock minutes, a typed score kept, the outliers listed before anything is written, and a Notes line naming the rule (#383)
+- a column's grading file is found by the `CANVAS_ASSIGNMENT_ID` in its header first and by name second (queue, pull, open, window scoring, push); a pull renames one found under an old name, attachments directory, links and header with it, a buffer visiting it following and a modified one refusing; two files claiming one id are named and neither is picked (#431)
+- a dry run of the grade push sends nothing and writes nothing: drafts stay drafted and unsent, no baseline, `CONFLICT` or Comment Bank label is written, the file is not saved, and what a push would send is only counted (#442)
 - a grade is cleared only by a typed `none` (or `-`), sent as `posted_grade ""`: an absent or blank SCORE leaves the grade alone and an unreadable one stops the push, a clear where Canvas holds no grade is no change, a landed one takes SCORE and CANVAS_SCORE away, a re-pull keeps it until it lands, and a rubric assessment is never cleared with it (#417)
+- a heading marked `CONFLICT` in a grading file sends nothing (grade, rubric rows, late status, draft; not sent-comment edits or the bank) until `t` takes Canvas's grade (typed values kept under Notes) or `k` keeps the typed one against Canvas's baselines, both after reading the submission; `:conflicts` counts held and newly found headings, `:conflict-names` names them, and a refresh's line names them too (#440)
+- a grading file's comments export as JSON and import back by (user, criterion), user and (user, comment id) through the push's own readers and writers, touching nothing else (an unchanged export re-imports byte-identical); an imported sent comment is a hand edit for `C`, an emptied one refused, a posted student's changes kept back unless asked, a dry run the same counts; the check fails on deducted rows without a comment and course regexps, and only warns on sentences many students share (#438)
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
 - a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)
 - a late status is typed in the grading file as `LATE_STATUS` against a `CANVAS_LATE_STATUS` baseline and pushed through `updateSubmissionGradeStatus`, checked before sending, recorded as Canvas stored it, with no lateness override since the mutation takes none (#352)
@@ -224,9 +231,12 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a push compares what Canvas stored with what it sent, and a new survey says whether it is anonymous (#349)
 - a push of one assignment heading, at point or by name, reconciles that heading's overrides table through `:after-heading` and reports the counts; an override already carrying its row's dates is not PUT (#380); a heading that had drifted is restamped after the writes when the assignment read back agrees with the payload the push built (`:heading-payload`, the #349 echo check), so an override-only drift does not read as CHANGED forever (#410); an override Canvas holds that the table lacks is deleted only after asking, and kept in batch, a fourth count (#411)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
+- a push takes some rows of a grading file: `s` at point or `org-canvas-push-submission-grades`'s ONLY, the full push restricted by one plan (`org-canvas--submissions-push-plan`), no Comment Bank or posting with it, ids with no row or nothing to send named, and a dry run listing each row's fields (#441)
+- a read-only report sets every column's Similarity and AI Writing side by side, one row per student with sections from the same GraphQL read, with the refused files and the missing reports listed, reading no grading file and needing none (#437)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a question pulls in the format its push reads: matching pairs and distractors, numerical exact and range, blanks under their ids; and a distractor is pushed as the question's `matching_answer_incorrect_matches`, never as an answer (#407)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)
+- a report row is the current attempt's (canvas-lms's `latest` rule applied here: a file still on the submission, the asset's attempt, a discussion entry), a failure carries its `errorCode`, `--%` counts as unscored, and a handed-in row with no report on a column with a processor reads `none`, counted per row in five buckets (#436)
 - a resubmission names the attempt its score was given on, read from `submissionHistoriesConnection` for the resubmitted rows only and judged by `gradeMatchesCurrentSubmission` (#352)
 - a script pushes a grading file by id or name through `org-canvas-push-submission-grades` with no prompt, posting only when its own argument says so and the grades landed; `S` confirms through `org-canvas--confirm` and offers to post only interactively (#381)
 - a sent submission comment carries its id in `** Comments` (`- *Author* <time> [id] :: text`) against a `CANVAS_COMMENTS` digest baseline; the push rewrites the grader's own edited comment (PUT `comment`) and deletes one marked `DELETE`, after re-reading author and text, and refuses locally one by someone else, one edited on Canvas since, or one gone; a removed line is never a deletion, and a refresh keeps an unsent change (#419); `org-canvas-push-submission-comment-edits` (`C`) is that phase alone, sharing its collect, check, question, send and counts, saved through `org-canvas--save-buffer` (#425)
@@ -317,6 +327,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - Secrets never reach logs: every line passes through `org-canvas--log-redact` (Bearer tokens, session/csrf/token cookie or query values); plz-error structs are scrubbed by `org-canvas--scrub-plz-error` before entering signal data
 - Secrets never reach the *user* either: a message carrying text the package did not write itself (`error-message-string` above all) goes through `org-canvas--user-message`, never a bare `message`, and `org-canvas--pull-summary-record` masks its `:error` on the way in (#154). The echo area, `*Messages*` and batch stderr are shared sinks too
 - Secrets never reach *backtraces* either: a backtrace prints function arguments verbatim, so the token is never one. `org-canvas--api-request-headers` resolves the Authorization header inside the transport function (`org-canvas--api-execute-request`, `org-canvas--api-curl-patch-config`), which also re-signals whatever plz raises so plz's own frames are gone before an error escapes (#178) — api-interaction.org, "Redaction Cannot Reach a Backtrace"
+- A log handler never signals: the file is appended unvisited and unlocked, a failure noted once (#443)
 - `org-canvas--save-buffer` is a no-op on unmodified buffers; each sync command clears the log unless `org-canvas--inhibit-log-clear` is bound (the master sync binds it)
 
 ### JSON/API

@@ -287,10 +287,8 @@
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("Connection refused")))))
-        ;; Should not throw, just message
-        (org-canvas-test-connection)
-        ;; If we get here, it handled the error
-        (expect t :to-be t))))
+        ;; The refusal is handled, not thrown
+        (expect (org-canvas-test-connection) :not :to-throw))))
 
   (it "logs error on failure"
     (with-org-canvas-test-config

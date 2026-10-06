@@ -1,0 +1,11 @@
+* Changed
+- #430 The child syncs, the GraphQL reads and the settings pipeline
+  share their skeletons instead of hand-copying them.  Quiz groups,
+  quiz questions and New Quiz items sync through one harness
+  (`org-canvas--collect-subtree-markers' and
+  `org-canvas--sync-children'), the cursor-paged GraphQL reads (the
+  assignments' processors, the submission reports, the comment bank)
+  through one pager (`org-canvas--graphql-walk-pages'), and the
+  course settings read, transform, payload and pull from one field
+  list: adding a setting is one line there and one registry entry.
+  No message, count or payload changes.

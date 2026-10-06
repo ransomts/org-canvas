@@ -67,6 +67,9 @@
     org-canvas--assignment-processors-query
     org-canvas--assignment-schedules-query
     org-canvas--submissions-reports-query
+    org-canvas--submissions-processors-query
+    org-canvas--processor-reports-columns-query
+    org-canvas--processor-reports-query
     org-canvas--submissions-status-statistics-query
     org-canvas--submissions-late-status-mutation
     org-canvas--submissions-bank-query
@@ -518,6 +521,7 @@ page of discussions."
             :to-equal '("lisp/org-canvas-assignments.el" "lisp/org-canvas-discussions.el"
                         "lisp/org-canvas-modules.el"
                         "lisp/org-canvas-settings.el"
+                        "lisp/org-canvas-submissions-reports.el"
                         "lisp/org-canvas-submissions-status.el"
                         "lisp/org-canvas-submissions.el"))
     (expect (gethash "query" (gethash "roots" org-canvas-graphql-contract--data)) :to-equal "Query")
@@ -726,6 +730,45 @@ page of discussions."
           (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
         (expect (alist-get 'assignmentId (cdar sent)) :to-equal "1001")
         (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
+  (it "org-canvas-submissions-reports sends what its two queries declare (issue #437)"
+    (with-org-canvas-test-config
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional variables)
+                     (push (cons document variables) sent)
+                     (if (eq document org-canvas--processor-reports-columns-query)
+                         '((course . ((assignmentsConnection
+                                       . ((pageInfo . ((hasNextPage . :json-false)
+                                                       (endCursor . :null)))
+                                          (nodes . [((_id . "101") (name . "R5")
+                                                     (dueAt . :null)
+                                                     (ltiAssetProcessorsConnection
+                                                      . ((nodes . [((_id . "9"))]))))]))))))
+                       '((assignment . ((submissionsConnection
+                                         . ((pageInfo . ((hasNextPage . :json-false)
+                                                         (endCursor . :null)))
+                                            (nodes . [])))))))))
+                  ((symbol-function 'org-canvas--report-display) #'ignore)
+                  ((symbol-function 'message) #'ignore))
+          (org-canvas-submissions-reports))
+        (expect (mapcar #'car sent)
+                :to-equal (list org-canvas--processor-reports-query
+                                org-canvas--processor-reports-columns-query))
+        (dolist (call sent)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call))
+                  :to-equal nil)))))
+  (it "org-canvas--submissions-column-has-processor-p sends what its query declares"
+    (let ((sent nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                 (lambda (document &optional variables)
+                   (push (cons document variables) sent)
+                   '((assignment . ((ltiAssetProcessorsConnection
+                                     . ((nodes . [((_id . "7"))])))))))))
+        (expect (org-canvas--submissions-column-has-processor-p 1001) :to-be-truthy))
+      (expect (caar sent) :to-be org-canvas--submissions-processors-query)
+      (expect (org-canvas-graphql-contract--check-variables (caar sent) (cdar sent))
+              :to-equal nil)
+      (expect (alist-get 'assignmentId (cdar sent)) :to-equal "1001")))
   (it "org-canvas--submissions-status-fetch-statistics sends what its query declares, with and without a cursor"
     (with-org-canvas-test-config
       (let ((pages 0) (sent nil))

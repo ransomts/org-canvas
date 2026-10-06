@@ -125,11 +125,12 @@ written there is the only one the report can find."
              ,@body))
        (delete-directory dir t))))
 
-(defun test-sstatus--write-grading-file (name pulled-at)
-  "Write a grading file for assignment NAME whose PULLED_AT is PULLED-AT."
+(defun test-sstatus--write-grading-file (name pulled-at &optional id)
+  "Write a grading file for assignment NAME whose PULLED_AT is PULLED-AT.
+ID is the CANVAS_ASSIGNMENT_ID of its header, 1 when nil."
   (with-temp-file (org-canvas--submissions-file-path name)
     (insert (format "#+TITLE: Submissions: %s\n" name)
-            "#+PROPERTY: CANVAS_ASSIGNMENT_ID 1\n"
+            (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n" (or id 1))
             (format "#+PROPERTY: CANVAS_ASSIGNMENT_NAME %s\n" name)
             (format "#+PROPERTY: PULLED_AT %s\n\n" pulled-at)
             "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")))
@@ -196,7 +197,41 @@ Bounded by the number of lines; the match's end is read before
       (test-sstatus--write-grading-file "Journal 02" "<2026-09-12 Sat 10:30>")
       (org-canvas--submissions-status-pulled-at "Journal 02")
       (expect (find-buffer-visiting (org-canvas--submissions-file-path "Journal 02"))
-              :to-be nil))))
+              :to-be nil)))
+
+  (it "finds a renamed column's file by its id and leaves it where it is (issue #431)"
+    (test-sstatus--with-course nil nil
+      (test-sstatus--write-grading-file "Attendance 03" "<2026-09-12 Sat 10:30>" 7)
+      (expect (org-canvas--submissions-status-pulled-at "Attendance 03: Wed Sep 30" 7)
+              :to-equal "<2026-09-12 Sat 10:30>")
+      (expect (directory-files org-canvas-submissions-directory nil "\\.org\\'")
+              :to-equal '("Attendance_03.org"))))
+
+  (it "finds a file without an id header by the column's name (issue #431)"
+    (test-sstatus--with-course nil nil
+      (with-temp-file (org-canvas--submissions-file-path "Journal 02")
+        (insert "#+PROPERTY: PULLED_AT <2026-09-12 Sat 10:30>\n"))
+      (expect (org-canvas--submissions-status-pulled-at "Journal 02" 7)
+              :to-equal "<2026-09-12 Sat 10:30>"))))
+
+(describe "A column two grading files claim (issue #431)"
+  (it "shows no Pulled date, picks neither and names both"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 7 "Attendance 01: Fri Sep 18"))
+        (list (cons 7 (list (test-sstatus--submission
+                             '(submitted_at . "2026-09-01T00:00:00Z")))))
+      (test-sstatus--write-grading-file "Attendance 01" "<2026-09-12 Sat 10:30>" 7)
+      (test-sstatus--write-grading-file
+       "Attendance 01: Fri Sep 18" "<2026-09-13 Sun 10:30>" 7)
+      (let* ((columns (org-canvas-submissions-status))
+             (column (car columns))
+             (text (with-current-buffer org-canvas--submissions-status-buffer-name
+                     (buffer-string))))
+        (expect (plist-get column :pulled-at) :to-be nil)
+        (expect (mapcar #'file-name-nondirectory (plist-get column :duplicates))
+                :to-equal '("Attendance_01.org" "Attendance_01__Fri_Sep_18.org"))
+        (expect text :to-match
+                "Grading files Attendance_01\\.org and Attendance_01__Fri_Sep_18\\.org all claim Attendance 01: Fri Sep 18; keep one\\.")))))
 
 (describe "org-canvas--submissions-status-parse-pulled-at"
   (it "turns the Org timestamp into a time value"
@@ -328,8 +363,10 @@ Bounded by the number of lines; the match's end is read before
               (cons 5 (list (test-sstatus--submission
                              '(submitted_at . "2026-09-01T00:00:00Z"))))
               (cons 6 (list (test-sstatus--submission))))
-      (dolist (name '("Done" "To post" "To grade" "To refresh"))
-        (test-sstatus--write-grading-file name "<2026-09-12 Sat 10:30>"))
+      (dolist (file '(("Done" . 1) ("To post" . 2) ("To grade" . 3)
+                      ("To refresh" . 4)))
+        (test-sstatus--write-grading-file
+         (car file) "<2026-09-12 Sat 10:30>" (cdr file)))
       (let* ((columns (org-canvas--submissions-status-columns
                        (org-canvas--submissions-status-fetch-assignments)))
              (names (mapcar (lambda (c) (plist-get c :name)) columns))
@@ -495,7 +532,7 @@ Bounded by the number of lines; the match's end is read before
         (expect (plist-get (cl-find "R6" columns :key (lambda (c) (plist-get c :name))
                                     :test #'equal)
                            :reports)
-                :to-equal '(:processed 1 :failed 1 :pending 1))
+                :to-equal '(:processed 1 :unscored 0 :failed 1 :pending 1 :none 0))
         (expect (plist-get (cl-find "Quiz" columns :key (lambda (c) (plist-get c :name))
                                     :test #'equal)
                            :reports)
@@ -506,6 +543,25 @@ Bounded by the number of lines; the match's end is read before
                 "[Submissions status] Reports: 1 processed, 2 failed, 1 pending; failed in R6 (1), R7 (1)")
         ;; Nothing was handed in on Nobody, so it was not asked.
         (expect (sort (copy-sequence test-sstatus--graphql-calls) #'<) :to-equal '(1 2 3)))))
+
+  (it "counts unscored rows and rows without a report in the sum (issue #436)"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 1 "R6") (test-sstatus--assignment 2 "R7"))
+        (list (cons 1 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z"))))
+              (cons 2 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z")))))
+      (let* ((test-sstatus--reports
+              `((1 . ((101 ,(test-sstatus--report "originality" "Processed" "12%")
+                           ,(test-sstatus--report "turnitin_aiwriting" "Processed" "--%"))))
+                (2 . ((201 ,(test-sstatus--report "originality" "Failed"))))))
+             (columns (org-canvas--submissions-status-columns
+                       (org-canvas--submissions-status-fetch-assignments))))
+        (plist-put (cl-find "R7" columns :key (lambda (c) (plist-get c :name))
+                            :test #'equal)
+                   :reports
+                   (list :processed 0 :unscored 0 :failed 0 :pending 0 :none 2))
+        (expect (org-canvas--submissions-status-reports-line columns)
+                :to-equal
+                "Reports: 0 processed, 0 failed, 0 pending, 1 unscored, 2 without a report"))))
 
   (it "has no Reports line when no column has a report"
     (test-sstatus--with-course
@@ -650,8 +706,9 @@ Bounded by the number of lines; the match's end is read before
   (declare (indent 0))
   `(let ((course (test-sstatus--queue-course)))
      (test-sstatus--with-course (car course) (cadr course)
-       (dolist (name '("Done" "To grade" "To refresh"))
-         (test-sstatus--write-grading-file name "<2026-09-12 Sat 10:30>"))
+       (dolist (file '(("Done" . 1) ("To grade" . 3) ("To refresh" . 4)))
+         (test-sstatus--write-grading-file
+          (car file) "<2026-09-12 Sat 10:30>" (cdr file)))
        ,@body)))
 
 (defvar test-sstatus--pulled nil

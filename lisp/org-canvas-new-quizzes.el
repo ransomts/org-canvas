@@ -594,67 +594,50 @@ is absent in RESPONSE."
 
 ;;;; Sync Item Loop
 
+(defun org-canvas--new-quiz-item-heading-p ()
+  "Return non-nil when the heading at point is an item of a New Quiz.
+A level-2 heading under the quiz."
+  (= (org-outline-level) 2))
+
 (defun org-canvas--sync-new-quiz-items (quiz-marker quiz-assignment-id)
   "Sync all items under the New Quiz at QUIZ-MARKER.
 QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz.  An item
 heading without a CANVAS_ITEM_ID adopts the item of its title the quiz
 already holds, when one is unclaimed, instead of creating a second
 \(issue #179)."
-  (let ((item-markers nil)
-        (item-success 0)
-        (item-skipped 0)
-        remote claimed)
-    ;; Collect all item markers (level-2 headings under this quiz)
-    (with-current-buffer (marker-buffer quiz-marker)
-      (save-excursion
-        (goto-char (marker-position quiz-marker))
-        (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-          (while (and (outline-next-heading)
-                      (< (point) subtree-end))
-            (when (= (org-outline-level) 2)
-              (push (point-marker) item-markers)))))
-      (setq item-markers (nreverse item-markers)
-            claimed (delq nil (mapcar (lambda (m) (org-entry-get m "CANVAS_ITEM_ID"))
-                                      item-markers))
-            remote (org-canvas--new-quiz-remote-items quiz-assignment-id item-markers)))
-
-    ;; Sync each item using stable markers
-    (dolist (m item-markers)
-      (with-current-buffer (marker-buffer m)
-        (save-excursion
-          (goto-char (marker-position m))
-          (condition-case err
-              (let* ((data (org-canvas--new-quiz-item-parse-entry quiz-assignment-id))
-                     (q-type (plist-get data :type)))
-                (if (and org-canvas--new-quiz-debug-types
-                         (not (member q-type org-canvas--new-quiz-debug-types)))
-                    (progn
-                      (org-canvas--log-info org-canvas--logger
-                        "[DEBUG SKIP] Skipping type '%s' for '%s'"
-                        q-type (plist-get data :title))
-                      (setq item-skipped (1+ item-skipped)))
-                  (let* ((adopted (org-canvas--adopt-child-twin
-                                   data remote
-                                   (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
-                                   claimed "[New Quiz Item]"))
-                         (payload (org-canvas--new-quiz-item-build-payload data))
-                         (response (org-canvas--new-quiz-item-push-to-api data payload)))
-                    (when adopted (push adopted claimed))
-                    (org-canvas--new-quiz-item-finalize data response)
-                    (setq item-success (1+ item-success)))))
-            (error
-             (org-canvas--log-error org-canvas--logger "[New Quiz Item] Failed: %s"
-               (error-message-string err)))))))
-
-    ;; Release markers to avoid memory leaks
-    (dolist (m item-markers) (set-marker m nil))
-
-    (when (> item-skipped 0)
+  (let* ((label "[New Quiz Item]")
+         (item-markers (org-canvas--collect-subtree-markers
+                        quiz-marker #'org-canvas--new-quiz-item-heading-p))
+         (claimed (delq nil (mapcar (lambda (m) (org-entry-get m "CANVAS_ITEM_ID"))
+                                     item-markers)))
+         (remote (org-canvas--new-quiz-remote-items quiz-assignment-id item-markers))
+         (counts (org-canvas--sync-children
+                  item-markers label
+                  (lambda ()
+                    (let* ((data (org-canvas--new-quiz-item-parse-entry quiz-assignment-id))
+                           (q-type (plist-get data :type)))
+                      (if (and org-canvas--new-quiz-debug-types
+                               (not (member q-type org-canvas--new-quiz-debug-types)))
+                          (progn
+                            (org-canvas--log-info org-canvas--logger
+                                "[DEBUG SKIP] Skipping type '%s' for '%s'"
+                                q-type (plist-get data :title))
+                            'skip)
+                        (let* ((adopted (org-canvas--adopt-child-twin
+                                          data remote
+                                          (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
+                                          claimed label))
+                               (payload (org-canvas--new-quiz-item-build-payload data))
+                               (response (org-canvas--new-quiz-item-push-to-api data payload)))
+                          (when adopted (push adopted claimed))
+                          (org-canvas--new-quiz-item-finalize data response))))))))
+    (when (> (plist-get counts :skip) 0)
       (org-canvas--log-info org-canvas--logger "[New Quiz Items] %d skipped (debug filter)"
-        item-skipped))
+        (plist-get counts :skip)))
     (org-canvas--log-info org-canvas--logger "[New Quiz Items] %d/%d synced"
-      item-success (- (length item-markers) item-skipped))
-    (cons item-success (- (length item-markers) item-success item-skipped))))
+      (plist-get counts :success)
+      (- (plist-get counts :total) (plist-get counts :skip)))
+    (cons (plist-get counts :success) (plist-get counts :fail))))
 
 ;;;; Main Sync Function
 

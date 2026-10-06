@@ -822,8 +822,9 @@ Just a description, no override table.
                 (with-sync-test-env
                   (cl-letf (((symbol-function 'org-canvas-api-request)
                              (lambda (_method _url &rest _args) nil)))
-                    (org-canvas-sync-overrides)
-                    (expect t :to-be t))))))
+                    ;; Canvas answering nothing deletes nothing and throws
+                    ;; nothing: the reconcile is a no-op, not a failure
+                    (expect (org-canvas-sync-overrides) :not :to-throw))))))
         (let ((buf (find-buffer-visiting assign-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))

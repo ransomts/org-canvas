@@ -1,0 +1,2 @@
+* Fixed
+- #443 A log write can no longer fail a Canvas write: the log file is appended without visiting or locking it, and a log handler that fails is noted once instead of signalling, so a batch push run beside a live Emacs no longer meets that Emacs's lock on =org-canvas.log=. A sent-comment edit stopped by an error in Emacs, rather than by Canvas, is counted as =:errored= and reported as "failed in Emacs, not at Canvas" instead of "refused by Canvas"; a request Canvas failed now reads "failed at Canvas"

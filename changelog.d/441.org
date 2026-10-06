@@ -1,0 +1,13 @@
+* Added
+- #441 Some rows of a grading file can be pushed without the rest.
+  =s= (=org-canvas-submissions-push-at-point=) pushes the student
+  heading at point — score, Rubric rows, late status, drafted comment
+  and sent-comment edits — through the same check, question and
+  baselines as =S=, and never offers to post.  From a script,
+  =(org-canvas-push-submission-grades ASSIGNMENT nil '(ID ...))= pushes
+  the students named, refuses POST beside them, and returns
+  =:missing= and =:unchanged= for ids with no row or nothing to send;
+  from the shell, =scripts/org-canvas push-grades ASSIGNMENT --only
+  ID,ID [--dry-run]=.  A dry run of any grade push now lists, per
+  student, the fields that would be sent (=:would-send=, printed by
+  =push-grades=).
