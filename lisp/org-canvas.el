@@ -95,6 +95,7 @@
 (require 'org-canvas-submissions-status)
 (require 'org-canvas-submissions-window)
 (require 'org-canvas-submissions-comments)
+(require 'org-canvas-submissions-ruling)
 (require 'org-canvas-submissions-reports)
 (require 'org-canvas-messages)
 (require 'org-canvas-setup)

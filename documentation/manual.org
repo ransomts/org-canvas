@@ -132,6 +132,7 @@ ARGS=, which is also the line to use without it.
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
 | =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
+| =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
@@ -3514,6 +3515,45 @@ scripts/org-canvas import-comments Essay_1 essay1.json
 scripts/org-canvas check-comments Essay_1
 #+end_src
 
+** Applying a Ruling to Listed Students
+
+A ruling is a decision made after grading for a list of students, not a judgment row by row: the submissions whose document link did not open score zero, every row carrying the same sentence; three late extra-credit submissions lose 20% of the column off their rubric total.  =org-canvas-submissions-apply-ruling= applies one to a grading file, locally; nothing is read from Canvas and nothing is sent.  It is a function for Lisp and batch runs, not a key:
+
+#+begin_src emacs-lisp
+(org-canvas-submissions-apply-ruling
+ "Essay_1" '(5001 5002)                ; the grading file, then USER_IDs
+ :rows 0                               ; every row's Score; 'empty, or nil to leave
+ :row-comment "There's no link on your PDF, so it scores zero."  ; or 'empty, or nil
+ :score 0                              ; or (lambda (total max) (- total (* 0.2 max)))
+ :comment "Draft for Comment to post"  ; nil leaves the draft
+ :note "Open-link rule, announced 2026-09-28.")
+#+end_src
+
+The file is taken as the comment export takes it (the grading buffer at hand, an assignment id, or a grading file's path or name).  For each listed student it writes the Rubric rows' scores and comments, =SCORE=, and the draft under =** Comment to post= (adding that heading when the student has none), and appends a Notes item recording what it replaced, so the ruling can be undone by hand:
+
+#+begin_src org
+,** Notes
+- Ruling <2026-10-06 Tue 14:02>: Open-link rule, announced 2026-09-28.
+  Before: SCORE 8; Rubric _1 3 (Thesis unclear.), _2 5; draft (Good start.)
+#+end_src
+
+A =:score= function is called with the rows' total after the ruling and the column's points (=POINTS_POSSIBLE=, else the rows' =Max= summed); a result below 0 is 0.  Some students are kept back rather than half-ruled: one who left the course, one without a Rubric table when =:rows= or =:row-comment= is given, and one whose new =SCORE= is not the new rows' total on a column whose grade comes from its rubric, since the push would refuse the whole file for it.  An id no student heading carries is named, not guessed at.  Whether emptied Score cells clear an assessment on Canvas is the push's rule, not the ruling's.
+
+It returns a plist for the caller to check against the list it passed: =:changed= (one plist per student, with =:user-id=, =:name=, =:old-score=, =:score=, =:old-rows= and =:rows= as =(ID SCORE COMMENT)= lists, =:old-draft= and =:draft=), =:unmatched= (the ids), =:skipped= (=(USER-ID . WHY)=) and =:dry-run=.  Under a dry run nothing is written and the result is the same.  The file is saved when anything changed; review it and push with =S=.
+
+From the shell, =scripts/org-canvas apply-ruling FILE RULING.json= applies one ruling object, or each of an array of them in turn, and exits 1 when an id matched nothing or a student was kept back:
+
+#+begin_src js
+[{"user_ids": [5001, 5003], "rows": 0, "score": 0,
+  "row_comment": "There's no link on your PDF, so it scores zero.",
+  "note": "Open-link rule."},
+ {"user_ids": [5007], "row_comment": "empty",
+  "score": {"deduct_percent": 20},
+  "comment": "Submitted after the extra-credit window, so 20% of the column comes off."}]
+#+end_src
+
+=rows= is a number or ="empty"=; =score= is a number, or ={"deduct_percent": P}= for the rows' total less P% of the column's points.
+
 ** Scoring by Section Window
 
 An in-class check — attendance, an in-room closer — is graded by when it arrived: full credit when a student submitted during their own section's meeting, 0 otherwise. =M-x org-canvas-submissions-score-by-window= (transient: Submissions, =W=) does that for a grading file, locally; nothing is read from Canvas and nothing is sent.
@@ -4493,6 +4533,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-export-comments= | A grading file's row comments, drafts, sent comments and notes as data, or JSON (=H=) |
 | =org-canvas-submissions-import-comments= | Write new comment text back by user, criterion and comment id, nothing else (=I=) |
 | =org-canvas-submissions-check-comments= | Deducted rows without a comment, flagged text, sentences many students share (=K=) |
+| =org-canvas-submissions-apply-ruling= | Apply a ruling to listed students: rows, row comments, SCORE and draft replaced, the old kept in Notes (Lisp and batch) |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |

@@ -62,6 +62,7 @@
                                   "lisp/org-canvas-submissions-status.el"
                                   "lisp/org-canvas-submissions-window.el"
                                   "lisp/org-canvas-submissions-comments.el"
+                                  "lisp/org-canvas-submissions-ruling.el"
                                   "lisp/org-canvas-submissions-reports.el"
                                   "lisp/org-canvas-messages.el"
                                   "lisp/org-canvas-setup.el"

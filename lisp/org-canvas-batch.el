@@ -181,6 +181,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
     ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
+    ("apply-ruling" org-canvas-batch--cmd-apply-ruling 2 2 "FILE RULING.json"
+     "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -425,6 +427,19 @@ Return 1 if any check found an error."
                            (org-canvas-submissions-check-comments file)))
                         (plist-get parsed :args))))
     (if (cl-every #'zerop errors) 0 1)))
+
+(defun org-canvas-batch--cmd-apply-ruling (parsed)
+  "Apply the JSON rulings PARSED names to its grading file.
+A dry run on --dry-run.  Return 1 if a user id matched nothing or a
+student was kept back."
+  (let* ((args (plist-get parsed :args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run)))
+         (results (org-canvas-submissions-apply-ruling-json
+                   (nth 0 args) (expand-file-name (nth 1 args)))))
+    (if (cl-some (lambda (r) (or (plist-get r :unmatched) (plist-get r :skipped)))
+                 results)
+        1 0)))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."

@@ -1,0 +1,15 @@
+* Added
+- #448 =org-canvas-submissions-apply-ruling= applies a grading ruling to
+  a list of students in a grading file, from Lisp or a batch run: every
+  Rubric row's score set to a number or emptied, one fixed row comment
+  (or none), SCORE set to a number or a function of the rows' total and
+  the column's points, a drafted submission comment, and a dated Notes
+  item recording the ruling's reason and the SCORE, rows, row comments
+  and draft it replaced.  It returns what it changed, the ids that
+  matched no student and the students kept back (one who left, one
+  without a Rubric table, a SCORE the rubric total would contradict on
+  a column graded by its rubric).  Nothing is sent; the grade push (S)
+  sends it.  =scripts/org-canvas apply-ruling FILE RULING.json= takes
+  one ruling or an array of them, a score of
+  ={"deduct_percent": 20}= for the rows' total less 20% of the column,
+  and exits 1 when an id matched nothing or a student was kept back.
