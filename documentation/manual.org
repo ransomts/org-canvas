@@ -533,7 +533,7 @@ Welcome to Data Science 101! This course introduces the fundamentals
 of data analysis with Python.
 #+end_src
 
-The body text above the first sub-heading is exported as the course syllabus (visible on the Syllabus page in Canvas).  A sub-heading under the course heading is structure, not syllabus text: =** Navigation= is the tab list below, and anything else is left behind by the push and reported by =org-canvas-validate=.
+The body text above the first sub-heading is exported as the course syllabus (visible on the Syllabus page in Canvas).  A sub-heading under the course heading is structure, not syllabus text: =** Navigation= is the tab list below, and anything else is left behind by the push and reported by =org-canvas-validate=.  A pull writes the syllabus as Org, converted by pandoc with Canvas file links made local, like every other body.  A syllabus pulled before that (issue #459) holds raw HTML tags, which the push would send as escaped text; =org-canvas-validate= warns about it, and pulling settings again converts it.  HTML meant as HTML belongs in a =#+begin_export html= block.
 
 *** Navigation Tabs
 
