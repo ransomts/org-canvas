@@ -63,20 +63,21 @@ pip install pandas numpy matplotlib seaborn scikit-learn
 
 Launch Jupyter Lab and run:
 
-#+begin_src src
+#+begin_src python
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 print("All set!")
 #+end_src
 
-If you see "All set!" with no errors, your environment is ready. Download the Python Cheatsheet.pdf][Python Cheatsheet]] for a quick reference.
+If you see "All set!" with no errors, your environment is ready. Download the [[file:files.org::*\[\[file:content/resources/cheatsheet.pdf\]\[Python Cheatsheet.pdf\]\]][Python Cheatsheet]] for a quick reference.
 
 
 * Student Resources
 :PROPERTIES:
 :PUBLISHED: true
 :EDITING_ROLES: teachers,students
+:NO_MODULE: true
 :CANVAS_UPDATED_AT: 2026-02-15T14:37:00Z
 :CANVAS_URL: student-resources-5
 :LAST_SYNCED: [2026-02-15 Sun 09:42]
@@ -100,22 +101,20 @@ If you see "All set!" with no errors, your environment is ready. Download the Py
 - Data Science Tutoring Lab: Science Hall 105, Mon-Fri 9 AM - 5 PM
 - Writing Center: Library 200, for help with project reports
 
-Download the Syllabus.pdf][full syllabus]] for complete course policies and grading breakdown.
+Download the [[file:files.org::*\[\[file:content/syllabus.pdf\]\[Syllabus.pdf\]\]][full syllabus]] for complete course policies and grading breakdown.
 
-* Course Home
+* Midterm Review Guide
 :PROPERTIES:
-:CANVAS_URL: course-home-4
-:LAST_SYNCED: [2026-02-15 Sun 09:42]
+:PUBLISH_AT: <2026-10-12 Mon 08:00>
+:EDITING_ROLES: teachers
 :END:
-Welcome to *Introduction to Data Science (DS 101)*!
 
-*Instructor:* Dr. Jane Smith | *Email:* jsmith@university.edu | *Office:* Science Hall 312
+Canvas publishes this page by itself a week before the exam: =PUBLISH_AT= carries the date, and the heading sets no =PUBLISHED=.
 
-*Office Hours:* Tuesdays 2:00-4:00 PM, Thursdays 10:00 AM-12:00 PM, or by appointment.
+*What the midterm covers:*
 
-*Teaching Assistants:*
+- Python fundamentals (Weeks 1-2)
+- Data wrangling with pandas (Weeks 3-4)
+- Descriptive statistics and basic visualization (Weeks 5-7)
 
-- Alex Chen (achen@university.edu) -- Labs Section A & B
-- Maria Lopez (mlopez@university.edu) -- Lab Section C (Online)
-
-Use the *Modules* tab on the left to navigate weekly content. All assignments, readings, and resources are organized by week. Please review the Syllabus.pdf][course syllabus]] before the first class.
+Work through the [[file:quizzes.org::*Practice: Self-Assessment][practice quiz]] first, then bring what is still unclear to the [[file:discussions.org::*Midterm Study Group][Midterm Study Group]].
