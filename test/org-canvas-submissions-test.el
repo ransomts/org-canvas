@@ -3645,6 +3645,131 @@ SCORE COMMENT), written as the table and the comment items under it."
             (org-canvas-submissions-push-grades))
           (expect-api-called 'PUT "assignments/1001/submissions/5001"))))))
 
+(defconst test-grade-after--rows
+  '(("_7104" "Thesis" 2 nil "Read it again.") ("_7105" "Evidence" 3 nil nil)
+    ("_7106" "Style" 1 nil "Tidy."))
+  "Comment-only rubric rows: feedback on two criteria and no points anywhere.")
+
+(defun test-grade-after--push (content &optional replies)
+  "Push the grading file CONTENT with conflicts unchecked; return the calls, oldest first.
+REPLIES is the mock API's response alist."
+  (let ((calls nil))
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses replies)
+        (with-rubric-file content
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t)))
+              (org-canvas--submissions-push-current t)))
+          (setq calls (reverse test-org-canvas-api-calls))
+          (org-canvas--submissions-goto-user 5001)
+          (setq calls (list :calls calls
+                            :score (org-entry-get (point) "SCORE")
+                            :baseline (org-entry-get (point) "CANVAS_SCORE")
+                            :rubric (org-entry-get (point) "CANVAS_RUBRIC"))))))
+    calls))
+
+(describe "a grade beside comment-only rubric rows (issue #444)"
+  (it "keeps an unedited score, derives nothing, and sends it after the rows"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 5\n:CANVAS_SCORE: 5\n"
+                                                  test-grade-after--rows))
+      (let* ((change (car (org-canvas--submissions-collect-grade-changes)))
+             (fields (org-canvas--submissions-grade-fields change)))
+        (expect (plist-get change :new-score) :to-equal "5")
+        (expect (plist-get change :score-derived) :to-be nil)
+        (expect (plist-get change :grade-after) :to-be t)
+        (expect (assq 'posted_grade fields) :to-be nil)
+        (expect (assq 'rubric_assessment fields) :to-be-truthy)
+        (expect (org-canvas--submissions-trailing-grade-fields change)
+                :to-equal '((posted_grade . "5")))
+        (expect (org-canvas--submissions-pending-count) :to-equal 0))))
+
+  (it "sends a typed score after the rows, and nothing after them on an ungraded row"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 0\n" test-grade-after--rows)
+                               (test-rubric-entry "Beta, Bob" 5002 "" test-grade-after--rows))
+      (let ((changes (org-canvas--submissions-collect-grade-changes)))
+        (expect (plist-get (nth 0 changes) :grade-after) :to-be t)
+        (expect (plist-get (nth 0 changes) :new-score) :to-equal "0")
+        (expect (plist-get (nth 1 changes) :grade-after) :to-be nil)
+        (expect (plist-get (nth 1 changes) :new-score) :to-be nil)
+        (expect (org-canvas--submissions-grade-fields (nth 1 changes))
+                :to-equal (list (assq 'rubric_assessment
+                                      (org-canvas--submissions-grade-fields (nth 0 changes))))))))
+
+  (it "sends the grade beside the rows when they carry points, or the rubric is not for grading"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 2\n:CANVAS_SCORE: 0\n"
+                                                  '(("_7104" "Thesis" 2 2 "Good"))))
+      (expect (plist-get (car (org-canvas--submissions-collect-grade-changes)) :grade-after)
+              :to-be nil))
+    (with-rubric-file (concat test-grading-file-header
+                               "#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING false\n\n"
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 5\n:CANVAS_SCORE: 5\n"
+                                                  test-grade-after--rows))
+      (expect (plist-get (car (org-canvas--submissions-collect-grade-changes)) :grade-after)
+              :to-be nil)))
+
+  (it "PUTs the rows first and the grade second, then records the baselines"
+    (let* ((r (test-grade-after--push
+               (concat test-rubric-file-header
+                       (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 5\n:CANVAS_SCORE: 5\n"
+                                          test-grade-after--rows))))
+           (calls (plist-get r :calls)))
+      (expect (mapcar #'car calls) :to-equal '(PUT PUT))
+      (expect (assq 'submission (nth 2 (nth 0 calls))) :to-be nil)
+      (expect (assq 'rubric_assessment (nth 2 (nth 0 calls))) :to-be-truthy)
+      (expect (nth 2 (nth 1 calls)) :to-equal '((submission . ((posted_grade . "5")))))
+      (expect (plist-get r :score) :to-equal "5")
+      (expect (plist-get r :baseline) :to-equal "5")
+      (expect (plist-get r :rubric)
+              :to-equal (org-canvas--submissions-rubric-digest
+                         '(("_7104" nil "Read it again.") ("_7106" nil "Tidy."))))))
+
+  (it "sends the trailing grades once the bulk job carrying the rows completed"
+    (let* ((r (test-grade-after--push
+               (concat test-rubric-file-header
+                       (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 10\n" test-grade-after--rows)
+                       (test-rubric-entry "Beta, Bob" 5002 ":SCORE: 4\n:CANVAS_SCORE: 2\n"
+                                          test-grade-after--rows)
+                       "* Cole, Cy\n:PROPERTIES:\n:USER_ID: 5003\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
+               '(("update_grades" . ((id . 77) (workflow_state . "completed"))))))
+           (posts (seq-filter (lambda (c) (eq (car c) 'POST)) (plist-get r :calls)))
+           (first (alist-get 'grade_data (nth 2 (nth 0 posts))))
+           (second (alist-get 'grade_data (nth 2 (nth 1 posts)))))
+      (expect (length posts) :to-equal 2)
+      (expect (assq 'posted_grade (alist-get "5001" first nil nil #'equal)) :to-be nil)
+      (expect (assq 'rubric_assessment (alist-get "5001" first nil nil #'equal)) :to-be-truthy)
+      (expect (alist-get 'posted_grade (alist-get "5003" first nil nil #'equal)) :to-equal "4")
+      (expect second :to-equal '(("5001" . ((posted_grade . "10")))
+                                 ("5002" . ((posted_grade . "4")))))
+      (expect (plist-get r :baseline) :to-equal "10")))
+
+  (it "sends no trailing grade when the first job failed, and records nothing"
+    (let* ((r (test-grade-after--push
+               (concat test-rubric-file-header
+                       (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 10\n" test-grade-after--rows)
+                       "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
+               '(("update_grades" . ((id . 77) (workflow_state . "failed"))))))
+           (posts (seq-filter (lambda (c) (eq (car c) 'POST)) (plist-get r :calls))))
+      (expect (length posts) :to-equal 1)
+      (expect (plist-get r :baseline) :to-be nil)
+      (expect (plist-get r :rubric) :to-be nil)))
+
+  (it "names the trailing grade in a dry run"
+    (let ((change (list :old-score "5" :new-score "5" :grade-after t
+                        :triples '(("_7104" nil "Tidy.")))))
+      (expect (org-canvas--submissions-would-send-line "Adams, Alice" change nil)
+              :to-equal (concat "Adams, Alice: {\"rubric_assessment\":{\"_7104\":"
+                                "{\"comments\":\"Tidy.\"}}}; then {\"posted_grade\":\"5\"}"))
+      (let ((org-canvas--dry-run t) (logged nil))
+        (cl-letf (((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args) (setq logged (apply #'format fmt args)))))
+          (expect (org-canvas--submissions-send-grades "1001" (list change))
+                  :to-equal '(:state dry-run)))
+        (expect logged :to-match "then 1 grade(s) after their rubric assessments")))))
+
 (describe "completion rule on a rubric assignment"
   (it "fills every row at its Max for full credit and leaves them empty for a 0"
     (with-rubric-file (concat test-rubric-file-header

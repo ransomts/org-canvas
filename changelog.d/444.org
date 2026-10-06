@@ -1,0 +1,9 @@
+* Fixed
+- #444 On a rubric used for grading, a grading-file push whose Rubric
+  rows carry comments but no points no longer loses the grade: Canvas
+  sets no grade from such an assessment, clearing a score already
+  there and discarding one sent beside it, so the rows now go first
+  and the grade (the typed one, or the one Canvas held) follows in a
+  second request once Canvas has stored them; a dry run names it as
+  =then {"posted_grade": …}=.  Comment-only rows on a scored row no
+  longer derive an empty grade from their missing total.
