@@ -4102,16 +4102,19 @@ were never pushed."
 FILE is what `org-canvas-open-submissions' accepts; nil asks for one.
 The file is visited with the mode and its context set, re-rendered as
 `org-canvas-submissions-refresh' does — what was typed in it carried
-over — and saved, so a script can go on in the buffer:
+over — and saved, so a script can go on in the buffer (issue #280):
 
   (with-current-buffer (org-canvas-submissions-refresh-file \"Journal_02\")
     (org-canvas-submissions-download-all-attachments))
 
-\(issue #280)."
+FILE may also be a list of them: each is re-pulled in turn and the
+list of their buffers returned (issue #450)."
   (interactive)
-  (with-current-buffer (org-canvas--submissions-visit-grading-file
-                        (org-canvas--submissions-grading-file-path file))
-    (org-canvas--submissions-refresh-buffer)))
+  (if (consp file)
+      (mapcar #'org-canvas-submissions-refresh-file file)
+    (with-current-buffer (org-canvas--submissions-visit-grading-file
+                          (org-canvas--submissions-grading-file-path file))
+      (org-canvas--submissions-refresh-buffer))))
 
 (defun org-canvas--submissions-display (assignment-name assignment-id submissions view &optional assignment)
   "Show SUBMISSIONS for ASSIGNMENT-NAME (ASSIGNMENT-ID) in VIEW.
@@ -5158,22 +5161,37 @@ except under `org-canvas--dry-run', which sends nothing and leaves the
 file as it was: no draft consumed, no baseline or CONFLICT written
 \(issue #442).
 
-Return a plist: :pushed, the grades Canvas stored; :state, how the
-grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
-nil when no grade was sent) with :message its reason; :late,
-:comments and :conflicts, the late statuses set, the comments posted
-and the headings skipped as conflicts (held as marked CONFLICT, or
-found by the push's check), with :conflict-names their students'
-names (issue #440); :edited, :deleted, :refused, :failed, :errored
-and :dry-run, the sent comments rewritten, deleted, not sent, refused
-by Canvas, failed in Emacs (issue #443) and only shown (issue #419);
-:posted, non-nil when
-the grades were posted.  A script that pushes a column by id and posts
-it calls
+Return a plist (issue #450 spells out the types):
+
+  :pushed          integer, the grades Canvas stored (a count, not a
+                   list of them);
+  :state           symbol, how the grade send ended: `completed',
+                   `failed', `unconfirmed', `dry-run', or nil when no
+                   grade was sent;
+  :message         string or nil, the reason for that state;
+  :late            integer, the late statuses set;
+  :comments        integer, the drafted comments posted;
+  :conflicts       integer, the headings skipped as conflicts (held
+                   as marked CONFLICT, or found by the push's check);
+  :conflict-names  list of strings, their students' names (issue
+                   #440);
+  :edited, :deleted, :refused, :failed, :errored, :dry-run
+                   integers, the sent comments rewritten, deleted,
+                   not sent, refused by Canvas, failed in Emacs (issue
+                   #443) and only shown (issue #419);
+  :missing, :unchanged
+                   lists of integer user ids, for ONLY (below);
+  :posted          non-nil when the grades were posted.
+
+A script that pushes a column by id and posts it calls
 
   (org-canvas-push-submission-grades \"2573836\" t)
 
-and one that only pushes leaves POST out (issue #381).
+and one that only pushes leaves POST out (issue #381).  ASSIGNMENT may
+also be a list of columns: each is pushed in turn, with the same POST
+and ONLY, and the value is a list of plists, one per column, in
+ASSIGNMENT's order (issue #450).  After a push,
+`org-canvas-submissions-verify' reads the column back.
 
 ONLY, a list of Canvas user ids (integers or strings of digits),
 pushes those students' rows alone: their scores, Rubric rows, late
@@ -5189,6 +5207,14 @@ hidden, with
   (org-canvas-push-submission-grades \"2573836\" nil \\='(5001 5002))"
   (when (and post only)
     (user-error "Posting shows every grade of the column; push the rows with ONLY, then post separately"))
+  (if (consp assignment)
+      (mapcar (lambda (one) (org-canvas-push-submission-grades one post only))
+              assignment)
+    (org-canvas--submissions-push-file assignment post only)))
+
+(defun org-canvas--submissions-push-file (assignment post only)
+  "Push the one grading file ASSIGNMENT names; return the push's plist.
+POST and ONLY are as `org-canvas-push-submission-grades' takes them."
   (let ((ids (org-canvas--submissions-user-ids only))
         (buf (org-canvas--submissions-visit-grading-file
               (org-canvas--submissions-push-target assignment))))
