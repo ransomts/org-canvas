@@ -13,7 +13,7 @@
 ;; `org-canvas-batch-setup' is the half a script still wants: given a
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
-;; command line with subcommands (status, grades, pull, push, diff,
+;; command line with subcommands (status, grades, pull, pull-all, push, diff,
 ;; validate, sync ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
@@ -181,6 +181,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
     ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
+    ("pull-all" org-canvas-batch--cmd-pull-all 0 0 ""
+     "Import the whole course; exit 1 if anything failed (#458).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -433,6 +435,18 @@ Return 1 if any check found an error."
     (if (zerop (org-canvas-batch--failed-count
                 (org-canvas-pull-headings entries)))
         0 1)))
+
+(defun org-canvas-batch--cmd-pull-all (_parsed)
+  "Import the whole course and print how the pull went.
+The pull summary is printed by `org-canvas-pull-all' itself; the
+closing line follows it.  Return 1 if a content type failed or an
+item was lost to an error.  A type the enrolment may not read is a
+skip, expected of a Designer or TA, and leaves the status 0."
+  (let ((counters (org-canvas-pull-all)))
+    (princ (format "%s\n" (org-canvas--pull-completion-line counters)))
+    (if (or (> (plist-get counters :fail) 0)
+            (org-canvas--pull-summary-records-of-kind 'error))
+        1 0)))
 
 (defun org-canvas-batch--cmd-push (parsed)
   "Push the headings PARSED names; return 1 if any failed."

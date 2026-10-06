@@ -445,8 +445,7 @@ repository."
           (org-canvas--log-info org-canvas--logger
             "[Gradebook] %d custom column(s): %s" (length columns)
             (mapconcat (lambda (c) (plist-get c :title)) columns ", ")))
-        (unless (file-exists-p file)
-          (with-temp-file file (insert "")))
+        (org-canvas--create-file file)
         (with-current-buffer (org-canvas--find-file-noselect file)
           (org-canvas--gradebook-rewrite-body
            "Students" (lambda () (org-canvas--gradebook-insert-students rows names summaries columns)))

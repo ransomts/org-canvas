@@ -1208,6 +1208,16 @@
                 (setq found t)))
             (expect found :to-be-truthy))))))
 
+  (it "returns its counters, a failure counted (issue #458)"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'executable-find) (lambda (_) t))
+                ((symbol-function 'yes-or-no-p) (lambda (_) t)))
+        (with-mocked-pull-fns (:error settings)
+          (let ((counters (org-canvas-pull-all)))
+            (expect (plist-get counters :fail) :to-equal 1)
+            (expect (plist-get counters :success) :to-be-greater-than 0))))))
+
   (it "counts failures from erroring pull functions"
     (with-sync-test-env
       (spy-on 'message)

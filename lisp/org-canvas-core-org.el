@@ -359,6 +359,21 @@ sessions keep Emacs's own prompt."
         (org-canvas--note-saved-content)))
     buffer))
 
+(defun org-canvas--create-file (file &optional contents)
+  "Write FILE with CONTENTS (default empty) unless it exists.
+Return non-nil when FILE was created.  The buffer visiting the new
+file counts as backed up already: a pull writes a stub, visits it and
+saves its own content over it, and Emacs backs a file up on the first
+save that finds it on disk, so every pull into a fresh course directory
+left a FILE~ copy of the stub, most of them empty (issue #458).  The
+stub holds nothing worth keeping; a file that already existed is left
+alone and keeps Emacs's usual backup."
+  (unless (file-exists-p file)
+    (with-temp-file file (insert (or contents "")))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (setq buffer-backed-up t))
+    t))
+
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
 Ensures the correct buffer is used if POM is a marker.  Reverts an

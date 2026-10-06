@@ -187,8 +187,7 @@ grading file."
 The buffer is left read-only: the table is derived from Canvas and a
 pull rewrites it."
   (let ((file (org-canvas--quiz-submissions-file-path quiz)))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
+    (org-canvas--create-file file)
     (with-current-buffer (org-canvas--find-file-noselect file)
       (let ((inhibit-read-only t))
         (erase-buffer)

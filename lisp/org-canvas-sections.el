@@ -195,8 +195,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
       (org-canvas--log-info org-canvas--logger "[Pull] Fetched %d sections from Canvas"
                  (length remote-sections))
 
-      (unless (file-exists-p sections-file)
-        (with-temp-file sections-file (insert "")))
+      (org-canvas--create-file sections-file)
       (with-current-buffer (org-canvas--find-file-noselect sections-file)
         (dolist (section remote-sections)
           (push (number-to-string (alist-get 'id section)) remote-ids)

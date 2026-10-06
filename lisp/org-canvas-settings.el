@@ -807,9 +807,8 @@ and heading if they don't exist."
       (org-canvas--pull-confirm-overwrite settings-file "settings")
       (org-canvas--pull-confirm-unsaved settings-file "settings")
       ;; Open or create the settings file
-      (unless (file-exists-p settings-file)
-        (with-temp-file settings-file
-          (insert (format "#+TITLE: Settings\n* %s\n" (or name "Course")))))
+      (org-canvas--create-file
+       settings-file (format "#+TITLE: Settings\n* %s\n" (or name "Course")))
       (with-current-buffer (org-canvas--find-file-noselect settings-file)
         (goto-char (point-min))
         (unless (re-search-forward "^\\*+ " nil t)

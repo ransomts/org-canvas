@@ -1,0 +1,15 @@
+* Added
+- #458 =scripts/org-canvas pull-all= imports the whole course, as
+  =M-x org-canvas-pull-all= does, prints the pull summary and the
+  closing line, and exits 1 when a content type or an item failed.  A
+  type the enrolment may not read (a Designer's or a TA's 403) is a
+  skip and leaves the status 0.  =org-canvas-pull-all= now returns its
+  counters.
+
+* Fixed
+- #458 A pull into a fresh course directory no longer leaves a =~=
+  backup beside nearly every file it creates.  The pull wrote an empty
+  (or one-heading) stub, visited it and saved over it, and Emacs backed
+  up the stub on that first save; a file the pull creates now counts as
+  backed up already.  A file that existed before keeps Emacs's usual
+  backup.

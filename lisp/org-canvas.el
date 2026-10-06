@@ -675,7 +675,8 @@ nothing, so a scripted pull used to lose the whole report (issue #155)."
   (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
   (org-canvas--log-info org-canvas--logger "========================================")
   (message "%s See *canvas-log* for details."
-           (org-canvas--pull-completion-line counters)))
+           (org-canvas--pull-completion-line counters))
+  counters)
 
 ;;;###autoload
 (defun org-canvas-pull-all ()
@@ -684,7 +685,11 @@ Pulls all content types in dependency order, creating .org files
 as needed.  HTML content is converted to Org format via pandoc.
 
 This is the migration entry point for instructors with existing
-Canvas courses who want to adopt org-canvas."
+Canvas courses who want to adopt org-canvas.
+
+Return the counters plist (:success N :fail N :skipped LABELS), so a
+script can tell a failure from a type the enrolment may not read
+\(`org-canvas--safe-pull', issue #458)."
   (interactive)
   (org-canvas--pull-all-confirm)
   (org-canvas-clear-log)

@@ -515,8 +515,7 @@ Returns the departures, as `org-canvas--people-mark-departures' does."
   (let ((names (org-canvas--people-fetch-section-names))
         (count 0)
         (departures nil))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
+    (org-canvas--create-file file)
     (with-current-buffer (org-canvas--find-file-noselect file)
       ;; A role heading appears when its first person is placed, so
       ;; a person who kept an old heading leaves no empty new one.

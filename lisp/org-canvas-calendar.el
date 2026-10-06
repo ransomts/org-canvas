@@ -227,8 +227,7 @@ code — all of them, not only today's (issue #87)."
              (not (org-canvas--pull-file-has-headings-p file)))
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "calendar-events"))
-      (unless (file-exists-p file)
-        (with-temp-file file (insert "")))
+      (org-canvas--create-file file)
       (with-current-buffer (org-canvas--find-file-noselect file)
         (dolist (item items)
           (let ((id (alist-get 'id item))

@@ -461,6 +461,33 @@
         (setq outcome 'failed)
         (expect (test-batch--run '("pull" "page:Week 1" "assignment#77")) :to-equal 1))))
 
+  (it "imports the whole course, a permission skip leaving the status 0 (#458)"
+    (let ((counters nil) (summary nil) (out nil) (status nil))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-pull-all)
+                 (lambda ()
+                   (setq org-canvas--pull-summary summary)
+                   (copy-sequence counters))))
+        (let ((org-canvas--pull-summary nil))
+          (setq counters (list :success 18 :fail 0 :skipped '("Rubrics" "People"))
+                summary (list (list :kind 'skip :file "People" :item "whole type")))
+          (setq out (with-output-to-string
+                      (setq status (org-canvas-batch-main '("pull-all")))))
+          (expect status :to-equal 0)
+          (expect out :to-match
+                  "Pull complete: 18 pulled, 0 failed, 2 skipped (People, Rubrics: insufficient permission)\\.")
+          (setq counters (list :success 17 :fail 1 :skipped nil) summary nil)
+          (expect (test-batch--run '("pull-all")) :to-equal 1)
+          (setq counters (list :success 18 :fail 0 :skipped nil)
+                summary (list (list :kind 'error :file "pages.org" :item "week-1")))
+          (expect (test-batch--run '("pull-all")) :to-equal 1)))))
+
+  (it "refuses pull-all with an argument"
+    (let (messages)
+      (test-batch--quietly messages
+        (expect (test-batch--run '("pull-all" "pages")) :to-equal 2))
+      (expect (car messages) :to-match "pull-all takes no arguments")))
+
   (it "pushes named headings, as a dry run under --dry-run"
     (let ((dry nil) (outcome 'synced))
       (cl-letf (((symbol-function 'org-canvas-sync-headings)
