@@ -2268,6 +2268,16 @@ headings is gone at the next pull.
   course analytics.  The quartiles stay =-= until enough work is
   graded.  The Assignment cell links to the heading in
   =assignments.org= when that file holds the id
+- =* Groups=: only with =org-canvas-gradebook-groups= set (default
+  nil).  One table with Student, one column per assignment group in
+  Canvas's order, Computed and Canvas.  A group's cell is the
+  student's percentage in it after the group's drop rules, recomputed
+  from every submission the way Canvas does; Computed is the total
+  those make under the course's weighting, and Canvas is Canvas's own
+  current total.  A line under the table names every student whose
+  two totals differ by more than 0.1, the same names go to the log as
+  a warning, and when there are none the line says so.  A group with
+  nothing graded in it is =-=
 
 Current is the score over graded work; Final counts every ungraded
 assignment as zero, work not yet due included, so it sits low early in
@@ -2287,6 +2297,47 @@ seven.  A cell's text is written on one line, pipes and line breaks
 collapsed.  There are no per-assignment columns; that is what
 grading files are for (see [[*Grading Submissions][Grading Submissions]]).
 
+*** Per-Group Scores and the What-If
+
+Canvas's enrollments carry a course total and nothing per group, so
+the Groups table costs one more set of requests: the course, its
+assignment groups with their assignments, and every submission
+(=students/submissions=, one request per hundred), which is why it is
+off by default.  A score counts when its assignment is published and
+not omitted from the final grade, it is graded, and it is not
+excused; with =org-canvas-gradebook-unposted= nil, only when it is
+posted too, to match the Students table.  The drop rules follow
+Canvas: =DROP_LOWEST= drops the scores whose removal raises the
+group's percentage most, which is not always the lowest score (5/20
+costs a group more than 0/1); =DROP_HIGHEST= then drops the scores
+whose removal lowers it most; a =NEVER_DROP= assignment is never
+dropped but still counts; and at least one score is always kept.
+Weighted, each group's percentage is multiplied by its weight over the
+groups that have anything graded, scaled up when their weights sum
+under 100; unweighted, every kept point is counted over every kept
+point possible.
+
+The same pull keeps the scores in =gradebook-scores.eld=
+(=org-canvas-gradebook-scores-file=) for
+=org-canvas-gradebook-what-if= (=h= in the dispatch menu).  The what-if
+reads =assignment-groups.org= as it stands, pushed or not and unsaved
+edits included, and recomputes every total from those scores: a group
+is matched to Canvas's by =CANVAS_ID=, or by name when it has none, and
+takes the file's =WEIGHT=, =DROP_LOWEST=, =DROP_HIGHEST= and
+=NEVER_DROP=.  Weighting comes from =APPLY_WEIGHTS= in =settings.org=,
+or from the course as pulled when the file does not say.  The report,
+in =*canvas-gradebook-what-if*=, shows the mean, the median and the
+letter counts for Canvas's totals now, for Canvas's own table
+recomputed (a check on the recomputation), and for the file's table;
+the groups whose weight or rules differ from Canvas's; and every
+student whose letter changes.  Letters use the course's grading scheme
+as pulled: the one its =GRADING_STANDARD_ID= names, or Canvas's
+default when the course shows letters without naming one.  A group in
+the file that Canvas does not have yet, or one on Canvas the file
+lacks (which keeps Canvas's weight and rules), is listed above the
+tables.  Nothing is sent, and the what-if makes no request at all;
+pull the gradebook again for newer scores.
+
 *** Personal Data
 
 Scores are more sensitive than names.  Only the name, the numbers and
@@ -2294,7 +2345,10 @@ the custom column text are written, never an identifier, but a Notes
 column is free text about a student, the most sensitive cell in the
 file.  Treat =gradebook.org= as you treat the submissions directory:
 keep it out of a course repository (add it to =.gitignore=) and out
-of anything you share.
+of anything you share.  The same goes, more so, for
+=gradebook-scores.eld=, written when =org-canvas-gradebook-groups= is
+on: every student's score on every assignment, with their Canvas user
+ids.
 
 ** grading-schemes.org
 
@@ -4522,6 +4576,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-version=              | Show the org-canvas version                   |
 | =org-canvas-submit-bug-report=    | Open a buffer of diagnostic information for a bug report (the token redacted) |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
+| =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
 | =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |

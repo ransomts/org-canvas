@@ -58,6 +58,7 @@ From Lisp: =(org-canvas-pull-page TITLE)= and the same for each feature (=org-ca
 | =v=   | =org-canvas-validate=              | Validate offline (no API)           |
 | =V=   | =org-canvas-validate-all=          | Validate, push-only advice included |
 | =S=   | =org-canvas-status=                | Sync status overview                |
+| =h=   | =org-canvas-gradebook-what-if=     | Recompute every total under assignment-groups.org (read-only) |
 | =r=   | =org-canvas-diff=                  | Drift report (compare with Canvas)  |
 | =j=   | =org-canvas-diff-adopt-stamps=     | Adopt stamps of CHANGED rows with nothing to compare |
 | =J=   | =org-canvas-diff-stamp-moves=      | Stamp MOVED module items on their paired headings |

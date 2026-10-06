@@ -31,6 +31,25 @@ Each column may carry a `data' entry: the rows its data endpoint answers.")
 (defvar test-gradebook--assignments nil
   "Assignment analytics rows the fake API lists, or `refuse' to answer with a 403.")
 
+(defvar test-gradebook--groups nil
+  "Assignment groups, with their assignments, the fake API lists.")
+(defvar test-gradebook--submissions nil
+  "Submissions the fake API lists for every student, or `refuse'.")
+(defvar test-gradebook--course nil
+  "The course object the fake single request answers.")
+(defvar test-gradebook--standard nil
+  "The grading standard the fake single request answers, or `refuse'.")
+
+(defun test-gradebook--request (_method url &rest _args)
+  "Answer a single request for URL: the course or its grading standard."
+  (cond
+   ((string-match "/grading_standards/" url)
+    (if (eq test-gradebook--standard 'refuse)
+        (signal 'org-canvas-permission-error (list "403 Forbidden"))
+      test-gradebook--standard))
+   ((string-match "/courses/[0-9]+/\\'" url) test-gradebook--course)
+   (t (error "Unexpected request: %s" url))))
+
 (defun test-gradebook--api (_method url &optional _params)
   "Answer URL from the fake tables, as the paginated helper would."
   (cond
@@ -48,6 +67,11 @@ Each column may carry a `data' entry: the rows its data endpoint answers.")
     (let ((id (string-to-number (match-string 1 url))))
       (alist-get 'data (cl-find-if (lambda (c) (eql (alist-get 'id c) id))
                                    test-gradebook--columns))))
+   ((string-match "/assignment_groups" url) test-gradebook--groups)
+   ((string-match "/students/submissions" url)
+    (if (eq test-gradebook--submissions 'refuse)
+        (signal 'org-canvas-permission-error (list "403 Forbidden"))
+      test-gradebook--submissions))
    ((string-match "/custom_gradebook_columns\\'" url)
     (setq test-gradebook--columns-params _params)
     (if (eq test-gradebook--columns 'refuse)
@@ -398,6 +422,379 @@ The gradebook and roster files live in a temp directory."
     (let ((names (mapcar #'car (apply #'append org-canvas--pull-tiers))))
       (expect (cl-position 'org-canvas-pull-people names)
               :to-be-less-than (cl-position 'org-canvas-pull-gradebook names)))))
+
+;;;; Per-group scores and the what-if (#452)
+
+(defun test-gradebook--ids (items)
+  "Return the assignment ids of ITEMS, sorted."
+  (sort (mapcar #'car items) #'<))
+
+(defun test-gradebook--subsets (items k)
+  "Return every K-element subset of ITEMS."
+  (cond ((= k 0) (list nil))
+        ((null items) nil)
+        (t (append (mapcar (lambda (s) (cons (car items) s))
+                           (test-gradebook--subsets (cdr items) (1- k)))
+                   (test-gradebook--subsets (cdr items) k)))))
+
+(defun test-gradebook--best-ratio (items k)
+  "Return the highest ratio any K of ITEMS reach: the brute-force answer."
+  (apply #'max (mapcar #'org-canvas--gradebook-ratio (test-gradebook--subsets items k))))
+
+(describe "org-canvas--gradebook-drop"
+  (it "returns the items untouched without drop rules"
+    (let ((items '((1 5 10) (2 0 10))))
+      (expect (org-canvas--gradebook-drop items '(:drop-lowest 0)) :to-equal items)
+      (expect (org-canvas--gradebook-drop items nil) :to-equal items)))
+
+  (it "drops the score whose removal maximises the percentage, not the lowest one"
+    ;; Dropping 0/1 leaves 15/30 = 50%; dropping 5/20 leaves 10/11.
+    (let ((items '((1 5 20) (2 0 1) (3 10 10))))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-lowest 1)))
+              :to-equal '(2 3))))
+
+  (it "drops plain lowest scores when the points are equal"
+    (let ((items '((1 7 10) (2 3 10) (3 9 10) (4 5 10))))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-lowest 2)))
+              :to-equal '(1 3))))
+
+  (it "finds the best set that brute force finds"
+    (let ((items '((1 3 4) (2 18 25) (3 0 2) (4 9 10) (5 40 60) (6 1 1) (7 12 30))))
+      (dolist (drop '(1 2 3 4))
+        (expect (org-canvas--gradebook-ratio
+                 (org-canvas--gradebook-drop items (list :drop-lowest drop)))
+                :to-be-close-to (test-gradebook--best-ratio items (- 7 drop)) 9))))
+
+  (it "drops the score whose removal minimises the percentage for drop_highest"
+    ;; Dropping 10/10 leaves 5/21; dropping 5/20 leaves 10/11.
+    (let ((items '((1 5 20) (2 0 1) (3 10 10))))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-highest 1)))
+              :to-equal '(1 2))))
+
+  (it "applies drop_lowest before drop_highest"
+    (let ((items '((1 2 10) (2 4 10) (3 6 10) (4 8 10))))
+      (expect (test-gradebook--ids
+               (org-canvas--gradebook-drop items '(:drop-lowest 1 :drop-highest 1)))
+              :to-equal '(2 3))))
+
+  (it "always keeps one score, and lets drop_highest give way when the two cover all"
+    (let ((items '((1 2 10) (2 4 10) (3 6 10))))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-lowest 5)))
+              :to-equal '(3))
+      (expect (test-gradebook--ids
+               (org-canvas--gradebook-drop items '(:drop-lowest 2 :drop-highest 1)))
+              :to-equal '(3))))
+
+  (it "never drops a never_drop score, which still counts toward the ratio"
+    (let ((items '((1 0 10) (2 4 10) (3 6 10))))
+      (expect (test-gradebook--ids
+               (org-canvas--gradebook-drop items '(:drop-lowest 1 :never-drop (1))))
+              :to-equal '(1 3))
+      (expect (org-canvas--gradebook-drop '((1 0 10)) '(:drop-lowest 1 :never-drop (1)))
+              :to-equal '((1 0 10)))))
+
+  (it "drops by raw score when no droppable score has points"
+    (let ((items '((1 3 0) (2 1 0) (3 2 0))))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-lowest 1)))
+              :to-equal '(1 3))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-highest 1)))
+              :to-equal '(2 3))))
+
+  (it "ranks from zero when the first guess has no points"
+    (let ((items '((1 1 0) (2 1 0) (3 5 10))))
+      (expect (test-gradebook--ids (org-canvas--gradebook-drop items '(:drop-lowest 1)))
+              :to-equal '(1 3)))))
+
+(describe "org-canvas--gradebook-total"
+  (let ((quizzes '(:id 1 :weight 40))
+        (essays '(:id 2 :weight 60)))
+    (it "weights each group's percentage"
+      (expect (org-canvas--gradebook-total
+               (list (cons quizzes '(8 . 10)) (cons essays '(50 . 100))) t)
+              :to-be-close-to 62.0 6))
+
+    (it "scales up to the weights of the groups with points possible"
+      (expect (org-canvas--gradebook-total
+               (list (cons quizzes '(8 . 10)) (cons essays nil)) t)
+              :to-be-close-to 80.0 6))
+
+    (it "answers nil when no weighted group has points"
+      (expect (org-canvas--gradebook-total (list (cons quizzes nil)) t) :to-be nil)
+      (expect (org-canvas--gradebook-total (list (cons '(:id 3 :weight 0) '(5 . 10))) t)
+              :to-be nil))
+
+    (it "counts every kept point unweighted"
+      (expect (org-canvas--gradebook-total
+               (list (cons quizzes '(8 . 10)) (cons essays '(50 . 100))) nil)
+              :to-be-close-to (/ 5800.0 110) 6)
+      (expect (org-canvas--gradebook-total (list (cons quizzes nil)) nil) :to-be nil))))
+
+(describe "org-canvas--gradebook-letter and the statistics"
+  (let ((scheme '(("B" . 80.0) ("A" . 90.0) ("F" . 0.0))))
+    (it "rounds to two decimals before reading the cutoff"
+      (expect (org-canvas--gradebook-letter 89.996 scheme) :to-equal "A")
+      (expect (org-canvas--gradebook-letter 89.994 scheme) :to-equal "B")
+      (expect (org-canvas--gradebook-letter -3 scheme) :to-equal "F")
+      (expect (org-canvas--gradebook-letter nil scheme) :to-be nil)
+      (expect (org-canvas--gradebook-letter 95 nil) :to-be nil))
+
+    (it "counts letters best first and leaves out letters nobody gets"
+      (expect (org-canvas--gradebook-letter-counts '(95 85 82 nil) scheme)
+              :to-equal '(("A" . 1) ("B" . 2)))))
+
+  (it "takes the median of odd, even and empty lists"
+    (expect (org-canvas--gradebook-median '(3 1 2)) :to-equal 2.0)
+    (expect (org-canvas--gradebook-median '(4 1 nil 2 3)) :to-equal 2.5)
+    (expect (org-canvas--gradebook-median '(nil)) :to-be nil)))
+
+(describe "org-canvas--gradebook-assignment-map and the counted scores"
+  (it "keeps published assignments that count toward the grade"
+    (let ((groups `(((id . 1) (assignments . [((id . 11) (published . t) (points_possible . 10))
+                                              ((id . 12) (published . :json-false) (points_possible . 5))
+                                              ((id . 13) (published . t) (points_possible . :null))
+                                              ((id . 14) (published . t) (omit_from_final_grade . t)
+                                               (points_possible . 5))])))))
+      (expect (org-canvas--gradebook-assignment-map groups)
+              :to-equal '((11 1 . 10) (13 1 . 0)))))
+
+  (it "counts graded scores that are not excused, and only posted ones when told"
+    (let ((map '((11 1 . 10))))
+      (expect (org-canvas--gradebook-submission-item
+               '((assignment_id . 11) (score . 7) (posted_at . :null)) map t)
+              :to-equal '(11 7 10))
+      (expect (org-canvas--gradebook-submission-item
+               '((assignment_id . 11) (score . 7) (posted_at . :null)) map nil)
+              :to-be nil)
+      (expect (org-canvas--gradebook-submission-item
+               '((assignment_id . 11) (score . 7) (posted_at . "2026-09-01T00:00:00Z")) map nil)
+              :to-equal '(11 7 10))
+      (expect (org-canvas--gradebook-submission-item
+               '((assignment_id . 11) (score . 0) (excused . t)) map t)
+              :to-be nil)
+      (expect (org-canvas--gradebook-submission-item
+               '((assignment_id . 11) (score . :null)) map t)
+              :to-be nil)
+      (expect (org-canvas--gradebook-submission-item
+               '((assignment_id . 99) (score . 3)) map t)
+              :to-be nil)))
+
+  (it "reads Canvas's rules, null or nested, into a group plist"
+    (expect (org-canvas--gradebook-canvas-group
+             '((id . 1) (name . "Q") (group_weight . 15)
+               (rules . ((drop_lowest . 1) (never_drop . [11 12])))))
+            :to-equal '(:id 1 :name "Q" :weight 15 :drop-lowest 1 :drop-highest nil
+                            :never-drop (11 12)))
+    (expect (org-canvas--gradebook-canvas-group
+             '((id . 2) (name . "E") (group_weight . :null) (rules . :null)))
+            :to-equal '(:id 2 :name "E" :weight 0 :drop-lowest nil :drop-highest nil
+                            :never-drop nil))))
+
+(defun test-gradebook--sub (uid aid score &rest extra)
+  "A submission of UID on AID scoring SCORE, posted, with EXTRA pairs first."
+  (append extra `((user_id . ,uid) (assignment_id . ,aid) (score . ,score)
+                  (posted_at . "2026-09-01T00:00:00Z") (excused . :json-false))))
+
+(defun test-gradebook--fixture-groups ()
+  "Quizzes (50%, drop lowest 1) and Essays (50%), with assignments."
+  `(((id . 2) (name . "Essays") (position . 2) (group_weight . 50) (rules . nil)
+     (assignments . [((id . 21) (published . t) (points_possible . 100))
+                     ((id . 22) (published . t) (points_possible . 100)
+                      (omit_from_final_grade . t))]))
+    ((id . 1) (name . "Quizzes") (position . 1) (group_weight . 50)
+     (rules . ((drop_lowest . 1)))
+     (assignments . [((id . 11) (published . t) (points_possible . 10))
+                     ((id . 12) (published . t) (points_possible . 10))
+                     ((id . 13) (published . t) (points_possible . 20))
+                     ((id . 14) (published . :json-false) (points_possible . 10))]))))
+
+(defun test-gradebook--fixture-submissions ()
+  "Adams: Quizzes 93.3 after the drop, Essays 80.  Beta: Quizzes 50, no essay."
+  (list (test-gradebook--sub 1 11 10) (test-gradebook--sub 1 12 2)
+        (test-gradebook--sub 1 13 18) (test-gradebook--sub 1 21 80)
+        (test-gradebook--sub 1 22 100) (test-gradebook--sub 1 14 5)
+        (test-gradebook--sub 2 11 0) (test-gradebook--sub 2 12 0 '(excused . t))
+        (test-gradebook--sub 2 13 10) (test-gradebook--sub 2 21 :null)))
+
+(defmacro test-gradebook--with-scores (canvas-beta &rest body)
+  "Run BODY in a course of Adams (86.67) and Beta (CANVAS-BETA) with groups on."
+  (declare (indent 1))
+  `(test-gradebook--with-course
+       (list (test-gradebook--enrollment 1 "Adams, Alice" 10 86.67 80.0)
+             (test-gradebook--enrollment 2 "Beta, Bob" 10 ,canvas-beta 20.0))
+       '(((id . 10) (name . "Lecture")))
+       nil
+     (let ((org-canvas-gradebook-groups t)
+           (org-canvas-gradebook-scores-file (expand-file-name "gradebook-scores.eld" dir))
+           (org-canvas-assignment-groups-file (expand-file-name "assignment-groups.org" dir))
+           (org-canvas-settings-file (expand-file-name "settings.org" dir))
+           (test-gradebook--groups (test-gradebook--fixture-groups))
+           (test-gradebook--submissions (test-gradebook--fixture-submissions))
+           (test-gradebook--course '((id . 1) (apply_assignment_group_weights . t)
+                                     (grading_standard_id . 5)))
+           (test-gradebook--standard '((id . 5) (grading_scheme . [((name . "A") (value . 0.85))
+                                                                   ((name . "B") (value . 0.75))
+                                                                   ((name . "F") (value . 0))]))))
+       (cl-letf (((symbol-function 'org-canvas-api-request) #'test-gradebook--request))
+         (unwind-protect (progn ,@body)
+           (dolist (f (list org-canvas-assignment-groups-file org-canvas-settings-file))
+             (let ((buf (find-buffer-visiting f)))
+               (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))))))))
+
+(defun test-gradebook--groups-row (name)
+  "Return NAME's row of the Groups table, cells trimmed, or nil."
+  (let ((text (test-gradebook--file)))
+    (when (string-match "^\\* Groups\n" text)
+      (let ((groups (substring text (match-end 0))))
+        (when (string-match (format "^| *%s *|\\(.*\\)$" (regexp-quote name)) groups)
+          (mapcar #'string-trim (split-string (match-string 1 groups) "|" t)))))))
+
+(describe "org-canvas-pull-gradebook with org-canvas-gradebook-groups"
+  (it "writes each group's percentage after the drop rules and checks Canvas's total"
+    (test-gradebook--with-scores 40.0
+      (spy-on 'org-canvas--log-warning)
+      (org-canvas-pull-gradebook)
+      (let ((text (test-gradebook--file)))
+        (expect text :to-match "^| Student +| Quizzes +| Essays +| Computed +| Canvas +|$")
+        (expect (test-gradebook--groups-row "Adams, Alice")
+                :to-equal '("93.3" "80.0" "86.7" "86.7"))
+        (expect (test-gradebook--groups-row "Beta, Bob")
+                :to-equal '("50.0" "-" "50.0" "40.0"))
+        (expect text :to-match "1 student(s) whose computed total differs from Canvas's by more than 0.1: Beta, Bob")
+        (expect (spy-calls-count 'org-canvas--log-warning) :to-equal 1))
+      (let ((scores (org-canvas--gradebook-read-scores)))
+        (expect (plist-get scores :weighted) :to-be t)
+        (expect (plist-get scores :scheme) :to-equal '(("A" . 85.0) ("B" . 75.0) ("F" . 0.0)))
+        (expect (mapcar (lambda (g) (plist-get g :name)) (plist-get scores :groups))
+                :to-equal '("Quizzes" "Essays")))))
+
+  (it "says every total matches when they do, and counts only posted scores when told"
+    (test-gradebook--with-scores 50.0
+      (org-canvas-pull-gradebook)
+      (expect (test-gradebook--file) :to-match "Every computed total is within 0.1 of Canvas's")
+      (let ((org-canvas-gradebook-unposted nil)
+            (test-gradebook--submissions
+             (cons (test-gradebook--sub 2 21 100 '(posted_at . :null))
+                   (test-gradebook--fixture-submissions))))
+        (org-canvas-pull-gradebook)
+        (expect (test-gradebook--groups-row "Beta, Bob") :to-equal '("50.0" "-" "50.0" "50.0")))))
+
+  (it "removes the Groups heading when the option is turned off"
+    (test-gradebook--with-scores 50.0
+      (org-canvas-pull-gradebook)
+      (expect (test-gradebook--file) :to-match "^\\* Groups")
+      (let ((org-canvas-gradebook-groups nil))
+        (org-canvas-pull-gradebook))
+      (expect (test-gradebook--file) :not :to-match "Groups")
+      (expect (test-gradebook--file) :to-match "^\\* Assignments")))
+
+  (it "leaves a note and keeps no scores when Canvas refuses them"
+    (test-gradebook--with-scores 50.0
+      (let ((test-gradebook--submissions 'refuse))
+        (spy-on 'org-canvas--log-warning)
+        (org-canvas-pull-gradebook)
+        (expect (test-gradebook--file) :to-match "Canvas refused the scores for this token")
+        (expect (spy-calls-count 'org-canvas--log-warning) :to-equal 1)
+        (expect (file-exists-p org-canvas-gradebook-scores-file) :to-be nil)))))
+
+(describe "org-canvas--gradebook-fetch-scheme"
+  (it "takes Canvas's default scheme when the course names none but shows letters"
+    (expect (org-canvas--gradebook-fetch-scheme
+             '((grading_standard_id . :null))
+             '(((grades . ((current_grade . "B+"))))))
+            :to-be org-canvas--gradebook-default-scheme)
+    (expect (org-canvas--gradebook-fetch-scheme '((grading_standard_id . 0))
+                                                '(((grades . ((current_score . 80))))))
+            :to-be nil))
+
+  (it "leaves the letters out with a warning when the standard is refused"
+    (with-org-canvas-test-config
+      (let ((test-gradebook--standard 'refuse))
+        (cl-letf (((symbol-function 'org-canvas-api-request) #'test-gradebook--request))
+          (spy-on 'org-canvas--log-warning)
+          (expect (org-canvas--gradebook-fetch-scheme '((grading_standard_id . 5)) nil)
+                  :to-be nil)
+          (expect (spy-calls-count 'org-canvas--log-warning) :to-equal 1))))))
+
+(defconst test-gradebook--local-groups
+  "* Assignment Groups
+** Quizzes
+:PROPERTIES:
+:CANVAS_ID: 1
+:WEIGHT: 50
+:END:
+** Essays
+:PROPERTIES:
+:WEIGHT: 50
+:END:
+** Labs
+:PROPERTIES:
+:WEIGHT: 0
+:END:
+"
+  "assignment-groups.org with the Quizzes drop rule removed and an unpushed Labs.")
+
+(defun test-gradebook--what-if ()
+  "Run the what-if and return its report, runs of blanks collapsed."
+  (cl-letf (((symbol-function 'princ) #'ignore))
+    (replace-regexp-in-string " +" " " (org-canvas-gradebook-what-if))))
+
+(describe "org-canvas-gradebook-what-if"
+  (it "recomputes every total under the local table and reports the letter moves"
+    (test-gradebook--with-scores 40.0
+      (org-canvas-pull-gradebook)
+      (with-temp-file org-canvas-assignment-groups-file (insert test-gradebook--local-groups))
+      (let ((report (test-gradebook--what-if)))
+        (expect report :to-match "weights on. Nothing was sent to Canvas")
+        (expect report :to-match "- Labs is not on Canvas as pulled")
+        (expect report :to-match "^| Table | Mean | Median | A | B | F |$")
+        (expect report :to-match "^| Canvas now | 63.3 | 63.3 | 1 | 0 | 1 |$")
+        (expect report :to-match "^| Canvas's table, recomputed | 68.3 | 68.3 | 1 | 0 | 1 |$")
+        (expect report :to-match "^| assignment-groups.org | 55.4 | 55.4 | 0 | 1 | 1 |$")
+        (expect report :to-match "^| Quizzes | 50 -> 50 | 1 -> 0 | 0 -> 0 |$")
+        (expect report :not :to-match "^| Essays |")
+        (expect report :to-match "^| Adams, Alice | 86.7 | 77.5 | A | B |$")
+        (expect report :not :to-match "^| Beta, Bob |"))))
+
+  (it "reads unsaved edits and the weighting from settings.org"
+    (test-gradebook--with-scores 40.0
+      (org-canvas-pull-gradebook)
+      (with-temp-file org-canvas-assignment-groups-file (insert test-gradebook--local-groups))
+      (with-temp-file org-canvas-settings-file
+        (insert "* Settings\n:PROPERTIES:\n:APPLY_WEIGHTS: false\n:END:\n"))
+      (with-current-buffer (find-file-noselect org-canvas-assignment-groups-file)
+        (goto-char (point-min))
+        (re-search-forward ":CANVAS_ID: 1\n")
+        (insert ":DROP_LOWEST: 1\n"))
+      (let ((report (test-gradebook--what-if)))
+        ;; Unweighted, Adams keeps 28/30 and 80/100: 83.1, a B.
+        (expect report :to-match "weights off")
+        (expect report :to-match "No group's weight or drop rules differ from Canvas's")
+        (expect report :to-match "^| Adams, Alice | 86.7 | 83.1 | A | B |$"))))
+
+  (it "keeps Canvas's table for a group the file lacks and says when there are no letters"
+    (let* ((group '(:id 1 :name "Quizzes" :weight 50 :drop-lowest 1))
+           (merged (org-canvas--gradebook-what-if-groups (list group) nil)))
+      (expect (car merged) :to-equal (list group))
+      (expect (cadr merged) :to-match "Quizzes is not in assignment-groups.org"))
+    (expect (with-temp-buffer
+              (org-canvas--gradebook-insert-letter-changes '(("A" 80 80 70)) nil)
+              (buffer-string))
+            :to-match "no grading scheme"))
+
+  (it "says so when no letter moves, and counts one missing total as a difference"
+    (expect (with-temp-buffer
+              (org-canvas--gradebook-insert-letter-changes '(("A" 80 80 81)) '(("A" . 50.0)))
+              (buffer-string))
+            :to-match "No student's letter changes")
+    (expect (org-canvas--gradebook-differs-p nil 40.0) :to-be-truthy)
+    (expect (org-canvas--gradebook-differs-p nil nil) :not :to-be-truthy)
+    (expect (org-canvas--gradebook-differs-p 40.05 40.0) :not :to-be-truthy))
+
+  (it "refuses without pulled scores or without assignment-groups.org"
+    (test-gradebook--with-scores 40.0
+      (expect (org-canvas-gradebook-what-if) :to-throw 'user-error)
+      (org-canvas-pull-gradebook)
+      (expect (org-canvas-gradebook-what-if) :to-throw 'user-error))))
 
 (provide 'org-canvas-gradebook-test)
 ;;; org-canvas-gradebook-test.el ends here

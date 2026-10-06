@@ -143,6 +143,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("v" "Validate files" org-canvas-validate)
    ("V" "Validate files (including push-only advice)" org-canvas-validate-all)
    ("S" "Status overview (local)" org-canvas-status)
+   ("h" "Grade what-if from assignment-groups.org (read-only)" org-canvas-gradebook-what-if)
    ("r" "Drift report (compare with Canvas)" org-canvas-diff)
    ("j" "Adopt stamps of CHANGED rows with nothing to compare" org-canvas-diff-adopt-stamps)
    ("J" "Stamp MOVED module items on their paired headings" org-canvas-diff-stamp-moves)
