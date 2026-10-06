@@ -98,6 +98,7 @@
 (require 'org-canvas-submissions-verify)
 (require 'org-canvas-submissions-ruling)
 (require 'org-canvas-submissions-reports)
+(require 'org-canvas-submissions-uploads)
 (require 'org-canvas-messages)
 (require 'org-canvas-setup)
 

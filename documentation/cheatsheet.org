@@ -45,6 +45,7 @@ From Lisp: =(org-canvas-pull-page TITLE)= and the same for each feature (=org-ca
 | =q=   | =org-canvas-pull-quiz-submissions=               | A classic quiz's attempts (read-only) |
 | =w=   | =org-canvas-pull-peer-reviews=                   | An assignment's peer reviews (read-only) |
 | =a=   | =org-canvas-submissions-apply-completion-rule=   | Fill empty scores by completion      |
+| =L=   | =org-canvas-submissions-upload-text=             | Text of the uploads, pairs grouped (=u= in the file) |
 | =G=   | =org-canvas-submissions-push-grades=             | Push grades                          |
 | =T=   | =org-canvas-submissions-post-grades=             | Post grades to students              |
 | =Y=   | =org-canvas-submissions-verify=                  | Read a push back from Canvas (read-only) |
