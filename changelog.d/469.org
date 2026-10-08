@@ -1,0 +1,8 @@
+* Fixed
+- #469 Loading org-canvas's generated autoloads before transient no
+  longer fails with =void-function transient-define-prefix=.  The four
+  menu commands (=org-canvas-dispatch= and its sync-at-point,
+  pull-single and delete-at-point menus) are now declared as autoloads
+  rather than copied whole into the autoloads file, so a batch build,
+  =emacs -Q= with straight, or an init file that sets up org-canvas
+  first no longer breaks, and startup no longer loads transient early.
