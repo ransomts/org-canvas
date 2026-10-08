@@ -29,7 +29,7 @@ Thank you for your interest in contributing! This guide covers the development w
 
 ### Module Structure
 
-The annotated tree of `lisp/` is maintained in [CLAUDE.md](CLAUDE.md) (section "Module Structure"); the reasoning behind the layout is in [documentation/architecture/design.org](documentation/architecture/design.org). Decisions made in response to specific issues are collected in [documentation/architecture/decisions.org](documentation/architecture/decisions.org).
+The annotated tree of `lisp/` is maintained in [documentation/architecture-guide.md](documentation/architecture-guide.md) (section "Module Structure"); the reasoning behind the layout is in [documentation/architecture/design.org](documentation/architecture/design.org). Decisions made in response to specific issues are collected in [documentation/architecture/decisions.org](documentation/architecture/decisions.org).
 
 ### Dependency Rules
 
