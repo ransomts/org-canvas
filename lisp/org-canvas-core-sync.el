@@ -1136,7 +1136,8 @@ so a script need not (`org-canvas-sync-headings' takes several)."
                               :query ,query
                               :id-property ,id-property))
                 target by))
-             (org-canvas--sync-register-heading-fn ,singular #',heading-fn-name)))
+             (org-canvas--sync-register-heading-fn ,singular #',heading-fn-name)
+             (org-canvas--sync-register-entry-spec ,singular ,entry-spec)))
        ,@(when (and (or pull-item-fn (plist-get args :pull-heading))
                     (not no-at-point))
            (org-canvas--pull-heading-fn-forms
@@ -2475,6 +2476,44 @@ singular, so a misspelt feature is named before anything is sent.")
 A second registration for the same name replaces the first, so a
 reloaded module does not leave a stale function behind."
   (setf (alist-get singular org-canvas--sync-heading-fns nil nil #'equal) fn))
+
+(defvar org-canvas--sync-entry-specs nil
+  "Alist of (SINGULAR . SPEC): the sync spec of every push at point.
+SPEC is the plist `org-canvas-define-sync' hands
+`org-canvas--push-at-point-runtime' (`org-canvas--sync-spec-keys').  A
+command that must hash a heading as its push would, without pushing
+it, reads the stage functions here (`org-canvas--sync-heading-hash',
+issue #466).")
+
+(defun org-canvas--sync-register-entry-spec (singular spec)
+  "Record SPEC as the push at point of the feature called SINGULAR.
+A second registration for the same name replaces the first."
+  (setf (alist-get singular org-canvas--sync-entry-specs nil nil #'equal) spec))
+
+(defun org-canvas--sync-heading-hash (spec)
+  "Return the payload hash SPEC's push would compare at the heading at point.
+SPEC is a sync spec (`org-canvas--sync-entry-specs').  The heading is
+parsed and its payload built exactly as a push at point would, but
+with `org-canvas-read-only' bound, so an inline image Canvas lacks is
+not uploaded on the way (it fails, the link stays local, and the hash
+then differs from any a push stored).  Nil when the spec owns no
+md5 (`:hash' `push'), or the parse or build fails."
+  (condition-case err
+      (save-excursion
+        (org-back-to-heading t)
+        (let* ((org-canvas-read-only t)
+               (data (funcall (plist-get spec :parse)))
+               (payload (funcall (plist-get spec :build) data)))
+          (org-canvas--sync-entry-hash
+           payload data
+           (org-canvas--sync-make-ctx
+            :hash-extra-fn (plist-get spec :hash-extra)
+            :hash-fn (plist-get spec :hash)))))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Hash] Could not hash the heading as a push would (%s)"
+       (error-message-string err))
+     nil)))
 
 (defun org-canvas--heading-fn-lookup (feature fns verb)
   "Return the function for FEATURE in FNS, an alist (SINGULAR . FUNCTION).
