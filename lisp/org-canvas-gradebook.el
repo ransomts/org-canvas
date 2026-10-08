@@ -1022,7 +1022,7 @@ file's text in a temporary buffer."
    file (lambda () (org-map-entries #'org-canvas--gradebook-local-group "LEVEL=2+WEIGHT={.}"))))
 
 (defun org-canvas--gradebook-local-weighted (fallback)
-  "Return whether settings.org applies the group weights.
+  "Return non-nil when the group weights are on in settings.org.
 FALLBACK, the course as pulled, when the file does not say."
   (let* ((file (and (boundp 'org-canvas-settings-file) org-canvas-settings-file))
          (value (and file (file-exists-p file)
@@ -1093,7 +1093,7 @@ The letter columns are SCHEME's, best first; none without a scheme."
                                    letters "")))))))
 
 (defun org-canvas--gradebook-group-change (canvas group)
-  "Return a Group changes table line when GROUP's table differs from CANVAS's.
+  "Return the table line comparing GROUP with CANVAS when they disagree.
 Nil when weight, drop rules and never-drop ids agree."
   (let ((cells (mapcar (lambda (key)
                          (cons (org-canvas--gradebook-number (or (plist-get canvas key) 0))
@@ -1114,7 +1114,7 @@ Nil when weight, drop rules and never-drop ids agree."
       (mapc #'insert lines))))
 
 (defun org-canvas--gradebook-insert-letter-changes (rows scheme)
-  "Insert the students of ROWS whose letter under SCHEME changes.
+  "Insert the students of ROWS whose letter under SCHEME would move.
 ROWS are from `org-canvas--gradebook-what-if-rows'; the letter now is
 SCHEME's for Canvas's total, so a change is the table's doing."
   (let ((moved (cl-remove-if (lambda (r) (equal (org-canvas--gradebook-letter (nth 1 r) scheme)
