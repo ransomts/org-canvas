@@ -1518,7 +1518,58 @@ whatever happens next.  Nothing is changed."
         t 'file)))
     (nreverse issues)))
 
-;;;; 5f. Items No Module Holds (issue #413)
+;;;; 5f. Body Links to Local Files a Push Cannot Resolve (issue #468)
+
+(defun org-canvas--validate-body-line-p ()
+  "Return non-nil when point is on a line a push exports as body text.
+A heading line is not: a files.org or modules.org heading is itself a
+file link, and is read as one by its own module.  Nor is a property
+line."
+  (save-excursion
+    (beginning-of-line)
+    (not (or (looking-at-p org-outline-regexp-bol)
+             (looking-at-p org-property-re)))))
+
+(defun org-canvas--validate-local-file-link-issue (target dir file)
+  "Return the issue for the link to TARGET on this line of FILE, or nil.
+DIR is FILE's directory.  Nil for a link another pass resolves and for
+one the push sends as a Canvas URL."
+  (when-let* ((path (org-canvas--local-file-link-path target))
+              ((org-canvas--validate-body-line-p)))
+    (let ((id (org-canvas--local-file-canvas-id path dir)))
+      (unless (stringp id)
+        (org-canvas--validate-push-only
+         (org-canvas--validate-make-issue
+          'warning
+          (list :file file :line (line-number-at-pos)
+                :heading (ignore-errors
+                           (save-excursion (org-back-to-heading t)
+                                           (org-get-heading t t t t))))
+          nil
+          (format "link to local file %s: %s; a push sends its text, not a link"
+                  path (org-canvas--local-file-unresolved-reason id path dir))
+          (eq id 'unsynced)))))))
+
+(defun org-canvas--validate-local-file-links (file)
+  "Report body links in FILE to local files a push cannot resolve.
+A push sends a link to a local file other than an image or an Org file
+as the Canvas URL of the files.org heading whose link target is the
+same file (`org-canvas--resolve-file-links'), and one with no such
+heading, or none with a CANVAS_ID, as plain text: a relative href
+would 404 on Canvas.  A file not uploaded yet is pending-sync.  Both
+only protect a push, so a read-only course does not hear of them."
+  (let ((dir (file-name-directory (expand-file-name file)))
+        (issues nil))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       (while (re-search-forward org-canvas--local-file-link-re nil t)
+         (when-let* ((issue (org-canvas--validate-local-file-link-issue
+                             (match-string-no-properties 1) dir file)))
+           (push issue issues)))))
+    (nreverse issues)))
+
+;;;; 5g. Items No Module Holds (issue #413)
 
 (defvar org-canvas-modules-file)
 
@@ -1880,7 +1931,7 @@ The cross-course link scan runs once per distinct file rather than
 once per spec: two features can register the same file (modules and
 module items both name modules.org), and the scan reads the whole file
 either way, so a per-spec call would report every foreign link twice
-\(issue #172).
+\(issue #172).  So do the body-fragment and local-file-link scans.
 The module check reads the modules file against the content files
 once, after the specs (issue #413).
 Returns a plist (:issues ISSUES :checked N :skipped N)."
@@ -1902,7 +1953,8 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
                 (setq all-issues
                       (nconc all-issues
                              (org-canvas--validate-cross-course-links file)
-                             (org-canvas--validate-body-fragments file)))))
+                             (org-canvas--validate-body-fragments file)
+                             (org-canvas--validate-local-file-links file)))))
           (setq files-skipped (1+ files-skipped)))))
     (setq all-issues (nconc all-issues (org-canvas--validate-module-coverage)))
     (list :issues all-issues :checked files-checked :skipped files-skipped)))

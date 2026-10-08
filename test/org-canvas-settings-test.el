@@ -2150,18 +2150,34 @@ It stands in for pandoc where pandoc is not installed.")
           (expect content :not :to-match "<p>\\|<span\\|<ul>\\|<li\\|&nbsp;\\|<link")
           (expect content :to-match "^- Week 1\n  - Reading one\n- Week 2$")
           (expect content :to-match "\\[\\[file:content/handout\\.pdf\\]\\[handout\\]\\]")
-          ;; Pushed back: real HTML, the same text and list shape.
-          (with-temp-org-buffer content
-            (goto-char (point-min))
-            (re-search-forward "^\\* ")
-            (let* ((data (org-canvas--settings-parse-entry))
-                   (course (gethash "course" (org-canvas--settings-build-payload data)))
-                   (html (gethash "syllabus_body" course)))
-              (expect html :not :to-match "&lt;")
-              (expect html :to-match "<p>\nWelcome to Ethics\n?</p>")
-              (expect html :to-match "<ul class=\"org-ul\">\n<li>Week 1\n<ul class=\"org-ul\">\n<li>Reading one</li>")
-              (expect html :to-match "<li>Week 2</li>")
-              (expect html :to-match "href=\"content/handout.pdf\">handout</a>")))))))
+          ;; Pushed back: real HTML, the same text and list shape, and
+          ;; the file link the Canvas URL again, not a relative href
+          ;; that 404s (issue #468).
+          (let* ((dir (file-name-as-directory
+                       (file-truename (make-temp-file "org-459-" t))))
+                 (temporary-file-directory dir)
+                 (org-canvas-files-file (expand-file-name "files.org" dir))
+                 (org-canvas--local-file-id-cache nil))
+            (unwind-protect
+                (progn
+                  (with-temp-file org-canvas-files-file
+                    (insert "* [[file:content/handout.pdf][handout.pdf]]\n"
+                            ":PROPERTIES:\n:CANVAS_ID: 123\n:END:\n"))
+                  (with-temp-org-buffer content
+                    (goto-char (point-min))
+                    (re-search-forward "^\\* ")
+                    (let* ((data (org-canvas--settings-parse-entry))
+                           (course (gethash "course" (org-canvas--settings-build-payload data)))
+                           (html (gethash "syllabus_body" course)))
+                      (expect html :not :to-match "&lt;")
+                      (expect html :to-match "<p>\nWelcome to Ethics\n?</p>")
+                      (expect html :to-match "<ul class=\"org-ul\">\n<li>Week 1\n<ul class=\"org-ul\">\n<li>Reading one</li>")
+                      (expect html :to-match "<li>Week 2</li>")
+                      (expect html :to-match
+                              "href=\"[^\"]*/courses/[0-9]+/files/123\">handout</a>"))))
+              (when-let* ((buf (find-buffer-visiting org-canvas-files-file)))
+                (kill-buffer buf))
+              (delete-directory dir t)))))))
 
   (it "writes no syllabus text when Canvas has an empty one"
     (with-temp-org-buffer "* Course\n:PROPERTIES:\n:END:\n\nOld syllabus.\n"

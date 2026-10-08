@@ -594,6 +594,38 @@ Image links in page, announcement, discussion, and assignment body text (=[[file
 
 Images are uploaded to a Canvas folder named =org-canvas-images/= and cached per sync session to avoid re-uploading unchanged files.
 
+*** Links to Other Local Files
+
+A body link to any other local file — a handout, a data set, a slide
+deck — is sent as the Canvas URL of that file, not as a path:
+
+#+begin_src org
+Read [[file:../course-content/handout.pdf][the handout]] before class.
+#+end_src
+
+The push looks for the =files.org= heading whose link target is the
+same file and links to =/courses/<id>/files/<CANVAS_ID>=.  Paths are
+compared after expanding each against its own file's directory, so
+=../course-content/handout.pdf= in a page and =content/handout.pdf= in
+=files.org= are the same file when they resolve to the same place.  The
+link's description is kept; a link without one shows the file name.
+The URL is the one a pull rewrites back to the same local link, so a
+pull followed by a push leaves the body as it was.
+
+The file itself is uploaded by =files.org=, not by the page: add a
+heading for it there (=* [[file:content/handout.pdf][handout.pdf]]=)
+and sync files.  The master sync does this before pages, discussions
+and assignments; the syllabus syncs earlier, so a syllabus linking a
+file new to =files.org= needs a second sync.  A link the push cannot
+resolve — no =files.org= heading, a heading with no =CANVAS_ID= yet,
+or no such file — is sent as its description alone, with a warning in
+the log and the echo area, since a relative path would 404 for every
+student.  =org-canvas-validate= reports the same links beforehand.
+
+Links to images and to Org headings have passes of their own (above,
+and cross-file links); a link to another Org file without a heading is
+left alone.
+
 ** assignments.org
 
 Course assignments with due dates, submission types, and grading options.
@@ -4964,6 +4996,13 @@ Your token lacks the required scope. Ensure the token has full access to the cou
 *** "N heading(s) have LAST_SYNCED but no CANVAS_ID"
 
 A heading was previously synced (has =LAST_SYNCED=) but its =CANVAS_ID= was removed.  Syncing it again would create a duplicate on Canvas instead of updating the existing item.  Either restore the =CANVAS_ID= property or delete the =LAST_SYNCED= property to treat it as a new item.
+
+*** "File link ... sent as plain text"
+
+A body links to a local file the push could not turn into a Canvas URL,
+so Canvas gets the link's text only.  The message says why: add a
+=files.org= heading for the file, or sync files first so the heading
+has a =CANVAS_ID=.  See [[*Links to Other Local Files][Links to Other Local Files]].
 
 *** "Rate limited after N retries"
 

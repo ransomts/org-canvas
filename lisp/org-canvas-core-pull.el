@@ -135,16 +135,6 @@ force a rebuild after `org-canvas-pull-files' rewrites the file list.")
   "Match an Org link wrapping a Canvas file URL.
 Group 1 = full URL, group 2 = file ID, group 3 = optional description.")
 
-(defun org-canvas--heading-file-link-path ()
-  "If the current heading is a [[file:PATH][...]] link, return PATH; else nil."
-  (save-excursion
-    (org-back-to-heading t)
-    (when (looking-at org-complex-heading-regexp)
-      (let ((title (match-string-no-properties 4)))
-        (when (and title
-                   (string-match "\\`\\[\\[file:\\([^]]+\\)\\]" title))
-          (match-string 1 title))))))
-
 (defun org-canvas--build-file-id-cache (files-file)
   "Walk FILES-FILE and return a hash of CANVAS_ID -> relative path.
 Headings without a CANVAS_ID property or without a `[[file:...]]' title
