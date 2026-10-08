@@ -53,6 +53,7 @@
 1.4 test/org-canvas-snapshot-test.el
 1.6 test/org-canvas-submissions-comments-test.el
 1.4 test/org-canvas-submissions-reports-test.el
+1.2 test/org-canvas-submissions-ruling-test.el
 1.8 test/org-canvas-submissions-status-test.el
 4.9 test/org-canvas-submissions-test.el
 1.4 test/org-canvas-transient-test.el
