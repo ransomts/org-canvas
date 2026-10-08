@@ -13,6 +13,11 @@
 (require 'buttercup)
 (require 'test-helper)
 (require 'org-canvas-batch)
+;; The load-path specs below bind `load-path' to a stub list, and
+;; on Emacs 29 buttercup's `expect' reaches `cl-every', autoloaded
+;; from cl-extra.  Load it now, or a spec fails with "Cannot open
+;; load file: cl-extra" whenever no file earlier in its run loaded it.
+(require 'cl-extra)
 
 (defmacro test-batch--with-temp-dir (var &rest body)
   "Bind VAR to a fresh temporary directory around BODY, then delete it."
