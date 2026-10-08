@@ -1120,7 +1120,7 @@ Element names are listed so an Org radio target or timestamp, which
 also sit in angle brackets, is never taken for one.")
 
 (defun org-canvas--validate-settings-raw-html (loc)
-  "Warn when the syllabus above the first sub-heading holds raw HTML.
+  "Warn when the syllabus above the first sub-heading is raw HTML.
 A settings pull before issue #459 wrote the syllabus as Canvas sent
 it, tags and all.  The push exports the syllabus as Org, where a tag
 is plain text, so it would reach Canvas escaped and the syllabus page
