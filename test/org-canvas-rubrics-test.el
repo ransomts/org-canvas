@@ -891,6 +891,173 @@ first, for BODY to inspect."
           (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
           (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(POST)))))))
 
+;;;; Assignment Baselines After a Rubric Update (issue #470)
+
+(defconst test-rubric470-assignments
+  (concat "* Closer 1\n:PROPERTIES:\n:CANVAS_ID: 5001\n"
+          ":CANVAS_UPDATED_AT: 2026-10-01T10:00:00Z\n:PAYLOAD_HASH: abc123\n:END:\n"
+          "* Closer 2\n:PROPERTIES:\n:CANVAS_ID: 5002\n"
+          ":CANVAS_UPDATED_AT: 2026-10-01T10:00:00Z\n:END:\n")
+  "assignments.org for `test-rubric--live': 5001 and 5002 stamped, 5003 absent.")
+
+(defun test-rubric470-responder (before &optional put-error extra)
+  "Return a responder for a rubric update and its assignments' reads.
+BEFORE maps an assignment id to its `updated_at' until the PUT, which
+moves every assignment to 2026-10-01T12:00:00Z; PUT-ERROR, when
+non-nil, makes the PUT signal it after the move.  EXTRA is an alist
+added to every assignment read."
+  (let ((written nil))
+    (lambda (method url)
+      (cond
+       ((and (eq method 'GET) (string-match-p "rubrics/138462" url))
+        test-rubric--live)
+       ((and (eq method 'GET) (string-match-p "assignments/[0-9]+/overrides" url))
+        [])
+       ((and (eq method 'GET) (string-match "assignments/\\([0-9]+\\)\\'" url))
+        (let ((id (string-to-number (match-string 1 url))))
+          (append `((id . ,id)
+                    (updated_at . ,(if written "2026-10-01T12:00:00Z"
+                                     (alist-get id before))))
+                  extra)))
+       ((eq method 'PUT)
+        (setq written t)
+        (when put-error (signal 'error (list put-error)))
+        `((rubric . ,test-rubric--live)))
+       (t (setq written t) '((id . 1)))))))
+
+(defun test-rubric470-run (responder &optional body)
+  "Push the Closer rubric through RESPONDER against an assignments.org.
+BODY, a function, runs with the calls list before the file is read
+back.  Return (FILE-TEXT . CALLS)."
+  (let ((dir (make-temp-file "rubric470-" t)))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir)))
+          (with-temp-file file (insert test-rubric470-assignments))
+          (let ((org-canvas-assignments-file file))
+            (with-org-canvas-test-config
+              (test-rubric--with-recording-api responder
+                (pcase-let ((`(,data . ,payload)
+                             (test-rubric--payload-for test-rubric--closer-org))
+                            (org-canvas-detect-conflicts nil))
+                  (condition-case nil
+                      (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+                    (error nil))
+                  (when body (funcall body calls))
+                  (let ((buf (find-buffer-visiting file)))
+                    (when buf
+                      (with-current-buffer buf (set-buffer-modified-p nil))
+                      (kill-buffer buf)))
+                  (cons (with-temp-buffer
+                          (insert-file-contents file)
+                          (buffer-string))
+                        calls))))))
+      (delete-directory dir t))))
+
+(defun test-rubric470-stamp (text id)
+  "Return the CANVAS_UPDATED_AT of the heading of ID in TEXT."
+  (with-temp-buffer
+    (insert text)
+    (org-mode)
+    (let ((pos (org-find-property "CANVAS_ID" id)))
+      (and pos (org-entry-get pos "CANVAS_UPDATED_AT")))))
+
+(describe "org-canvas--rubric-push-to-api restamps its assignments (issue #470)"
+  (it "restamps a heading that agreed with Canvas and keeps one that had drifted"
+    (let* ((result (test-rubric470-run
+                    (test-rubric470-responder
+                     '((5001 . "2026-10-01T10:00:00Z")
+                       (5002 . "2026-10-01T11:00:00Z")))))
+           (text (car result)))
+      (expect (test-rubric470-stamp text "5001") :to-equal "2026-10-01T12:00:00Z")
+      (expect text :to-match ":PAYLOAD_HASH: abc123")
+      (expect (test-rubric470-stamp text "5002") :to-equal "2026-10-01T10:00:00Z")
+      ;; 5001 is read before and after; 5002 before only; 5003 has no heading.
+      (expect (cl-count-if (lambda (c) (string-match-p "assignments/5001\\'" (nth 1 c)))
+                           (cdr result))
+              :to-equal 2)
+      (expect (cl-count-if (lambda (c) (string-match-p "assignments/5002\\'" (nth 1 c)))
+                           (cdr result))
+              :to-equal 1)
+      (expect (cl-find-if (lambda (c) (string-match-p "assignments/5003" (nth 1 c)))
+                          (cdr result))
+              :to-be nil)))
+
+  (it "reads the assignments before the PUT and restamps after it"
+    (let* ((result (test-rubric470-run
+                    (test-rubric470-responder
+                     '((5001 . "2026-10-01T10:00:00Z")
+                       (5002 . "2026-10-01T10:00:00Z")))))
+           (calls (cdr result))
+           (put (cl-position 'PUT calls :key #'car))
+           (reads (cl-loop for c in calls for i from 0
+                           when (string-match-p "assignments/500[12]\\'" (nth 1 c))
+                           collect i)))
+      (expect (test-rubric470-stamp (car result) "5002") :to-equal "2026-10-01T12:00:00Z")
+      (expect (cl-count-if (lambda (i) (< i put)) reads) :to-equal 2)
+      (expect (cl-count-if (lambda (i) (> i put)) reads) :to-equal 2)))
+
+  (it "restamps even when the PUT fails, since the associations were written again"
+    (let ((result (test-rubric470-run
+                   (test-rubric470-responder
+                    '((5001 . "2026-10-01T10:00:00Z")
+                      (5002 . "2026-10-01T10:00:00Z"))
+                    "HTTP 500 Internal Server Error"))))
+      (expect (test-rubric470-stamp (car result) "5001") :to-equal "2026-10-01T12:00:00Z")))
+
+  (it "takes a newer timestamp a scheduled date explains for agreement (issue #453)"
+    (let ((result (test-rubric470-run
+                   (test-rubric470-responder
+                    '((5001 . "2026-10-01T11:00:05Z")
+                      (5002 . "2026-10-01T11:30:00Z"))
+                    nil '((unlock_at . "2026-10-01T11:00:00Z"))))))
+      (expect (test-rubric470-stamp (car result) "5001") :to-equal "2026-10-01T12:00:00Z")
+      (expect (test-rubric470-stamp (car result) "5002") :to-equal "2026-10-01T10:00:00Z")))
+
+  (it "logs the drifted heading it leaves alone"
+    (let ((infos nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args) (push (apply #'format fmt args) infos))))
+        (test-rubric470-run
+         (test-rubric470-responder
+          '((5001 . "2026-10-01T10:00:00Z")
+            (5002 . "2026-10-01T11:00:00Z")))))
+      (expect (cl-some (lambda (m) (string-match-p "'Closer 2' did not agree" m)) infos)
+              :to-be-truthy)
+      (expect (cl-some (lambda (m) (string-match-p "'Closer 1' restamped to" m)) infos)
+              :to-be-truthy)))
+
+  (it "warns and keeps the stamp when the restamp cannot be written"
+    (let ((warnings nil) (result nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings)))
+                ((symbol-function 'org-canvas-org-set-property)
+                 (lambda (&rest _) (error "Buffer is read-only"))))
+        (setq result (test-rubric470-run
+                      (test-rubric470-responder
+                       '((5001 . "2026-10-01T10:00:00Z")
+                         (5002 . "2026-10-01T11:00:00Z"))))))
+      (expect (test-rubric470-stamp (car result) "5001") :to-equal "2026-10-01T10:00:00Z")
+      (expect (car warnings) :to-match "Could not restamp 'Closer 1'")))
+
+  (it "reads no assignment when assignments.org does not exist"
+    (let ((org-canvas-assignments-file "/nonexistent/rubric470/assignments.org"))
+      (with-org-canvas-test-config
+        (test-rubric--with-recording-api (test-rubric--live-responder)
+          (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                      (org-canvas-detect-conflicts nil))
+            (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+            (expect (cl-find-if (lambda (c) (string-match-p "assignments/" (nth 1 c)))
+                                calls)
+                    :to-be nil))))))
+
+  (it "leaves a heading with no stamp of its own unread"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 5001\n:END:\n"
+          (expect (org-canvas--rubric-assignment-clean-p (point) 5001 "A")
+                  :to-be nil)
+          (expect test-org-canvas-api-calls :to-equal nil))))))
+
 (describe "org-canvas--rubric-warn-points-moved (issue #255)"
   (it "warns when the total changed and an assignment grades with the rubric"
     (let ((warnings nil))

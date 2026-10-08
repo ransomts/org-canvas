@@ -324,7 +324,7 @@
             :to-equal "diff takes no arguments")
     (expect (condition-case err (org-canvas-batch-parse-args '("push"))
               (org-canvas-batch-usage-error (cadr err)))
-            :to-equal "push takes FEATURE:TITLE...")))
+            :to-equal "push takes [--conflict push|pull|skip] FEATURE:TITLE...")))
 
 (describe "org-canvas-batch-heading-entry"
   (it "reads a heading by title, a colon in the title kept"
@@ -510,6 +510,51 @@
         (setq outcome 'failed)
         (expect (test-batch--run '("push" "page:Week 1")) :to-equal 1)
         (expect dry :to-be nil))))
+
+  (it "binds the conflict strategy --conflict names for the push alone (#470)"
+    (let ((seen nil) (entries nil)
+          (org-canvas-conflict-strategy nil))
+      (cl-letf (((symbol-function 'org-canvas-sync-headings)
+                 (lambda (e) (push org-canvas-conflict-strategy seen)
+                   (setq entries e)
+                   (list (list :outcome 'synced)))))
+        (expect (test-batch--run '("push" "--conflict" "push" "rubric:R"
+                                   "assignment:A"))
+                :to-equal 0)
+        (expect entries :to-equal '(("rubric" "R" title)
+                                    ("assignment" "A" title)))
+        (expect (test-batch--run '("push" "page:Week 1" "--conflict=pull"))
+                :to-equal 0)
+        (expect entries :to-equal '(("page" "Week 1" title)))
+        (expect (test-batch--run '("push" "page:Week 1")) :to-equal 0)
+        (expect (reverse seen) :to-equal '(push pull nil))
+        (expect org-canvas-conflict-strategy :to-be nil))))
+
+  (it "keeps a configured strategy when push names none (#470)"
+    (let ((seen nil) (org-canvas-conflict-strategy 'skip))
+      (cl-letf (((symbol-function 'org-canvas-sync-headings)
+                 (lambda (_e) (setq seen org-canvas-conflict-strategy)
+                   (list (list :outcome 'synced)))))
+        (expect (test-batch--run '("push" "page:Week 1")) :to-equal 0)
+        (expect seen :to-be 'skip))))
+
+  (it "refuses a --conflict that names no strategy, or no heading (#470)"
+    (let ((called nil) (messages nil))
+      (cl-letf (((symbol-function 'org-canvas-sync-headings)
+                 (lambda (_e) (setq called t) nil)))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("push" "--conflict" "ask" "page:W"))
+                  :to-equal 2)
+          (expect (test-batch--run '("push" "page:W" "--conflict"))
+                  :to-equal 2)
+          (expect (test-batch--run '("push" "--conflict" "skip"))
+                  :to-equal 2)))
+      (expect called :to-be nil)
+      (expect (mapcar (lambda (m) (car (split-string m "\n"))) (reverse messages))
+              :to-equal
+              '("org-canvas: --conflict takes push, pull or skip, not ask"
+                "org-canvas: --conflict needs push, pull or skip"
+                "org-canvas: push takes [--conflict push|pull|skip] FEATURE:TITLE..."))))
 
   (it "pushes each grading file's sent comment changes, exiting 1 on one unsent (#425)"
     (let ((calls nil) (refused 0))

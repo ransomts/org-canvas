@@ -128,7 +128,7 @@ ARGS=, which is also the line to use without it.
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
-| =push FEATURE:TITLE...=       | =org-canvas-sync-headings=                         | any heading failed |
+| =push [--conflict STRATEGY] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=) | any heading failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
@@ -149,7 +149,14 @@ Strengths=, =page:Week 05 objectives=, =assignment#2563805=.  The
 feature is a module's name, singular or plural, and ends at the first
 colon or hash sign, so a title may hold either.  =--dry-run= (=-n=)
 before the command makes =push=, =push-comments= and =sync= send
-nothing.  =push-comments= takes grading files, by assignment id or
+nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
+among its arguments) sets =org-canvas-conflict-strategy= for that run
+alone: =push= overwrites Canvas, =pull= overwrites the heading, and
+=skip= leaves the entry alone and names it, which is also what a batch
+push does without the flag (see [[*Unattended Syncs][Unattended
+Syncs]]).  Any other word is a usage error.  So =scripts/org-canvas
+push --conflict push assignment:R5= overwrites a drift you have
+checked with =diff=, without a scratch script (#470).  =push-comments= takes grading files, by assignment id or
 name, and sends only their rewritten and deleted sent comments (see
 [[*Editing Sent Comments][Editing Sent Comments]]).  =push-grades= takes
 one grading file, by assignment id or name, and sends what =S= would,
@@ -2857,7 +2864,9 @@ A scheduled sync has no one to answer the prompt.  Set
 #+end_src
 
 Under =emacs --batch= a nil setting behaves as =skip= rather than blocking, and
-every entry resolved this way is named in the log with the reason.  Before
+every entry resolved this way is named in the log with the reason.  From the
+shell, =scripts/org-canvas push --conflict STRATEGY FEATURE:TITLE...= sets the
+strategy for one push (see [[*Running from the Shell][Running from the Shell]]).  Before
 this, a remote-modified entry killed the run outright: =read-char-choice= in a
 batch Emacs signals an end-of-file rather than taking a default.
 
@@ -4973,6 +4982,8 @@ emacs --batch -l ~/.emacs.d/init.el \
   --eval '(org-canvas-sync-headings (quote ((assignment . "R5: Framework Strengths")
                                            (page . "Week 05 objectives"))))'
 #+end_src
+
+=scripts/org-canvas push "assignment:R5: Framework Strengths" "page:Week 05 objectives"= runs the same list with the course's credentials loaded, and =--conflict push=, =pull= or =skip= among its arguments binds =org-canvas-conflict-strategy= for that run alone, so a heading stopped at a conflict you have checked is pushed again without a scratch script (see [[*Running from the Shell][Running from the Shell]], #470).
 
 ** Preflight Check
 
