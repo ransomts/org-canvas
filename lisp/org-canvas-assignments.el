@@ -140,6 +140,41 @@ assignment; an ordinary assignment answers nil."
 See `org-canvas--assignment-owner'."
   (and (org-canvas--assignment-owner item) t))
 
+(defconst org-canvas--assignment-scheduled-fields '(unlock_at lock_at)
+  "Date fields at which Canvas touches an assignment with nothing edited.
+Its `updated_at' moved five seconds after `unlock_at' passed, and the
+next push of the heading stopped at a conflict (issue #453); the
+issue names `lock_at' and an override's dates as the same.")
+
+(defun org-canvas--assignment-scheduled-dates-of (item prefix)
+  "Return ITEM's scheduled dates as (LABEL . ISO8601), labels led by PREFIX."
+  (delq nil
+        (mapcar (lambda (field)
+                  (let ((value (alist-get field item)))
+                    (when (stringp value)
+                      (cons (format "%s%s" prefix field) value))))
+                org-canvas--assignment-scheduled-fields)))
+
+(defun org-canvas--assignment-scheduled-dates (item)
+  "Return the dates at which Canvas touches assignment ITEM by itself.
+A list of (LABEL . ISO8601): the assignment's own unlock and lock
+dates, read from ITEM, then each override's, read from the overrides
+endpoint, since ITEM carries none.  The conflict check asks only once
+a remote timestamp is newer than the baseline, so the overrides cost
+one GET on that path alone (issue #453).  A failed read signals, and
+the conflict stands."
+  (let ((id (alist-get 'id item)))
+    (append
+     (org-canvas--assignment-scheduled-dates-of item "")
+     (when id
+       (seq-mapcat
+        (lambda (override)
+          (org-canvas--assignment-scheduled-dates-of
+           override (format "override %s " (alist-get 'id override))))
+        (org-canvas-api-request-all-pages
+         'GET (org-canvas-api-course-endpoint
+               "assignments/%s/overrides" id)))))))
+
 (org-canvas-register-feature
  :name "Assignments" :endpoint "assignments"
  :file-var 'org-canvas-assignments-file
@@ -148,6 +183,7 @@ See `org-canvas--assignment-owner'."
                :edit "assignments/%s/edit"))
  :list-params org-canvas--assignment-read-params
  :item-params org-canvas--assignment-read-params
+ :scheduled-dates-fn #'org-canvas--assignment-scheduled-dates
  ;; A classic quiz drags a shadow assignment behind it; the quiz is the
  ;; thing the Org files manage (issue #98).
  :skip-fn (lambda (item)

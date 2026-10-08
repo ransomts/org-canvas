@@ -1,0 +1,9 @@
+* Fixed
+- #453 A push no longer stops at a conflict when an assignment's
+  =updated_at= moved only because its unlock or lock date, or an
+  override's, passed since the last push: Canvas touches the
+  assignment a few seconds after such a date with nothing edited.  A
+  timestamp within a minute after a date that passed since the
+  baseline is taken for that bump, the log says which date explained
+  it, and the push goes ahead.  A newer timestamp no date explains is
+  still a conflict.
