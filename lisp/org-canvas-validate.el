@@ -1106,15 +1106,58 @@ Push-only, since a read-only course never makes that push.  LOC is a
                               "the item; edit it in Canvas")
                       q-type)))))))
 
+(defconst org-canvas--validate-raw-html-tag-re
+  (concat "</?"
+          (regexp-opt '("p" "span" "div" "ul" "ol" "li" "br" "a" "strong"
+                        "em" "b" "i" "u" "h1" "h2" "h3" "h4" "h5" "h6"
+                        "table" "thead" "tbody" "tr" "td" "th" "img" "link"
+                        "style" "font" "hr" "blockquote" "pre" "code"
+                        "iframe" "sup" "sub")
+                      t)
+          "\\(?:[ \t][^>\n]*\\)?/?>")
+  "Regexp matching an HTML tag written into Org text.
+Element names are listed so an Org radio target or timestamp, which
+also sit in angle brackets, is never taken for one.")
+
+(defun org-canvas--validate-settings-raw-html (loc)
+  "Warn when the syllabus above the first sub-heading is raw HTML.
+A settings pull before issue #459 wrote the syllabus as Canvas sent
+it, tags and all.  The push exports the syllabus as Org, where a tag
+is plain text, so it would reach Canvas escaped and the syllabus page
+would show its own markup.  A tag inside an export block or snippet
+is meant to be HTML and is left alone.  Push-only.  LOC is a
+\(:file :line :heading) plist.  Returns an issue or nil."
+  (let* ((bounds (org-canvas--pull-entry-text-bounds))
+         (case-fold-search t)
+         (line nil))
+    (save-excursion
+      (goto-char (car bounds))
+      (while (and (not line)
+                  (re-search-forward org-canvas--validate-raw-html-tag-re
+                                     (cdr bounds) t))
+        ;; Read the start before parsing: the parser moves the match data.
+        (let ((start (match-beginning 0)))
+          (when (memq (org-element-type
+                       (save-excursion (goto-char start) (org-element-context)))
+                      '(paragraph table-cell))
+            (setq line (line-number-at-pos start))))))
+    (when line
+      (org-canvas--validate-push-only
+       (org-canvas--validate-make-issue
+        'warning (plist-put (copy-sequence loc) :line line) "syllabus"
+        "The syllabus holds raw HTML tags, which the push would send as escaped text; pull settings again to convert it to Org, or wrap the HTML in #+begin_export html")))))
+
 (defun org-canvas--validate-settings-structure (loc)
   "Warn about a sub-heading of the course heading that is not `Navigation'.
 The syllabus is the text above the first sub-heading and `** Navigation'
 is the only sub-heading settings.org reads, so anything else under
 the course heading reaches Canvas nowhere (issue #275).  Push-only:
-it is text the push leaves behind, not a fault of the course.  LOC is
-a \(:file :line :heading) plist."
+it is text the push leaves behind, not a fault of the course.  A
+syllabus holding raw HTML is flagged too
+\(`org-canvas--validate-settings-raw-html').  LOC is a
+\(:file :line :heading) plist."
   (let ((end (save-excursion (org-end-of-subtree t) (point)))
-        (issues nil))
+        (issues (delq nil (list (org-canvas--validate-settings-raw-html loc)))))
     (save-excursion
       (while (and (outline-next-heading) (< (point) end))
         (let ((heading (org-get-heading t t t t)))

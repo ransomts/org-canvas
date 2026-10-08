@@ -1,0 +1,2 @@
+* Fixed
+- #459 A settings pull writes the syllabus as Org, converted by pandoc with Canvas file links rewritten to local =content/= links, as every other body is; it used to write Canvas's HTML as it came, which a push would have sent back as escaped tags. =org-canvas-validate= warns (push-only) when the =settings.org= syllabus still holds raw HTML tags, so a file pulled before the fix is caught before it is pushed

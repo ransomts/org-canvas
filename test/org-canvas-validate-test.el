@@ -3151,6 +3151,54 @@ Syllabus text.
         (expect (length issues) :to-equal 1)
         (expect (plist-get (car issues) :message) :to-match "`Grading' is not syllabus text")))))
 
+(describe "org-canvas--validate-settings-raw-html (issue #459)"
+  (it "warns, push-only, at the first line of a syllabus pulled as raw HTML"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Plain words first.
+<p><span style=\"color: #0000ff;\">Welcome</span></p>
+<ul><li>Week 1</li></ul>
+
+** Navigation
+1. Home
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-settings-structure
+                    '(:file "settings.org" :line 1 :heading "Course"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :severity) :to-equal 'warning)
+       (expect (plist-get (car issues) :push-only) :to-be t)
+       (expect (plist-get (car issues) :property) :to-equal "syllabus")
+       (expect (plist-get (car issues) :line) :to-equal 6)
+       (expect (plist-get (car issues) :heading) :to-equal "Course")
+       (expect (plist-get (car issues) :message) :to-match "raw HTML tags"))))
+
+  (it "says nothing about Org text, timestamps, targets, or HTML meant as HTML"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Due <2026-10-06 Tue>, see <<office hours>> and *bold* text.
+Inline @@html:<b>bold</b>@@ snippet.
+
+#+begin_export html
+<p><span style=\"color: red;\">Kept as HTML</span></p>
+#+end_export
+
+#+HTML: <div>one line</div>
+
+** Navigation
+<p>Not syllabus text</p>
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-settings-structure
+              '(:file "settings.org" :line 1 :heading "Course"))
+             :to-be nil))))
+
 (describe "org-canvas--validate-page-structure"
   (it "errors on FRONT_PAGE: true with PUBLISHED: false"
     (with-temp-org-buffer

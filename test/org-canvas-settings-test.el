@@ -2113,4 +2113,60 @@ Old syllabus.
       (expect (org-entry-get (point) "HOME_PAGE_ANNOUNCEMENT_LIMIT")
               :to-equal "5"))))
 
+;;;; Syllabus pull converts to Org (issue #459)
+
+(defconst test-org-canvas-459--syllabus-html
+  (concat "<link rel=\"stylesheet\" href=\"https://canvas.test/courses/42/files/77/download\">"
+          "<p><span style=\"color: #0000ff; font-size: 14pt;\">Welcome to Ethics</span></p>"
+          "<ul><li>Week 1<ul><li style=\"list-style-type: none;\">Reading&nbsp;one</li></ul></li>"
+          "<li>Week 2</li></ul>"
+          "<p>See the <a href=\"https://canvas.test/courses/42/files/123/download?wrap=1\">handout</a>.</p>")
+  "A styled Canvas syllabus: inline styles, a nested list, a file link.")
+
+(defconst test-org-canvas-459--syllabus-org
+  (concat "Welcome to Ethics\n\n- Week 1\n  - Reading one\n- Week 2\n\n"
+          "See the [[https://canvas.test/courses/42/files/123/download?wrap=1][handout]].")
+  "What pandoc makes of `test-org-canvas-459--syllabus-html'.
+It stands in for pandoc where pandoc is not installed.")
+
+(describe "org-canvas-pull-settings syllabus (issue #459)"
+  (it "writes the syllabus as Org, and the push sends it back as HTML, not escaped tags"
+    (let ((org-canvas--file-id-cache (make-hash-table :test 'equal))
+          (html-to-org (if (executable-find "pandoc")
+                           (symbol-function 'org-canvas--html-to-org)
+                         (lambda (_html) test-org-canvas-459--syllabus-org))))
+      (puthash "123" "content/handout.pdf" org-canvas--file-id-cache)
+      (cl-letf (((symbol-function 'org-canvas--html-to-org) html-to-org))
+        (let* ((result (test-org-canvas-settings--pull-with
+                        (lambda (url)
+                          (cond
+                           ((string-match "late_policy" url) nil)
+                           ((string-match "tabs" url) nil)
+                           (t (append test-org-canvas-settings--course-response
+                                      (list (cons 'syllabus_body
+                                                  test-org-canvas-459--syllabus-html))))))))
+               (content (plist-get result :content)))
+          ;; Pulled as Org: no tags, the list nested, the file link local.
+          (expect content :not :to-match "<p>\\|<span\\|<ul>\\|<li\\|&nbsp;\\|<link")
+          (expect content :to-match "^- Week 1\n  - Reading one\n- Week 2$")
+          (expect content :to-match "\\[\\[file:content/handout\\.pdf\\]\\[handout\\]\\]")
+          ;; Pushed back: real HTML, the same text and list shape.
+          (with-temp-org-buffer content
+            (goto-char (point-min))
+            (re-search-forward "^\\* ")
+            (let* ((data (org-canvas--settings-parse-entry))
+                   (course (gethash "course" (org-canvas--settings-build-payload data)))
+                   (html (gethash "syllabus_body" course)))
+              (expect html :not :to-match "&lt;")
+              (expect html :to-match "<p>\nWelcome to Ethics\n?</p>")
+              (expect html :to-match "<ul class=\"org-ul\">\n<li>Week 1\n<ul class=\"org-ul\">\n<li>Reading one</li>")
+              (expect html :to-match "<li>Week 2</li>")
+              (expect html :to-match "href=\"content/handout.pdf\">handout</a>")))))))
+
+  (it "writes no syllabus text when Canvas has an empty one"
+    (with-temp-org-buffer "* Course\n:PROPERTIES:\n:END:\n\nOld syllabus.\n"
+      (org-back-to-heading t)
+      (org-canvas--settings-pull-set-properties (point) nil "")
+      (expect (buffer-string) :not :to-match "Old syllabus"))))
+
 ;;; org-canvas-settings-test.el ends here

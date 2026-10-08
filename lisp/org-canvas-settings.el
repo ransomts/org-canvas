@@ -690,7 +690,10 @@ as it came."
 (defun org-canvas--settings-pull-set-properties (pom response syllabus-body
                                                      &optional late-policy)
   "Set all settings properties at POM from API RESPONSE.
-SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil).
+SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil).  It is
+converted to Org, Canvas file URLs rewritten to local links, as every
+other feature's body is: written as raw HTML it was plain text to the
+push's export, which would have sent the tags back escaped (issue #459).
 LATE-POLICY is the late policy API response (may be nil)."
   (dolist (spec org-canvas--settings-field-specs)
     (org-canvas--settings-pull-single-field pom spec response))
@@ -713,7 +716,8 @@ LATE-POLICY is the late policy API response (may be nil)."
          pom "COURSE_IMAGE"
          (format "[[file:%s][%s]]" rel-path basename)))))
   (when syllabus-body
-    (org-canvas--settings-replace-syllabus-body syllabus-body)))
+    (org-canvas--settings-replace-syllabus-body
+     (org-canvas--html-to-org-with-rewrite syllabus-body))))
 
 (defun org-canvas--settings-insert-navigation-heading (nav-text)
   "Remove existing ** Navigation heading and insert NAV-TEXT."
