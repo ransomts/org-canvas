@@ -620,8 +620,13 @@ pull followed by a push leaves the body as it was.
 The file itself is uploaded by =files.org=, not by the page: add a
 heading for it there (=* [[file:content/handout.pdf][handout.pdf]]=)
 and sync files.  The master sync does this before pages, discussions
-and assignments; the syllabus syncs earlier, so a syllabus linking a
-file new to =files.org= needs a second sync.  A link the push cannot
+and assignments.  The syllabus syncs earlier, with the course settings,
+so a syllabus link to a file new to =files.org= first goes as text;
+once the files tier has uploaded it, =org-canvas-sync= pushes the
+syllabus again (one more request, only when such a link was waiting),
+and the link works after a single sync.  =org-canvas-sync-settings= run
+on its own cannot wait for files: it warns, and the link resolves on
+the next settings push after files are synced.  A link the push cannot
 resolve — no =files.org= heading, a heading with no =CANVAS_ID= yet,
 or no such file — is sent as its description alone, with a warning in
 the log and the echo area, since a relative path would 404 for every

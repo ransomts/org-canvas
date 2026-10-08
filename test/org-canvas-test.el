@@ -88,7 +88,30 @@
             (let ((content (mapconcat #'identity (nreverse log-lines) "\n")))
               (expect content :to-match "Type.*Success.*Skipped.*Failed.*Deferred")
               (expect content :to-match "Pages +3 +0 +1 +1")
-              (expect content :to-match "Failed Pages: 'Course Home'"))))))))
+              (expect content :to-match "Failed Pages: 'Course Home'")))))))
+
+  (it "hands the settings run's waiting file links to the heal after files"
+    ;; Issue #477: the syllabus goes at Tier -1, files at Tier 0, so a
+    ;; link to a file uploaded at Tier 0 is retried only after it.
+    (let ((call-order nil)
+          (healed :not-called))
+      (with-sync-test-env
+        (with-mocked-sync-fns
+            (:record call-order
+             :overrides
+             ((settings . (lambda ()
+                            (list :file-links-unsynced '(("a.pdf" . "/c/")))))))
+          (cl-letf (((symbol-function 'org-canvas--settings-heal-file-links)
+                     (lambda (unsynced)
+                       (setq healed unsynced)
+                       (push 'heal call-order))))
+            (org-canvas-sync)
+            (setq call-order (nreverse call-order))
+            (expect healed :to-equal '(("a.pdf" . "/c/")))
+            (expect (cl-position 'files call-order)
+                    :to-be-less-than (cl-position 'heal call-order))
+            (expect (cl-position 'heal call-order)
+                    :to-be-less-than (cl-position 'assignments call-order))))))))
 
 ;;;; org-canvas-delete-all orchestration
 

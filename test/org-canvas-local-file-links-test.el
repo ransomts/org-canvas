@@ -199,4 +199,162 @@ The warnings logged are returned too, as (TEXT . WARNINGS)."
                                  issues)
                     :to-equal 1)))))))
 
+;;;; Issue #477: the syllabus goes at Tier -1, files at Tier 0
+
+(defun test-local-files-477-settings (dir)
+  "Write a settings.org in DIR whose syllabus links three files.
+One uploaded, one files.org has not uploaded yet, one with no
+heading; bind `org-canvas-settings-file' to it around the call."
+  (with-temp-file (expand-file-name "content/extra.pdf" dir) (insert "x"))
+  (with-temp-file (expand-file-name "settings.org" dir)
+    (insert "* Ethics\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n\n"
+            "Get [[file:content/handout.pdf][the handout]], "
+            "[[file:content/draft.docx][the draft]] and "
+            "[[file:content/extra.pdf][the extra]].\n"))
+  (expand-file-name "settings.org" dir))
+
+(defun test-local-files-477-stamp-draft ()
+  "Stamp the draft's files.org heading as the files sync would."
+  (with-current-buffer (org-canvas--find-file-noselect org-canvas-files-file)
+    (goto-char (point-min))
+    (re-search-forward "draft.docx")
+    (org-entry-put (point) "CANVAS_ID" "779")))
+
+(defmacro test-local-files-477-run (&rest body)
+  "Run BODY recording API calls in `calls' and warnings in `warnings'."
+  (declare (indent 0))
+  `(let ((calls nil) (warnings nil))
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (method url &rest args)
+                  (push (list method url (plist-get args :data)) calls)
+                  '((id . 99999))))
+               ((symbol-function 'org-canvas--log-warning)
+                (lambda (_logger fmt &rest args)
+                  (push (apply #'format fmt args) warnings)))
+               ((symbol-function 'org-canvas-clear-log) #'ignore)
+               ((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'message) #'ignore))
+       ,@body)))
+
+(defun test-local-files-477-syllabus (call)
+  "Return the syllabus_body a recorded PUT CALL sent, or nil."
+  (let ((data (nth 2 call)))
+    (and (hash-table-p data)
+         (gethash "syllabus_body" (gethash "course" data)))))
+
+(describe "Syllabus file links on one full sync (issue #477)"
+  (it "records a link to a file not uploaded yet instead of warning"
+    (test-local-files-with-course
+      (let ((ctx (org-canvas--sync-make-ctx))
+            (warnings nil))
+        (with-temp-file (expand-file-name "content/extra.pdf" dir) (insert "x"))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings)))
+                  ((symbol-function 'message) #'ignore))
+          (with-temp-buffer
+            (insert "[[file:content/draft.docx][d]] [[file:content/extra.pdf][e]]")
+            (org-canvas--resolve-file-links dir ctx)
+            (expect (buffer-string) :to-equal "d e")))
+        ;; The file files.org has waits; the one it lacks is warned now.
+        (expect (plist-get ctx :file-links-unsynced)
+                :to-equal (list (cons "content/draft.docx" dir)))
+        (expect (length warnings) :to-equal 1)
+        (expect (car warnings) :to-match "extra.pdf: no files.org heading"))))
+
+  (it "returns the waiting links from a settings sync inside org-canvas-sync"
+    (test-local-files-with-course
+      (let ((org-canvas-settings-file (test-local-files-477-settings dir))
+            (org-canvas--sync-in-progress t))
+        (test-local-files-477-run
+          (let ((ctx (org-canvas-sync-settings)))
+            (expect (plist-get ctx :file-links-unsynced)
+                    :to-equal (list (cons "content/draft.docx" dir)))
+            (expect (length warnings) :to-equal 1)
+            (expect (car warnings) :to-match "extra.pdf"))))))
+
+  (it "warns as it sends when the settings sync runs alone"
+    (test-local-files-with-course
+      (let ((org-canvas-settings-file (test-local-files-477-settings dir))
+            (org-canvas--sync-in-progress nil))
+        (test-local-files-477-run
+          (expect (org-canvas-sync-settings) :to-be nil)
+          (expect (length warnings) :to-equal 2)
+          (expect (cl-some (lambda (w) (string-match-p "draft.docx.*sync files first" w))
+                           warnings)
+                  :to-be-truthy)))))
+
+  (it "returns nil from a failed settings sync"
+    (test-local-files-with-course
+      (let ((org-canvas-settings-file (test-local-files-477-settings dir))
+            (org-canvas--sync-in-progress t))
+        (test-local-files-477-run
+          (cl-letf (((symbol-function 'org-canvas--settings-push)
+                     (lambda (&rest _) (error "Boom"))))
+            (expect (org-canvas-sync-settings) :to-be nil))))))
+
+  (it "does nothing when no link was waiting"
+    (test-local-files-477-run
+      (expect (org-canvas--settings-heal-file-links nil) :to-be nil)
+      (expect calls :to-be nil)
+      (expect warnings :to-be nil)))
+
+  (it "pushes the syllabus once more when the files sync uploaded the file"
+    (test-local-files-with-course
+      (let ((org-canvas-settings-file (test-local-files-477-settings dir)))
+        (test-local-files-477-stamp-draft)
+        (test-local-files-477-run
+          (org-canvas--settings-heal-file-links
+           (list (cons "content/draft.docx" dir)))
+          (expect (length calls) :to-equal 1)
+          (let* ((call (car calls))
+                 (html (test-local-files-477-syllabus call)))
+            (expect (car call) :to-be 'PUT)
+            ;; The syllabus alone: no other course field rides along.
+            (expect (hash-table-count (gethash "course" (nth 2 call)))
+                    :to-equal 1)
+            (expect html :to-match "/files/779\">the draft</a>")
+            (expect html :to-match "/files/777\">the handout</a>"))
+          ;; The heading-less file is still warned about, by that export.
+          (expect (length warnings) :to-equal 1)
+          (expect (car warnings) :to-match "extra.pdf")))))
+
+  (it "warns and sends nothing when the file is still not uploaded"
+    (test-local-files-with-course
+      (test-local-files-477-run
+        (org-canvas--settings-heal-file-links
+         (list (cons "content/draft.docx" dir)))
+        (expect calls :to-be nil)
+        (expect (length warnings) :to-equal 1)
+        (expect (car warnings) :to-match "draft.docx: .*sync files first"))))
+
+  (it "sends nothing under a dry run or on a read-only course"
+    (test-local-files-with-course
+      (let ((org-canvas-settings-file (test-local-files-477-settings dir)))
+        (test-local-files-477-stamp-draft)
+        (dolist (flags '((t . nil) (nil . t)))
+          (let ((org-canvas--dry-run (car flags))
+                (org-canvas-read-only (cdr flags)))
+            (test-local-files-477-run
+              (org-canvas--settings-heal-file-links
+               (list (cons "content/draft.docx" dir)))
+              (expect calls :to-be nil)
+              ;; The link resolves now, so there is nothing to warn of.
+              (expect warnings :to-be nil)))))))
+
+  (it "names a failed syllabus push without stopping the sync"
+    (test-local-files-with-course
+      (let ((org-canvas-settings-file (test-local-files-477-settings dir))
+            (said nil))
+        (test-local-files-477-stamp-draft)
+        (test-local-files-477-run
+          (cl-letf (((symbol-function 'org-canvas--settings-push)
+                     (lambda (&rest _) (error "Boom")))
+                    ((symbol-function 'org-canvas--user-message)
+                     (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+            (expect (org-canvas--settings-heal-file-links
+                     (list (cons "content/draft.docx" dir)))
+                    :to-be nil)
+            (expect said :to-match "Syllabus push FAILED: Boom")))))))
+
 ;;; org-canvas-local-file-links-test.el ends here

@@ -752,7 +752,7 @@ the sync had already written (issue #97)."
     :module-items-moved :module-items-pending :module-items-adopted
     :module-items-relocated
     :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push
-    :outcome :heading-report :heading-payload)
+    :outcome :heading-report :heading-payload :file-links-unsynced)
   "Every key a sync run context may carry, present from creation.
 Static: :feature-name, :feature-upper, :title-key, the pipeline
 functions, :total-count, :hash-extra-fn.  Snapshot: :baseline (the
@@ -776,7 +776,10 @@ ended as — `synced', `unchanged', `conflict', `pulled', `duplicate',
 :heading-report (the plist a spec's :after-heading returned, merged
 into that caller's result, issue #380), :heading-payload (the payload
 that single-entry push built, for :after-heading to compare with what
-Canvas holds, issue #410).
+Canvas holds, issue #410), :file-links-unsynced (settings, inside
+`org-canvas-sync': (PATH . DIR) for each syllabus link to a file
+files.org has not uploaded yet, sent as text and retried after the
+files tier, issue #477).
 Every key is present so `plist-put' always mutates the context in
 place and the functions sharing it see one another's writes.")
 
