@@ -3,6 +3,10 @@
 #
 #   scripts/org-canvas [-C DIR] [--dry-run] COMMAND [ARGS...]
 #   scripts/org-canvas --help | --version
+#   scripts/org-canvas push [--conflict push|pull|skip] FEATURE:TITLE...
+#
+# --help lists every command.  push's --conflict sets
+# org-canvas-conflict-strategy for that run (issue #470).
 #
 # The course directory defaults to the current one; its
 # org-canvas-credentials.el is loaded.  EMACS names the Emacs to run

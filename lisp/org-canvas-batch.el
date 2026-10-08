@@ -192,8 +192,9 @@ copy silently.  Return the credentials file loaded, or nil."
      "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
-    ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
-     "Push named headings (org-canvas-sync-headings).")
+    ("push" org-canvas-batch--cmd-push 1 nil
+     "[--conflict push|pull|skip] FEATURE:TITLE..."
+     "Push named headings; --conflict resolves conflicts (#470).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
@@ -488,12 +489,47 @@ skip, expected of a Designer or TA, and leaves the status 0."
             (org-canvas--pull-summary-records-of-kind 'error))
         1 0)))
 
+(defun org-canvas-batch--conflict-strategy (value)
+  "Return the strategy symbol for VALUE, the word after --conflict.
+VALUE is \"push\", \"pull\" or \"skip\"; anything else, or nil when
+--conflict ended the line, is a usage error."
+  (cond
+   ((member value '("push" "pull" "skip")) (intern value))
+   (value (org-canvas-batch--usage
+           "--conflict takes push, pull or skip, not %s" value))
+   (t (org-canvas-batch--usage "--conflict needs push, pull or skip"))))
+
+(defun org-canvas-batch--push-args (args)
+  "Read push ARGS into (STRATEGY . HEADINGS).
+STRATEGY is the symbol --conflict STRATEGY or --conflict=STRATEGY
+named, anywhere among ARGS, or nil without one; HEADINGS are the
+other arguments, in order.  No heading is a usage error."
+  (let ((strategy nil) (headings nil))
+    (while args
+      (let ((arg (pop args)))
+        (cond
+         ((equal arg "--conflict")
+          (setq strategy (org-canvas-batch--conflict-strategy (pop args))))
+         ((string-prefix-p "--conflict=" arg)
+          (setq strategy (org-canvas-batch--conflict-strategy
+                          (substring arg (length "--conflict=")))))
+         (t (push arg headings)))))
+    (unless headings
+      (org-canvas-batch--usage "push takes %s"
+                               (nth 4 (assoc "push" org-canvas-batch--commands))))
+    (cons strategy (nreverse headings))))
+
 (defun org-canvas-batch--cmd-push (parsed)
-  "Push the headings PARSED names; return 1 if any failed."
-  (let ((entries (mapcar #'org-canvas-batch-heading-entry
-                         (plist-get parsed :args)))
-        (org-canvas--dry-run (or org-canvas--dry-run
-                                 (plist-get parsed :dry-run))))
+  "Push the headings PARSED names; return 1 if any failed.
+A --conflict among the arguments binds `org-canvas-conflict-strategy'
+for this run: push overwrites Canvas, pull the heading, and skip
+leaves the entry alone, as a batch Emacs does without it (#470)."
+  (let* ((args (org-canvas-batch--push-args (plist-get parsed :args)))
+         (entries (mapcar #'org-canvas-batch-heading-entry (cdr args)))
+         (org-canvas-conflict-strategy (or (car args)
+                                           org-canvas-conflict-strategy))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
     (if (zerop (org-canvas-batch--failed-count
                 (org-canvas-sync-headings entries)))
         0 1)))

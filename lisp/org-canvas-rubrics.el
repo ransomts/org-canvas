@@ -45,7 +45,10 @@
 ;; not during rubric sync — except that an update of a rubric several
 ;; assignments grade with takes the surplus associations off for the
 ;; duration of the PUT and puts them back, since Canvas would otherwise
-;; answer with a copy (issue #255; see "3. Stage: Execution").
+;; answer with a copy (issue #255; see "3. Stage: Execution").  An
+;; update moves the `updated_at' of each assignment grading with the
+;; rubric, so the push restamps those assignment headings that agreed
+;; with Canvas before it (issue #470).
 ;;
 ;; UPDATES
 ;; =======
@@ -59,6 +62,12 @@
 (require 'cl-lib)
 
 (declare-function org-canvas--validate-rubric-structure "org-canvas-validate")
+;; The assignment read the override restamp uses (issue #348); sections
+;; is a sibling feature, loaded by org-canvas before any push runs.
+(declare-function org-canvas--override-read-assignment-item "org-canvas-sections")
+(declare-function org-canvas--override-item-updated "org-canvas-sections")
+;; Read, never required: assignments is a sibling feature.
+(defvar org-canvas-assignments-file)
 ;; Read, never required: outcomes is a sibling feature, and
 ;; `org-canvas--rubric-outcome-title' checks `boundp' before using it.
 (defvar org-canvas-outcomes-file)
@@ -590,6 +599,104 @@ assignment grading with the rubric without any POINTS edit."
         (org-canvas--rubric-format-points before)
         graded))))
 
+;;;; Keeping the Assignments' Baselines (issue #470)
+;;
+;; An update of a rubric an assignment grades with moves that
+;; assignment's `updated_at': a `use_for_grading' association resets
+;; the assignment's points to the rubric's total, and an association
+;; taken off and put back around the PUT is written again.  The
+;; assignment heading's CANVAS_UPDATED_AT is its conflict baseline, so
+;; the next push of that heading took the rubric push for a web-UI edit
+;; and stopped.  As after override writes (issue #348), each heading is
+;; restamped after the update, but only when it agreed with Canvas
+;; before it: an edit made on Canvas since the last push must stay
+;; visible as drift.
+
+(defun org-canvas--rubric-assignment-heading (assignment-id)
+  "Return a marker at the assignments.org heading of ASSIGNMENT-ID, or nil.
+Nil too when `org-canvas-assignments-file' is unset or missing."
+  (let ((file (and (boundp 'org-canvas-assignments-file)
+                   org-canvas-assignments-file)))
+    (when (and file (file-exists-p file))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (org-with-wide-buffer
+         (let ((pos (org-find-property "CANVAS_ID" (format "%s" assignment-id))))
+           (and pos (copy-marker pos))))))))
+
+(defun org-canvas--rubric-assignment-clean-p (pom assignment-id title)
+  "Return non-nil if the stamp at POM is current for assignment ASSIGNMENT-ID.
+The stamp is current when its CANVAS_UPDATED_AT is no earlier than Canvas's
+`updated_at', or when a date at which Canvas touches the assignment
+by itself explains the newer one, as the push's conflict check
+allows (issue #453).  TITLE names the assignment in the log.  A
+heading with no stamp of its own answers nil without a read."
+  (let ((stamp (org-canvas--parse-iso8601-time
+                (org-entry-get pom "CANVAS_UPDATED_AT"))))
+    (when stamp
+      (let* ((item (org-canvas--override-read-assignment-item assignment-id))
+             (remote (org-canvas--parse-iso8601-time
+                      (org-canvas--override-item-updated item))))
+        (and remote
+             (or (not (time-less-p stamp remote))
+                 (org-canvas--conflict-scheduled-bump
+                  stamp remote
+                  (org-canvas--conflict-scheduled-dates
+                   (org-canvas--feature-scheduled-dates-fn
+                    (org-canvas--registry-find-feature "Assignments"))
+                   item title))))))))
+
+(defun org-canvas--rubric-clean-baselines (live)
+  "Return the assignment headings of LIVE's associations that agree with Canvas.
+LIVE is the rubric as read before the update, associations included.
+Each is (MARKER ASSIGNMENT-ID TITLE), MARKER at its heading in
+`org-canvas-assignments-file'.  An assignment with no heading there
+is left out; one whose heading had drifted is left out and logged,
+so its next push still reports the conflict."
+  (let ((clean nil))
+    (dolist (assoc (org-canvas--rubric-assignment-associations live))
+      (let* ((id (alist-get 'association_id assoc))
+             (marker (and id (org-canvas--rubric-assignment-heading id)))
+             (title (org-canvas--rubric-association-name assoc)))
+        (when marker
+          (if (org-canvas--rubric-assignment-clean-p marker id title)
+              (push (list marker id title) clean)
+            (org-canvas--log-info org-canvas--logger
+              "[Execute] '%s' did not agree with Canvas before its rubric was updated; its CANVAS_UPDATED_AT is left alone, so its next push reports the conflict"
+              title)
+            (set-marker marker nil)))))
+    (nreverse clean)))
+
+(defun org-canvas--rubric-restamp-assignment (baseline)
+  "Restamp BASELINE's heading from its assignment's `updated_at'.
+BASELINE is (MARKER ASSIGNMENT-ID TITLE).  PAYLOAD_HASH is kept: the
+assignment's own payload did not change.  A failed read or write is
+logged and leaves the stamp as it was."
+  (pcase-let ((`(,marker ,id ,title) baseline))
+    (condition-case err
+        (let ((updated (org-canvas--override-item-updated
+                        (org-canvas--override-read-assignment-item id))))
+          (when updated
+            (org-canvas-org-set-property marker "CANVAS_UPDATED_AT" updated)
+            (org-canvas--log-info org-canvas--logger
+              "[Execute] Baseline for '%s' restamped to %s after its rubric was updated"
+              title updated)))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[Execute] Could not restamp '%s' (%s); its next push may report a conflict"
+         title (error-message-string err))))))
+
+(defun org-canvas--rubric-restamp-baselines (baselines)
+  "Restamp each of BASELINES and save the assignments file.
+BASELINES is what `org-canvas--rubric-clean-baselines' returned
+before the update; their markers are released."
+  (when baselines
+    (dolist (baseline baselines)
+      (org-canvas--rubric-restamp-assignment baseline))
+    (with-current-buffer (marker-buffer (car (car baselines)))
+      (org-canvas--save-buffer))
+    (dolist (baseline baselines)
+      (set-marker (car baseline) nil))))
+
 (defun org-canvas--rubric-push-to-api (data payload &optional ctx)
   "Send PAYLOAD (using DATA title) to Canvas, updating in place when known.
 
@@ -608,19 +715,27 @@ An update first reads the rubric as Canvas holds it, to send every
 criterion and rating back under the id it already has (issue #256)
 and to take surplus assignment associations off for the duration of
 the PUT, since Canvas copies rather than updates a rubric that more
-than one assignment grades with (issue #255).  A dry run does neither
-and reports the PUT alone.  CTX is the run context."
+than one assignment grades with (issue #255).  The update moves the
+`updated_at' of every assignment grading with the rubric, so each
+assignment heading that agreed with Canvas before it is restamped
+afterwards, whether or not the PUT succeeded, and the next push of
+the heading is not stopped by the package's own write (issue #470).
+A dry run does none of this and reports the PUT alone.  CTX is the
+run context."
   (let ((id (plist-get data :canvas-id)))
     (if (or (not id) org-canvas--dry-run)
         (org-canvas--push-to-api data payload
           :ctx ctx
           :endpoint "rubrics"
           :find-fn #'org-canvas--rubric-find-by-title)
-      (let ((live (org-canvas--rubric-fetch-live id)))
+      (let* ((live (org-canvas--rubric-fetch-live id))
+             (baselines (org-canvas--rubric-clean-baselines live)))
         (org-canvas--rubric-pin-ids payload (plist-get data :criteria) live)
-        (let ((response (org-canvas--rubric-push-update data payload live ctx)))
-          (org-canvas--rubric-warn-points-moved data live response)
-          response)))))
+        (unwind-protect
+            (let ((response (org-canvas--rubric-push-update data payload live ctx)))
+              (org-canvas--rubric-warn-points-moved data live response)
+              response)
+          (org-canvas--rubric-restamp-baselines baselines))))))
 
 ;;;; 4. Stage: Finalization
 
