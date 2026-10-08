@@ -1,0 +1,10 @@
+* Added
+- #452 gradebook.org gets an optional Groups table (=org-canvas-gradebook-groups=): each student's
+  percentage per assignment group after Canvas's drop rules, recomputed from every submission, with
+  the students whose recomputed total differs from Canvas's by more than 0.1 named under it
+- #452 =org-canvas-gradebook-what-if= (=h= in the dispatch menu) recomputes every total under
+  assignment-groups.org as it stands, from the last pulled scores, and reports the mean, median,
+  letter counts and the students whose letter changes; nothing is sent
+- #452 The scores the what-if reads (=gradebook-scores.eld=) are added to the course directory's
+  =.gitignore= when it is in a git work tree and git does not ignore them already; an already
+  tracked file gets a warning in the log instead
