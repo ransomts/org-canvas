@@ -72,7 +72,7 @@ RULING is the plist `org-canvas-submissions-apply-ruling' takes."
                 (t row-comment)))))
 
 (defun org-canvas--submissions-ruling-number (text)
-  "Return TEXT, a score cell or nil, as a number, 0 when it holds none."
+  "Return TEXT, a score cell or nil, as a number, or 0 for an empty cell."
   (let ((parsed (org-canvas--submissions-parse-score text)))
     (if (and parsed (not (equal parsed "EX"))) (string-to-number parsed) 0)))
 
@@ -83,7 +83,7 @@ RULING is the plist `org-canvas-submissions-apply-ruling' takes."
                          rows))))
 
 (defun org-canvas--submissions-ruling-score (ruling rows triples)
-  "Return the SCORE RULING sets, as a string, or nil when it leaves SCORE.
+  "Return the SCORE set by RULING, as a string, or nil to leave SCORE alone.
 ROWS are the entry's Rubric rows before the ruling and TRIPLES after
 it.  A function is called with the rows' total after the ruling and
 the column's points; what it returns below 0 is 0."
@@ -110,7 +110,7 @@ refuses a SCORE that is not the rows' total."
               score total))))
 
 (defun org-canvas--submissions-ruling-touches-rows-p (ruling)
-  "Return non-nil when RULING replaces Rubric scores or comments."
+  "Return non-nil when RULING is to replace Rubric scores or comments."
   (or (plist-get ruling :rows) (plist-get ruling :row-comment)))
 
 (defun org-canvas--submissions-ruling-plan (ruling user-id)
@@ -140,7 +140,7 @@ refusal is (:user-id USER-ID :skipped WHY) instead."
 ;;;; Writing
 
 (defun org-canvas--submissions-ruling-before (plan)
-  "Return what PLAN's ruling replaces, as one line for the Notes."
+  "Return what PLAN's ruling will replace, as one line for the Notes."
   (let ((record (org-canvas--submissions-typed-record))
         (draft (plist-get plan :old-draft)))
     (concat "Before: " (or record "nothing typed")
@@ -202,7 +202,7 @@ An id no student heading carries gives (:user-id USER-ID :unmatched t)."
         :dry-run (and dry-run t)))
 
 (defun org-canvas--submissions-ruling-describe (plan)
-  "Return one line saying what PLAN changes."
+  "Return one line saying what PLAN will change."
   (format "user %s (%s): %s%s%s"
           (plist-get plan :user-id) (plist-get plan :name)
           (if (plist-get plan :score)
@@ -215,7 +215,7 @@ An id no student heading carries gives (:user-id USER-ID :unmatched t)."
           (if (plist-get plan :draft) ", draft" "")))
 
 (defun org-canvas--submissions-ruling-report (result)
-  "Name RESULT's changes, misses and refusals, then its summary."
+  "Name the edits, misses and refusals in RESULT, then its summary."
   (let ((prefix (if (plist-get result :dry-run) "[DRY-RUN] " "")))
     (dolist (plan (plist-get result :changed))
       (org-canvas--user-message "%sRuling: %s" prefix
