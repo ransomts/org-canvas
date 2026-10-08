@@ -639,7 +639,8 @@ time that does not parse is reported by the timestamp check."
 ;;
 ;; The table helpers live in the grading-schemes module, which is always
 ;; loaded with org-canvas; validate names them rather than requiring a
-;; feature module (the dependency rule in CLAUDE.md).
+;; feature module (the dependency rule in
+;; documentation/architecture-guide.md).
 
 (declare-function org-canvas--grading-scheme-find-table "org-canvas-grading-schemes" (end))
 (declare-function org-canvas--grading-scheme-table-rows "org-canvas-grading-schemes" (table))

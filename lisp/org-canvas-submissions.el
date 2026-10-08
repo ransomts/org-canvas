@@ -4004,7 +4004,8 @@ from the minibuffer, after the buffer checks, with the file's
 POINTS_POSSIBLE as the default."
   ;; Bare `(interactive)' rather than `(interactive (list ...))': a sexp
   ;; argument to `interactive' makes edebug skip the defun, which blanks
-  ;; undercover's line counts for the whole body (see CLAUDE.md).
+  ;; undercover's line counts for the whole body (see
+  ;; documentation/testing-guide.md).
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
@@ -4098,7 +4099,7 @@ Replaces problematic characters with underscores."
 ;; a tool built on the package can pull, open and refresh without the
 ;; minibuffer (issue #280).  The prompts live in the resolvers below
 ;; rather than in a sexp `interactive' spec, which blanks undercover's
-;; line counts for the whole body (see CLAUDE.md).
+;; line counts for the whole body (see documentation/testing-guide.md).
 
 (defun org-canvas--submissions-resolve-assignment (assignment)
   "Return the Canvas assignment object ASSIGNMENT names.

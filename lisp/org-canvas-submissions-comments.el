@@ -229,7 +229,8 @@ assignment_id, assignment and students, each key in snake_case
 too: :posted says which, and `org-canvas-submissions-import-comments'
 leaves them alone unless told otherwise.  Nothing is changed."
   ;; Bare `(interactive)': a sexp spec blanks undercover's line counts
-  ;; for the whole body (see CLAUDE.md, and decisions.org, issue #280).
+  ;; for the whole body (see documentation/testing-guide.md, and
+  ;; decisions.org, issue #280).
   (interactive)
   (let ((buf (org-canvas--submissions-comments-buffer file)))
     (when (and (null output) (called-interactively-p 'any))

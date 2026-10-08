@@ -150,7 +150,7 @@ If NAME is nil and called interactively, prompt with completion."
   ;; Bare `(interactive)' rather than `(interactive (list ...))'.
   ;; A sexp argument to `interactive' confuses edebug enough that
   ;; undercover stops counting hits inside `unless'/`when' bodies in
-  ;; the function — see CLAUDE.md for the bisection.
+  ;; the function — see documentation/testing-guide.md.
   (interactive)
   (unless name
     (setq name (org-canvas--read-course-name)))

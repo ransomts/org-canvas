@@ -424,7 +424,8 @@ the file is saved.  Nothing is sent: push with S.  GRACE nil is
 `org-canvas-submissions-window-grace', asked for when interactive
 \(where the prefix argument is OVERWRITE).  Return the buffer."
   ;; Bare `(interactive)': a sexp spec blanks undercover's line counts
-  ;; for the whole body (see CLAUDE.md, and decisions.org, issue #280).
+  ;; for the whole body (see documentation/testing-guide.md, and
+  ;; decisions.org, issue #280).
   (interactive)
   (let ((buf (org-canvas--submissions-window-target file)))
     (unless (or grace noninteractive)

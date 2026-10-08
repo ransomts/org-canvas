@@ -9,7 +9,8 @@
 ;; question/item pipeline.  That is the one feature-to-feature require in
 ;; the package, sanctioned because the items file is not a feature: it
 ;; registers nothing, defines no command, and requires only core.  Nothing
-;; else may require either file (see CLAUDE.md, "Dependency Rules").
+;; else may require either file (see documentation/architecture-guide.md,
+;; "Dependency Rules").
 ;;
 ;; New Quizzes is a newer quiz engine in Canvas LMS that uses a different
 ;; API from Classic Quizzes.  Key differences:
