@@ -129,6 +129,8 @@ ARGS=, which is also the line to use without it.
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
 | =push [--conflict STRATEGY] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=) | any heading failed |
+| =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |
+| =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
@@ -149,9 +151,12 @@ headings, written =FEATURE:TITLE= for a heading by its exact title or
 =FEATURE#ID= for one by its Canvas id — =assignment:R5: Framework
 Strengths=, =page:Week 05 objectives=, =assignment#2563805=.  The
 feature is a module's name, singular or plural, and ends at the first
-colon or hash sign, so a title may hold either.  =--dry-run= (=-n=)
-before the command makes =push=, =push-comments= and =sync= send
-nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
+colon or hash sign, so a title may hold either.  =publish= and
+=unpublish= take the same names, for assignments, quizzes, discussions
+and pages (see [[*Publishing One Heading][Publishing One Heading]]).
+=--dry-run= (=-n=)
+before the command makes =push=, =publish=, =unpublish=,
+=push-comments= and =sync= send nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
 among its arguments) sets =org-canvas-conflict-strategy= for that run
 alone: =push= overwrites Canvas, =pull= overwrites the heading, and
 =skip= leaves the entry alone and names it, which is also what a batch
@@ -2960,6 +2965,52 @@ Items whose links do not resolve are named in the report rather than silently
 passed over, so a typo in a link surfaces instead of quietly leaving one piece
 of the week unpublished.
 
+** Publishing One Heading
+
+To take one column down, or put it up, without pushing anything else the
+heading holds -- a description being rewritten for next week, say -- put
+point in the heading and run
+
+#+begin_src elisp
+M-x org-canvas-unpublish-at-point     ; or org-canvas-publish-at-point
+#+end_src
+
+(=N= and =n= in the dispatch menu's Publish group).  It works in
+=assignments.org=, =quizzes.org= (a question means its quiz),
+=discussions.org= and =pages.org=, and sends the item's =published= flag and
+nothing else, so the draft text, the points and the dates stay local.
+
+- *Refusals.*  The item is read first.  An unpublish Canvas would refuse is
+  refused before anything is sent and says why: an assignment or quiz with
+  student submissions (its =unpublishable= is false), a discussion with
+  replies (=can_unpublish=), or the course's front page.  A heading with no
+  Canvas id, one marked =CANVAS_DELETED=, and one Canvas no longer has are
+  refused too, as is a page carrying =PUBLISH_AT=: Canvas cancels a page's
+  schedule when a request changes its published state (see
+  [[*A page publishes itself][A page publishes itself]]), so remove
+  =PUBLISH_AT= first.  A course marked read-only refuses before the read.
+- *The drawer.*  =PUBLISHED= is set to the new state and =CANVAS_UPDATED_AT=
+  to Canvas's timestamp after the change, so the next push does not take
+  the unpublish for someone else's edit.  =PAYLOAD_HASH= is restamped for
+  the new state when the rest of the heading is still what was last pushed
+  (the next push skips it, as it should), and dropped when the heading has
+  edits since, so the next push sends them all.
+- *Changed on Canvas since the last sync.*  The flag is still sent, since it
+  overwrites nothing else, but =CANVAS_UPDATED_AT= keeps its old value and
+  =PAYLOAD_HASH= is dropped: the next push of the heading reports the
+  conflict as it would have, and offers push, pull or skip.
+- *Already in that state.*  Nothing is sent; =PUBLISHED= is still written, so
+  the file agrees with Canvas.
+- *Dry run.*  Under =org-canvas--dry-run= the item is read and checked, and
+  nothing is sent or written.
+
+From Lisp, =(org-canvas-set-published FEATURE TARGET PUBLISHED &optional BY)=
+finds the heading as =org-canvas-sync-headings= does -- FEATURE is
+=assignment=, =quiz=, =discussion= or =page=, TARGET the exact title or, with
+BY =canvas-id=, the Canvas id -- and returns =sent=, =unchanged= or
+=dry-run=.  From the shell, =scripts/org-canvas unpublish "assignment:Essay 1"=
+(see [[*Running from the Shell][Running from the Shell]]).
+
 ** Publishing on a Schedule
 
 Give a module a =PUBLISH_AT= and the release plan lives in the file:
@@ -4691,6 +4742,9 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
 | =org-canvas-unpublish-module=     | The reverse                                   |
+| =org-canvas-publish-at-point=     | Publish the heading at point on Canvas, sending only the flag (see [[*Publishing One Heading][Publishing One Heading]]) |
+| =org-canvas-unpublish-at-point=   | Unpublish it, refusing what Canvas would refuse |
+| =org-canvas-set-published=        | The same for a heading named by title or Canvas id |
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
@@ -4729,7 +4783,7 @@ The menu is organized into groups, each key a single keystroke:
 | Files       | =F= =z=                 | Force re-upload of every file / the file at point |
 | Pull        | =p= =P= =u= =A=           | Pull all, pull single..., pull the heading at point, adopt the Canvas item for the heading at point |
 | Delete      | =D= =O= =X=              | Delete all, cleanup orphans, delete at point...  |
-| Publish     | =m= =M= =R=              | Publish / unpublish a module and its contents, apply =PUBLISH_AT= releases |
+| Publish     | =m= =M= =n= =N= =R=        | Publish / unpublish a module and its contents, publish / unpublish the heading at point (only the flag), apply =PUBLISH_AT= releases |
 | Submissions | =g= =Q= =U= =o= =q= =w= =a= =W= =G= =C= =T= | Pull submissions, grading queue, pull the queue, open a grading file, quiz attempts, peer reviews, completion rule, score by section window, push grades, push only sent comment edits, post grades |
 | Messages    | =e= =E=                 | Send unsent messages / the message at point      |
 | Tools       | =i= =c= =t= =v= =V= =S= =r= =j= =J= =x= =/= =%= | Init, switch course, test connection, validate, validate all, status, drift report, adopt stamps, stamp moves, list external tools, search the live course, list every date it says |

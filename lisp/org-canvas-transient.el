@@ -112,6 +112,8 @@ writing commands greyed rather than only erroring when one is chosen
    :inapt-if-not org-canvas--transient-writable-p
    ("m" "Publish module and its contents..." org-canvas-publish-module)
    ("M" "Unpublish module and its contents..." org-canvas-unpublish-module)
+   ("n" "Publish heading at point (only the flag)" org-canvas-publish-at-point)
+   ("N" "Unpublish heading at point (only the flag)" org-canvas-unpublish-at-point)
    ("R" "Apply scheduled releases (PUBLISH_AT)" org-canvas-apply-scheduled-releases)]
   ["Submissions"
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)

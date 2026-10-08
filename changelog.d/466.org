@@ -1,0 +1,20 @@
+* Added
+- #466 =org-canvas-publish-at-point= and =org-canvas-unpublish-at-point=
+  (=n= and =N= in the dispatch menu's Publish group) publish or unpublish
+  the assignment, classic quiz, discussion or page at point by sending
+  its =published= flag alone, so a description being rewritten locally
+  stays local while the column comes down.  An unpublish Canvas would
+  refuse (a column with submissions, a discussion with replies, the
+  front page) is refused before anything is sent, as is a page whose
+  =PUBLISH_AT= schedule the change would cancel.  The drawer then
+  records =PUBLISHED= and Canvas's new =CANVAS_UPDATED_AT=, and
+  =PAYLOAD_HASH= is restamped when the rest of the heading is what was
+  last pushed and dropped when it is not, so the next push neither
+  skips a real edit nor reports the unpublish as a conflict; when
+  Canvas had changed the item since the last sync, the old
+  =CANVAS_UPDATED_AT= is kept so the next push still asks about it.  A
+  read-only course refuses and a dry run sends and writes nothing.
+  =org-canvas-set-published= does the same for a heading named by title
+  or Canvas id, and =scripts/org-canvas publish FEATURE:TITLE...= and
+  =unpublish FEATURE:TITLE...= run it from the shell, exiting 1 when a
+  heading was refused

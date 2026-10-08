@@ -66,7 +66,7 @@ From Lisp: =(org-canvas-pull-page TITLE)= and the same for each feature (=org-ca
 | =J=   | =org-canvas-diff-stamp-moves=      | Stamp MOVED module items on their paired headings |
 | =x=   | =org-canvas-list-external-tools=   | List LTI tools                      |
 
-Also in the menu: Files (=F= force re-upload all, =z= the file at point), Publish (=m= / =M= publish / unpublish a module, =R= apply =PUBLISH_AT= releases), Messages (=e= send unsent, =E= send at point), Log (=ll=, =ld=, =lc=), Learn (=?=).
+Also in the menu: Files (=F= force re-upload all, =z= the file at point), Publish (=m= / =M= publish / unpublish a module, =n= / =N= publish / unpublish the heading at point sending only the flag, =R= apply =PUBLISH_AT= releases), Messages (=e= send unsent, =E= send at point), Log (=ll=, =ld=, =lc=), Learn (=?=).
 
 * File Structure
 

@@ -40,7 +40,7 @@ CI (`.github/workflows/ci.yml`) runs Emacs 30.1's suite in one job, with coverag
 lisp/
 ├── org-canvas.el                # Entry point: requires everything, sync/pull/delete tiers, at-point dispatch
 ├── org-canvas-status.el         # org-canvas-status (local overview) and the content-type table
-├── org-canvas-publish.el        # Bulk publish/unpublish and PUBLISH_AT releases (requires modules)
+├── org-canvas-publish.el        # Bulk publish/unpublish, PUBLISH_AT releases (requires modules), one heading's flag alone
 ├── org-canvas-adopt.el          # org-canvas-adopt-at-point (requires diff)
 ├── org-canvas-orphans.el        # org-canvas-cleanup-orphans
 ├── org-canvas-browse.el         # org-canvas-browse-at-point: open the heading's Canvas web page (no API)
@@ -267,6 +267,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - New Quiz items pull into a heading (the body's first paragraph) and the prompt under it, rewritten in place with their answer list kept (#333)
 - New Quiz settings live under `quiz_settings`, found by a live probe: minutes as seconds, attempts and scoring as `multiple_attempts`, sent only when set and compared wherever the reply carries the object (#321)
 - New Quizzes join the drift report through their pull-only entry's `:drift-report`, compare a setting only where the reply carries it, and leave the Assignments extras (#313)
+- one heading publishes alone: only `published` sent, an unpublish Canvas would refuse refused first, `PUBLISHED` and `CANVAS_UPDATED_AT` adopted, `PAYLOAD_HASH` restamped only when the heading still hashes as last pushed (`org-canvas--sync-heading-hash`), the baseline kept when Canvas changed it since (#466)
 - pending creates counted apart from drift and moved module items paired on the link's description (#294)
 - post policies are GraphQL (#202)
 - quiz publish sequencing (#59)

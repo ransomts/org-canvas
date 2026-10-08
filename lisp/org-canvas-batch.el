@@ -14,8 +14,8 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
-;; pull-all, push, diff, validate, sync ...), which `scripts/org-canvas'
-;; wraps:
+;; pull-all, push, publish, diff, validate, sync ...), which
+;; `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -195,6 +195,10 @@ copy silently.  Return the credentials file loaded, or nil."
     ("push" org-canvas-batch--cmd-push 1 nil
      "[--conflict push|pull|skip] FEATURE:TITLE..."
      "Push named headings; --conflict resolves conflicts (#470).")
+    ("publish" org-canvas-batch--cmd-publish 1 nil "FEATURE:TITLE..."
+     "Publish named headings, sending only the flag (#466).")
+    ("unpublish" org-canvas-batch--cmd-unpublish 1 nil "FEATURE:TITLE..."
+     "Unpublish named headings, sending only the flag (#466).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
@@ -533,6 +537,41 @@ leaves the entry alone, as a batch Emacs does without it (#470)."
     (if (zerop (org-canvas-batch--failed-count
                 (org-canvas-sync-headings entries)))
         0 1)))
+
+(defun org-canvas-batch--set-published-one (entry published)
+  "Set PUBLISHED on the heading ENTRY names; return t, or nil on failure.
+ENTRY is what `org-canvas-batch-heading-entry' returns.  A refusal or an
+error is printed, redacted, and the next heading still runs."
+  (condition-case err
+      (progn (org-canvas-set-published (nth 0 entry) (nth 1 entry)
+                                       published (nth 2 entry))
+             t)
+    (error
+     (org-canvas--user-message "%s %s failed: %s"
+                               (if published "publish" "unpublish")
+                               (nth 1 entry) (error-message-string err))
+     nil)))
+
+(defun org-canvas-batch--set-published (parsed published)
+  "Set PUBLISHED on each heading PARSED names; return 1 if any failed.
+A --dry-run sends nothing and writes nothing."
+  (let ((entries (mapcar #'org-canvas-batch-heading-entry
+                         (plist-get parsed :args)))
+        (org-canvas--dry-run (or org-canvas--dry-run
+                                 (plist-get parsed :dry-run))))
+    (if (cl-every #'identity
+                  (mapcar (lambda (entry)
+                            (org-canvas-batch--set-published-one entry published))
+                          entries))
+        0 1)))
+
+(defun org-canvas-batch--cmd-publish (parsed)
+  "Publish the headings PARSED names; return 1 if any failed."
+  (org-canvas-batch--set-published parsed t))
+
+(defun org-canvas-batch--cmd-unpublish (parsed)
+  "Unpublish the headings PARSED names; return 1 if any failed."
+  (org-canvas-batch--set-published parsed nil))
 
 (defun org-canvas-batch--cmd-diff (_parsed)
   "Print the drift report; return 1 if anything drifted."
