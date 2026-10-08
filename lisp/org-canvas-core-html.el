@@ -239,6 +239,163 @@ Images are uploaded to the `org-canvas-image-folder' on Canvas."
           (message "WARNING: %d of %d images failed. See *canvas-log*."
                    failed total))))))
 
+;;;; Local File Link Resolution (issue #468)
+;;
+;; ox-html exports [[file:content/handout.pdf][handout]] as a relative
+;; href, which on Canvas is resolved against the page's own address and
+;; 404s.  A push sends the Canvas URL of the files.org heading whose
+;; link target is that file instead: `/courses/C/files/ID', the shape
+;; `org-canvas--canvas-file-url-re' rewrites back to the same content/
+;; link on pull.  Paths are compared absolute, since a body's relative
+;; path and files.org's differ whenever the two files sit apart.
+
+(defvar org-canvas-files-file)
+
+(defconst org-canvas--escaped-link-path-re
+  "\\(?:\\\\.\\|[^]\\]\\)+"
+  "Match a link path, Org's backslash escapes included.")
+
+(defconst org-canvas--local-file-link-re
+  (concat "\\[\\[file:\\(" org-canvas--escaped-link-path-re "\\)\\]"
+          "\\(?:\\[\\([^]]*\\)\\]\\)?\\]")
+  "Match an Org link to a local file.
+G1 = the link target, any `::' search option included; G2 = the
+optional description.")
+
+(defvar org-canvas--local-file-id-cache nil
+  "The last file id map built, as (STAMP . HASH).
+STAMP is the files file's truename and its buffer's modification
+tick, so an upload that stamps a CANVAS_ID builds the map again.")
+
+(defun org-canvas--heading-file-link-path ()
+  "If the current heading is a [[file:PATH][...]] link, return PATH; else nil."
+  (save-excursion
+    (org-back-to-heading t)
+    (when (looking-at org-complex-heading-regexp)
+      (let ((title (match-string-no-properties 4)))
+        (when (and title
+                   (string-match
+                    (concat "\\`\\[\\[file:\\("
+                            org-canvas--escaped-link-path-re "\\)\\]")
+                    title))
+          (match-string 1 title))))))
+
+(defun org-canvas--local-file-link-path (target)
+  "Return the local path in `file:' link TARGET, or nil.
+Nil for a link another pass resolves: an Org file, which
+`org-canvas--resolve-body-links' handles, or an image, which
+`org-canvas--resolve-image-links' uploads.  A `::' search option is
+dropped and Org's bracket escapes are undone."
+  (let ((path (org-canvas--unescape-org-brackets
+               (save-match-data
+                 (replace-regexp-in-string "::.*\\'" "" target)))))
+    (unless (or (string-empty-p path)
+                (member (downcase (or (file-name-extension path) ""))
+                        (cons "org" org-canvas--image-extensions)))
+      path)))
+
+(defun org-canvas--local-file-key (path dir)
+  "Return the truename of PATH, relative to DIR, as a file id map key."
+  (file-truename (expand-file-name path dir)))
+
+(defun org-canvas--local-file-build-id-map (files-file)
+  "Return a hash from each file heading in FILES-FILE to its CANVAS_ID.
+Run in FILES-FILE's buffer.  The headings are links, read from
+`org-complex-heading-regexp' group 4, since `org-get-heading' drops
+link syntax on Org 9.7 and keeps it on 9.6.  Keys are truenames; a
+heading with no CANVAS_ID yet maps to `unsynced'."
+  (let ((map (make-hash-table :test 'equal))
+        (dir (file-name-directory (expand-file-name files-file))))
+    (org-with-wide-buffer
+     (org-map-entries
+      (lambda ()
+        (when-let* ((path (org-canvas--heading-file-link-path)))
+          (puthash (org-canvas--local-file-key
+                    (org-canvas--unescape-org-brackets path) dir)
+                   (or (org-entry-get (point) "CANVAS_ID") 'unsynced)
+                   map)))
+      nil 'file))
+    map))
+
+(defun org-canvas--local-file-id-map ()
+  "Return the file id map of `org-canvas-files-file', or nil.
+Nil when no files file exists.  The map is built again only when the
+files file or its buffer has changed."
+  (let ((files-file (bound-and-true-p org-canvas-files-file)))
+    (when (and files-file (file-exists-p files-file))
+      (with-current-buffer (org-canvas--find-file-noselect files-file)
+        (let ((stamp (cons (file-truename files-file)
+                           (buffer-modified-tick))))
+          (unless (equal stamp (car org-canvas--local-file-id-cache))
+            (setq org-canvas--local-file-id-cache
+                  (cons stamp (org-canvas--local-file-build-id-map
+                               files-file))))
+          (cdr org-canvas--local-file-id-cache))))))
+
+(defun org-canvas--local-file-canvas-id (path dir)
+  "Return the CANVAS_ID of local file PATH, relative to DIR.
+The answer is `unsynced' for a file `org-canvas-files-file' has a
+heading for but no CANVAS_ID yet, and nil for one it has no heading
+for."
+  (when-let* ((map (org-canvas--local-file-id-map)))
+    (gethash (org-canvas--local-file-key path dir) map)))
+
+(defun org-canvas--local-file-url (id)
+  "Return the Canvas URL of the course file whose id is ID."
+  (format "%s/courses/%s/files/%s"
+          org-canvas-base-url org-canvas-course-id id))
+
+(defun org-canvas--local-file-unresolved-reason (id path dir)
+  "Return why local file PATH, relative to DIR, has no Canvas URL.
+ID is what `org-canvas--local-file-canvas-id' answered for it."
+  (cond
+   ((eq id 'unsynced)
+    "files.org has it but no CANVAS_ID yet (sync files first)")
+   ((file-exists-p (expand-file-name path dir))
+    "no files.org heading links to it (add one and sync files)")
+   (t "no such file")))
+
+(defun org-canvas--resolve-single-file-link (rep source-dir)
+  "Replace the local file link REP describes with its Canvas URL link.
+REP is a plist (:start :end :path :display); PATH is relative to
+SOURCE-DIR.  A file with no Canvas URL is warned about and left as
+its description, as an unresolved cross-file link is: a relative
+href would only 404 on Canvas."
+  (let* ((path (plist-get rep :path))
+         (display (or (plist-get rep :display)
+                      (file-name-nondirectory path)))
+         (id (org-canvas--local-file-canvas-id path source-dir)))
+    (goto-char (plist-get rep :start))
+    (delete-region (plist-get rep :start) (plist-get rep :end))
+    (if (stringp id)
+        (insert (format "[[%s][%s]]" (org-canvas--local-file-url id) display))
+      (let ((why (org-canvas--local-file-unresolved-reason
+                  id path source-dir)))
+        (org-canvas--log-warning org-canvas--logger
+          "[Links] Unresolved file link %s: %s → plain text" path why)
+        (message "WARNING: File link %s sent as plain text: %s" path why))
+      (insert display))))
+
+(defun org-canvas--resolve-file-links (source-dir)
+  "Resolve links to local non-image files in current buffer to Canvas URLs.
+SOURCE-DIR is the directory of the source .org file.  A file resolves
+through the `org-canvas-files-file' heading whose link target is the
+same file; see `org-canvas--resolve-single-file-link'.  Run after the
+cross-file and image passes, which own the other `file:' links."
+  (goto-char (point-min))
+  (let ((reps nil))
+    (while (re-search-forward org-canvas--local-file-link-re nil t)
+      (let ((start (match-beginning 0))
+            (end (match-end 0))
+            (target (match-string-no-properties 1))
+            (display (match-string-no-properties 2)))
+        (when-let* ((path (org-canvas--local-file-link-path target)))
+          (push (list :start start :end end :path path :display display)
+                reps))))
+    ;; Last match first, so earlier positions stay valid.
+    (dolist (rep reps)
+      (org-canvas--resolve-single-file-link rep source-dir))))
+
 ;;;; HTML Export
 
 (defvar org-export-with-broken-links)
@@ -291,7 +448,8 @@ Canvas as a heading (issue #175)."
 (defun org-canvas--export-subtree-body-to-html (&optional offline no-children)
   "Export current Org subtree to HTML, resolving cross-file links.
 Returns the HTML string.  Cross-file links [[file:*.org::*...][...]]
-are resolved to Canvas URLs when the target has a CANVAS_ID.
+are resolved to Canvas URLs when the target has a CANVAS_ID, and so
+is a link to any other local file files.org uploads (issue #468).
 
 When OFFLINE is non-nil, neither links nor inline images are
 resolved.  Image resolution uploads the images Canvas lacks, so a
@@ -342,7 +500,9 @@ Org's table of contents above the body pointing at it (issue #275)."
             ;; Resolve cross-file links to Canvas URLs
             (org-canvas--resolve-body-links source-dir)
             ;; Resolve inline image links to Canvas URLs
-            (org-canvas--resolve-image-links source-dir))
+            (org-canvas--resolve-image-links source-dir)
+            ;; Resolve links to other local files (issue #468)
+            (org-canvas--resolve-file-links source-dir))
           ;; Export the subtree to HTML (body only)
           (goto-char (point-min))
           (let ((org-export-with-broken-links 'mark)
