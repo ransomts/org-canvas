@@ -3449,21 +3449,28 @@ for the push's check to name."
 
 (defun org-canvas--submissions-rubric-check-row (row name)
   "Return ROW as an (ID SCORE COMMENT) triple with the score normalized.
-NAME is the student's, for the message.  Signal a `user-error' when the
-Score cell is not a number or lies outside 0 to the criterion's Max, so
-nothing is sent for anyone until the cell is fixed."
+NAME is the student's, for the message.  A Score cell holding a clear
+word (`org-canvas--submissions-clear-words') gives (ID nil COMMENT t),
+a row whose points the push takes away (issue #449).  Signal a
+`user-error' when the Score cell is anything else but a number from 0
+to the criterion's Max, so nothing is sent for anyone until the cell
+is fixed."
   (let* ((id (nth 0 row))
          (label (or (nth 1 row) id))
          (max (nth 2 row))
          (score (nth 3 row))
          (normalized (org-canvas--submissions-rubric-cell-score score))
          (limit (and max (string-match-p "\\`[0-9.]+\\'" max) (string-to-number max))))
+    (when (org-canvas--submissions-clear-score-p score)
+      (setq normalized nil))
     (when (and normalized (not (string-match-p "\\`[0-9]+\\.?[0-9]*\\'" normalized)))
       (user-error "Rubric score %S for %s (%s) is not a number" score name label))
     (when (and normalized limit (> (string-to-number normalized) limit))
       (user-error "Rubric score %s for %s (%s) is more than its %s points"
                   normalized name label max))
-    (list id normalized (nth 4 row))))
+    (if (org-canvas--submissions-clear-score-p score)
+        (list id nil (nth 4 row) t)
+      (list id normalized (nth 4 row)))))
 
 (defun org-canvas--submissions-rubric-total (triples)
   "Return the sum of the scores in TRIPLES as a score string, or nil when none."
@@ -3475,43 +3482,73 @@ nothing is sent for anyone until the cell is fixed."
 (defun org-canvas--submissions-rubric-change-at-point (name)
   "Return the Rubric table edits of the entry at point as a plist, or nil.
 NAME is the student's, for messages.  Nil when the entry has no table
-or its rows digest to the CANVAS_RUBRIC baseline; a table emptied by
-hand is not a change either, since Canvas clears an assessment only
-from SpeedGrader.  The plist carries :triples (every row, checked),
-:old-rubric and :new-rubric (the digests), :total (the scored rows'
-sum), :filled and :of (how many rows carry a score, out of how many)."
+or its rows digest to the CANVAS_RUBRIC baseline.  A row whose Score
+is a clear word takes its points away, and its comment unless one is
+written (issue #449), so rows all cleared and uncommented take
+Canvas's assessment away.  A table emptied by
+hand while Canvas holds an assessment is a `user-error' that names the
+clear word: blank rows are left out of the push, as a blank SCORE is,
+so Canvas would keep the assessment the file no longer shows.  The
+plist carries :triples (every row, checked), :old-rubric and
+:new-rubric (the digests), :total (the scored rows' sum), :filled and
+:of (how many rows carry a score, out of how many) and :cleared (how
+many rows are cleared)."
   (when-let* ((rows (org-canvas--submissions-rubric-rows)))
     (let* ((triples (mapcar (lambda (r) (org-canvas--submissions-rubric-check-row r name))
                             rows))
            (new (org-canvas--submissions-rubric-digest triples))
-           (old (org-entry-get (point) "CANVAS_RUBRIC")))
-      (when (and new (not (equal new old)))
+           (old (org-entry-get (point) "CANVAS_RUBRIC"))
+           (cleared (cl-count-if (lambda (triple) (nth 3 triple)) triples)))
+      (when (and old (null new) (zerop cleared))
+        (user-error "%s: the Rubric rows are empty but Canvas holds an assessment; write none in their Score cells to clear it"
+                    name))
+      (when (and (or new (> cleared 0)) (not (equal new old)))
         (list :triples triples :old-rubric old :new-rubric new
               :total (org-canvas--submissions-rubric-total triples)
               :filled (cl-count-if #'cadr triples)
-              :of (length triples))))))
+              :of (length triples)
+              :cleared cleared)))))
 
 (defun org-canvas--submissions-rubric-derived-score (rubric old-score new-score name)
   "Return the score plist due to a changed RUBRIC for NAME, or nil.
 Only when the rubric is used for grading: Canvas then derives the grade
 from the assessment, so the rows' total becomes the score unless
-NEW-SCORE was itself edited away from OLD-SCORE.  An edited score
+NEW-SCORE was itself edited away from OLD-SCORE.  Rows that carry no
+points have no total and derive nothing: the score stays as typed and
+follows the assessment in a request of its own
+\(`org-canvas--submissions-grade-after', issue #444).  An edited score
 that disagrees with the total is a `user-error', since both cannot be
-right, and so is a cleared one (NEW-SCORE nil), since Canvas would
-derive a grade from the rows the clear takes away (issue #417); one
-that agrees, or an excusal, is left as typed."
+right, and so is a cleared one (NEW-SCORE nil) beside rows that carry
+points, since Canvas would derive a grade from the rows the clear
+takes away (issue #417); beside rows without points, cleared ones
+included (issue #449), it stands.  One that agrees, or an excusal, is
+left as typed."
   (when (and rubric (org-canvas--submissions-rubric-for-grading-p))
     (let ((total (plist-get rubric :total))
           (edited (not (equal new-score old-score))))
       (cond ((not edited)
-             (list :new-score total :score-derived t))
-            ((null new-score)
+             (and total (list :new-score total :score-derived t)))
+            ((and (null new-score) total)
              (user-error "%s: SCORE clears the grade but the Rubric rows changed; undo one of them"
                          name))
             ((and new-score total (not (equal new-score "EX"))
                   (/= (string-to-number new-score) (string-to-number total)))
              (user-error "%s: SCORE %s disagrees with the rubric total %s; clear one of them"
                          name new-score total))))))
+
+(defun org-canvas--submissions-grade-after (rubric score)
+  "Return (:grade-after t) when SCORE must follow RUBRIC in a second request.
+RUBRIC is the change of `org-canvas--submissions-rubric-change-at-point'
+and SCORE the grade the change leaves the student with.  On a rubric
+used for grading, an assessment none of whose rows carries points
+leaves Canvas with no grade, whatever grade the same request sends
+\(see `org-canvas--submissions-rubric-payload'); the grade then goes
+after it, alone.  Nil without such an assessment, or without a grade
+to keep."
+  (and rubric score
+       (null (plist-get rubric :total))
+       (org-canvas--submissions-rubric-for-grading-p)
+       (list :grade-after t)))
 
 (defun org-canvas--submissions-rubric-set-score (id score region)
   "Write SCORE into the Rubric table row keyed by ID within REGION.
@@ -3593,8 +3630,11 @@ Comments stay.  Return how many rows were filled, 0 without a table."
   "Return the unpushed Rubric rows of the entry at point, or nil.
 The value is (:rows TRIPLES :baseline DIGEST): the rows as typed and
 the CANVAS_RUBRIC they were typed against, so a re-render can put them
-back and tell whether Canvas moved meanwhile.  Nil when the table
-matches its baseline or is empty."
+back and tell whether Canvas moved meanwhile.  Rows emptied by hand
+against an assessment are carried too, as are cleared ones, so a
+refresh does not fill back what the grader took out (issue #449).
+Nil when the table matches its baseline, or is empty against no
+assessment."
   (when-let* ((rows (org-canvas--submissions-rubric-rows)))
     (let* ((triples (mapcar (lambda (r)
                               (list (nth 0 r)
@@ -3603,7 +3643,7 @@ matches its baseline or is empty."
                             rows))
            (digest (org-canvas--submissions-rubric-digest triples))
            (baseline (org-entry-get (point) "CANVAS_RUBRIC")))
-      (when (and digest (not (equal digest baseline)))
+      (when (and (or digest baseline) (not (equal digest baseline)))
         (list :rows triples :baseline baseline)))))
 
 (defun org-canvas--submissions-restore-rubric (carry)
@@ -4272,10 +4312,10 @@ baseline, or any of them together.  An absent SCORE is no change and
 a clear word is one, marked :clear (see
 `org-canvas--submissions-typed-score'); the rubric keys are those of
 `org-canvas--submissions-rubric-change-at-point', the late status keys
-those of `org-canvas--submissions-late-status-change-at-point', and
-:score-derived
-marks a score the rubric's total set
-\(`org-canvas--submissions-rubric-derived-score')."
+those of `org-canvas--submissions-late-status-change-at-point',
+:score-derived marks a score the rubric's total set
+\(`org-canvas--submissions-rubric-derived-score'), and :grade-after
+one sent after the assessment (`org-canvas--submissions-grade-after')."
   (let* ((user-id-str (org-entry-get (point) "USER_ID"))
          (user-id (when user-id-str (string-to-number user-id-str)))
          (name (org-get-heading t t t t))
@@ -4289,15 +4329,17 @@ marks a score the rubric's total set
          (rubric (and user-id (org-canvas--submissions-rubric-change-at-point name)))
          (late (and user-id (org-canvas--submissions-late-status-change-at-point name)))
          (derived (org-canvas--submissions-rubric-derived-score
-                   rubric old-score new-score name)))
+                   rubric old-score new-score name))
+         (score (if derived (plist-get derived :new-score) new-score)))
     (when (and user-id (or rubric late (not (equal new-score old-score))))
       (append (list :user-id user-id
                     :name name
                     :old-score old-score
-                    :new-score (if derived (plist-get derived :new-score) new-score)
+                    :new-score score
                     :attempt (and attempt (string-to-number attempt)))
               (org-canvas--submissions-clear-change old-score new-score)
               derived
+              (org-canvas--submissions-grade-after rubric score)
               rubric
               late))))
 
@@ -4347,17 +4389,45 @@ A score that moved, a cleared one included, or one the rubric derived."
   (or (plist-get change :score-derived)
       (not (equal (plist-get change :new-score) (plist-get change :old-score)))))
 
+;; What Canvas does with a rubric assessment (issue #444, read back from
+;; a Test Student on 2026-10-01).  On an assignment whose rubric is
+;; used for grading, Canvas sets the grade from the assessment, and an
+;; assessment none of whose rows carries points sets it to no grade:
+;; comment-only rows leave an ungraded submission ungraded, clear a
+;; score already there, and discard a `posted_grade' sent in the same
+;; grade_data entry or PUT, while the bulk job still reports
+;; `completed'.  A `posted_grade' sent alone afterwards sticks and keeps
+;; the comments.  So a change carrying such an assessment and a grade
+;; to keep -- a typed one, or the one Canvas already holds -- is sent
+;; in two requests, the assessment first and the grade after it
+;; (`org-canvas--submissions-grade-after', `:grade-after').  The
+;; existing score is resent rather than warned about: the file shows it
+;; unchanged, so keeping it is what the grader asked for, and a
+;; baseline stamped over a score Canvas cleared would hide the loss
+;; until the next refresh.  An assessment with points is unaffected:
+;; Canvas derives the grade from them, and the push sends the rows'
+;; total with them.
+;;
+;; A row whose Score is `none' (issue #449) is sent with empty points
+;; and comments, so the criterion Canvas holds is taken away; rows all
+;; cleared take the assessment away, and the same ordering keeps a
+;; score sent in the same entry.
+
 (defun org-canvas--submissions-rubric-payload (triples)
   "Return TRIPLES as the rubric_assessment object Canvas accepts.
 Each scored or commented criterion maps its id to points and comments;
-Canvas picks the rating from the points.  Unscored rows are left out."
+Canvas picks the rating from the points.  Unscored rows are left out,
+and a cleared one, (ID nil COMMENT t), goes with empty points and its
+comment, empty without one (issue #449)."
   (delq nil
         (mapcar (lambda (triple)
-                  (pcase-let ((`(,id ,score ,comment) triple))
-                    (when (or score comment)
-                      (cons (intern id)
-                            (append (and score `((points . ,(string-to-number score))))
-                                    (and comment `((comments . ,comment))))))))
+                  (pcase-let ((`(,id ,score ,comment ,cleared) triple))
+                    (cond (cleared
+                           (cons (intern id) `((points . "") (comments . ,(or comment "")))))
+                          ((or score comment)
+                           (cons (intern id)
+                                 (append (and score `((points . ,(string-to-number score))))
+                                         (and comment `((comments . ,comment)))))))))
                 triples)))
 
 (defun org-canvas--submissions-grade-fields (change)
@@ -4365,8 +4435,11 @@ Canvas picks the rating from the points.  Unscored rows are left out."
 `posted_grade' when the score moves, the empty string Canvas reads as
 no grade when CHANGE clears it (issue #417), `rubric_assessment' when
 the Rubric rows did; the bulk endpoint takes the entry as is and the
-single PUT nests the grade under `submission'."
+single PUT nests the grade under `submission'.  A CHANGE marked
+:grade-after sends its grade later, in
+`org-canvas--submissions-trailing-grade-fields' (issue #444)."
   (append (and (org-canvas--submissions-change-sends-grade-p change)
+               (not (plist-get change :grade-after))
                `((posted_grade . ,(if (plist-get change :clear)
                                       ""
                                     (plist-get change :new-score)))))
@@ -4374,25 +4447,36 @@ single PUT nests the grade under `submission'."
                `((rubric_assessment
                   . ,(org-canvas--submissions-rubric-payload (plist-get change :triples)))))))
 
-(defun org-canvas--submissions-push-single-grade (assignment-id change)
-  "Push CHANGE for its student on ASSIGNMENT-ID via PUT."
+(defun org-canvas--submissions-trailing-grade-fields (change)
+  "Return the grade CHANGE sends after its rubric assessment, or nil.
+Only a CHANGE marked :grade-after has one: its score, sent alone once
+the assessment that would have discarded it is stored (issue #444)."
+  (and (plist-get change :grade-after)
+       `((posted_grade . ,(plist-get change :new-score)))))
+
+(defun org-canvas--submissions-push-single-grade (assignment-id change &optional fields-fn)
+  "Push CHANGE for its student on ASSIGNMENT-ID via PUT.
+FIELDS-FN picks the fields from CHANGE, by default
+`org-canvas--submissions-grade-fields'."
   (let* ((url (org-canvas-api-course-endpoint
                "assignments/%s/submissions/%s" assignment-id (plist-get change :user-id)))
-         (fields (org-canvas--submissions-grade-fields change))
+         (fields (funcall (or fields-fn #'org-canvas--submissions-grade-fields) change))
          (grade (assq 'posted_grade fields))
          (rubric (assq 'rubric_assessment fields)))
     (org-canvas-api-request 'PUT url
       :data (append (and grade `((submission . (,grade))))
                     (and rubric (list rubric))))))
 
-(defun org-canvas--submissions-push-bulk-grades (assignment-id diffs)
+(defun org-canvas--submissions-push-bulk-grades (assignment-id diffs &optional fields-fn)
   "Push grade DIFFS for ASSIGNMENT-ID via the bulk update_grades endpoint.
 DIFFS is a list of change plists; each student's entry carries the
-grade, the rubric assessment, or both."
-  (let* ((grade-data
+grade, the rubric assessment, or both, as FIELDS-FN picks them, by
+default `org-canvas--submissions-grade-fields'."
+  (let* ((fields-fn (or fields-fn #'org-canvas--submissions-grade-fields))
+         (grade-data
           (mapcar (lambda (ch)
                     (cons (number-to-string (plist-get ch :user-id))
-                          (org-canvas--submissions-grade-fields ch)))
+                          (funcall fields-fn ch)))
                   diffs))
          (url (org-canvas-api-course-endpoint
                "assignments/%s/submissions/update_grades" assignment-id)))
@@ -4752,7 +4836,10 @@ student's name."
 (defun org-canvas--submissions-describe-rubric (change)
   "Return the note CHANGE's rubric rows add to its line, or an empty string."
   (if (plist-get change :triples)
-      (format " (rubric %d/%d)" (plist-get change :filled) (plist-get change :of))
+      (format " (rubric %d/%d%s)" (plist-get change :filled) (plist-get change :of)
+              (if (> (or (plist-get change :cleared) 0) 0)
+                  (format ", %d cleared" (plist-get change :cleared))
+                ""))
     ""))
 
 (defun org-canvas--submissions-describe-new-score (change)
@@ -4773,31 +4860,52 @@ A cleared grade reads clear, never nil (issue #417)."
                        (org-canvas--submissions-describe-late ch)))
              diffs "\n"))
 
+(defun org-canvas--submissions-send-batch (assignment-id diffs fields-fn what)
+  "Send the FIELDS-FN fields of DIFFS for ASSIGNMENT-ID; return the outcome.
+One diff goes as a PUT, which is `completed' once it returns; several
+go through the bulk endpoint, whose background job is waited for
+\(`org-canvas--submissions-await-progress', issue #382).  WHAT names
+the diffs in the echo area while the job runs."
+  (if (cdr diffs)
+      (org-canvas--submissions-await-progress
+       (org-canvas--submissions-push-bulk-grades assignment-id diffs fields-fn)
+       (format "%d %s to assignment %s" (length diffs) what assignment-id))
+    (org-canvas--submissions-push-single-grade assignment-id (car diffs) fields-fn)
+    (list :state 'completed)))
+
 (defun org-canvas--submissions-send-grades (assignment-id diffs)
   "Send DIFFS for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several.
 A diff that only sets a late status has no grade field, and is left
-to `org-canvas--submissions-send-late-statuses'.  Return nil when no
-diff carries a grade, else the outcome plist (:state STATE :message
-WHY): a PUT that returned is `completed'; the bulk endpoint's
-background job is waited for (`org-canvas--submissions-await-progress',
-issue #382).  Under `org-canvas--dry-run' nothing is sent and STATE is
+to `org-canvas--submissions-send-late-statuses'.  The grades of diffs
+marked :grade-after follow in a second send, once the first has
+landed, since Canvas discards a grade sent beside a rubric assessment
+without points (issue #444).  Return nil when no diff carries a grade,
+else the outcome plist (:state STATE :message WHY) of
+`org-canvas--submissions-send-batch', the second send's when there is
+one.  Under `org-canvas--dry-run' nothing is sent and STATE is
 `dry-run'."
-  (let ((grading (seq-filter #'org-canvas--submissions-grade-fields diffs)))
+  (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields diffs))
+         (after (seq-filter #'org-canvas--submissions-trailing-grade-fields grading)))
     (cond ((null grading) nil)
           (org-canvas--dry-run
            (org-canvas--log-info org-canvas--logger
-             "[DRY-RUN] Would send %d grade(s) for assignment %s%s"
+             "[DRY-RUN] Would send %d grade(s) for assignment %s%s%s"
              (length grading) assignment-id
              (if (cdr grading)
                  " through update_grades, a Canvas background job the push would wait for"
+               "")
+             (if after
+                 (format ", then %d grade(s) after their rubric assessments" (length after))
                ""))
            (list :state 'dry-run))
-          ((null (cdr grading))
-           (org-canvas--submissions-push-single-grade assignment-id (car grading))
-           (list :state 'completed))
-          (t (org-canvas--submissions-await-progress
-              (org-canvas--submissions-push-bulk-grades assignment-id grading)
-              (format "%d grade(s) to assignment %s" (length grading) assignment-id))))))
+          (t
+           (let ((outcome (org-canvas--submissions-send-batch
+                           assignment-id grading nil "grade(s)")))
+             (if (and after (org-canvas--submissions-grades-applied-p outcome))
+                 (org-canvas--submissions-send-batch
+                  assignment-id after #'org-canvas--submissions-trailing-grade-fields
+                  "grade(s) after their rubric assessments")
+               outcome))))))
 
 (defun org-canvas--submissions-grades-applied-p (outcome)
   "Return non-nil if the grades behind OUTCOME, from the grade send, landed.
@@ -4832,8 +4940,9 @@ score and rubric baselines stay as they were."
   "Make CHANGE the baseline of the heading at point.
 CANVAS_SCORE follows the score, SCORE too when the rubric derived it;
 a cleared grade takes both away, as a pull of an ungraded row shows
-it (issue #417).  CANVAS_RUBRIC follows the rows sent, and CONFLICT
-is cleared.  LATE is the entry
+it (issue #417).  CANVAS_RUBRIC follows the rows sent, gone when they
+took the assessment away, the cleared rows' Score cells are emptied
+\(issue #449), and CONFLICT is cleared.  LATE is the entry
 `org-canvas--submissions-send-late-statuses' made for the student,
 \(USER-ID . STORED), when CHANGE set a late status and the request
 went through; CANVAS_LATE_STATUS then follows what Canvas
@@ -4849,9 +4958,18 @@ late status stays a change for the next push."
       (org-entry-delete (point) "SCORE"))
     (when (plist-get change :score-derived)
       (org-entry-put (point) "SCORE" score))
-    (when (plist-get change :new-rubric)
-      (org-entry-put (point) "CANVAS_RUBRIC" (plist-get change :new-rubric)))
+    (when (plist-get change :triples)
+      (org-canvas--submissions-put-or-delete "CANVAS_RUBRIC" (plist-get change :new-rubric))
+      (org-canvas--submissions-empty-cleared-rows (plist-get change :triples)))
     (org-entry-delete (point) "CONFLICT")))
+
+(defun org-canvas--submissions-empty-cleared-rows (triples)
+  "Empty the Score cell of each cleared row among TRIPLES at point.
+A cleared row, (ID nil COMMENT t), once pushed reads as a pull of it
+would: no score, the comment as typed."
+  (dolist (triple triples)
+    (when (nth 3 triple)
+      (org-canvas--submissions-rubric-set-row (nth 0 triple) nil (nth 2 triple)))))
 
 (defun org-canvas--submissions-record-pushed (diffs &optional late)
   "Make DIFFS the new baseline: snapshot, the heading properties, and the file.
@@ -5306,11 +5424,13 @@ LINE is logged as a [DRY-RUN] line (issue #441)."
 (defun org-canvas--submissions-would-send-line (name change draft)
   "Return one line naming what CHANGE and DRAFT would send for NAME."
   (let ((fields (and change (org-canvas--submissions-grade-fields change)))
+        (after (and change (org-canvas--submissions-trailing-grade-fields change)))
         (late (plist-get change :late-status))
         (text (plist-get draft :text)))
     (concat name ": "
             (string-join
              (delq nil (list (and fields (json-encode fields))
+                             (and after (concat "then " (json-encode after)))
                              (and late (format "late status %s" late))
                              (and text (format "comment %S"
                                                (replace-regexp-in-string "\n+" " " text)))))
