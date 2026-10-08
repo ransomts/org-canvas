@@ -62,10 +62,12 @@
 (require 'cl-lib)
 
 (declare-function org-canvas--validate-rubric-structure "org-canvas-validate")
-;; The assignment read the override restamp uses (issue #348); sections
-;; is a sibling feature, loaded by org-canvas before any push runs.
+;; The assignment read and the stamp check the override restamp uses
+;; (issues #348, #478); sections is a sibling feature, loaded by
+;; org-canvas before any push runs.
 (declare-function org-canvas--override-read-assignment-item "org-canvas-sections")
 (declare-function org-canvas--override-item-updated "org-canvas-sections")
+(declare-function org-canvas--assignment-stamp-current-p "org-canvas-sections")
 ;; Read, never required: assignments is a sibling feature.
 (defvar org-canvas-assignments-file)
 ;; Read, never required: outcomes is a sibling feature, and
@@ -623,28 +625,6 @@ Nil too when `org-canvas-assignments-file' is unset or missing."
          (let ((pos (org-find-property "CANVAS_ID" (format "%s" assignment-id))))
            (and pos (copy-marker pos))))))))
 
-(defun org-canvas--rubric-assignment-clean-p (pom assignment-id title)
-  "Return non-nil if the stamp at POM is current for assignment ASSIGNMENT-ID.
-The stamp is current when its CANVAS_UPDATED_AT is no earlier than Canvas's
-`updated_at', or when a date at which Canvas touches the assignment
-by itself explains the newer one, as the push's conflict check
-allows (issue #453).  TITLE names the assignment in the log.  A
-heading with no stamp of its own answers nil without a read."
-  (let ((stamp (org-canvas--parse-iso8601-time
-                (org-entry-get pom "CANVAS_UPDATED_AT"))))
-    (when stamp
-      (let* ((item (org-canvas--override-read-assignment-item assignment-id))
-             (remote (org-canvas--parse-iso8601-time
-                      (org-canvas--override-item-updated item))))
-        (and remote
-             (or (not (time-less-p stamp remote))
-                 (org-canvas--conflict-scheduled-bump
-                  stamp remote
-                  (org-canvas--conflict-scheduled-dates
-                   (org-canvas--feature-scheduled-dates-fn
-                    (org-canvas--registry-find-feature "Assignments"))
-                   item title))))))))
-
 (defun org-canvas--rubric-clean-baselines (live)
   "Return the assignment headings of LIVE's associations that agree with Canvas.
 LIVE is the rubric as read before the update, associations included.
@@ -658,7 +638,7 @@ so its next push still reports the conflict."
              (marker (and id (org-canvas--rubric-assignment-heading id)))
              (title (org-canvas--rubric-association-name assoc)))
         (when marker
-          (if (org-canvas--rubric-assignment-clean-p marker id title)
+          (if (org-canvas--assignment-stamp-current-p marker id title)
               (push (list marker id title) clean)
             (org-canvas--log-info org-canvas--logger
               "[Execute] '%s' did not agree with Canvas before its rubric was updated; its CANVAS_UPDATED_AT is left alone, so its next push reports the conflict"
