@@ -16,13 +16,21 @@ on:
         type: boolean
         default: false
 
+# One run per pull request: a new push cancels the run of the one
+# before.  Runs on main (pushes, the weekly mutation ratchet, manual
+# dispatches) each get a group of their own, so none cancels or queues
+# behind another.
+concurrency:
+  group: ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Emacs 30.1 runs the whole suite in one job: it is the fast one
   # (about 50 s) and the one Codecov's coverage and test results come
   # from, which a single report keeps simple.
   test-30:
     name: test (30.1)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -33,6 +41,7 @@ jobs:
         uses: ./.github/actions/setup-emacs-env
         with:
           emacs-version: '30.1'
+          cache-purpose: coverage
           pandoc: "true"
 
       - name: Run tests with coverage
@@ -81,7 +90,7 @@ jobs:
     # Always, so a failed or cancelled shard reports as a failed check
     # rather than a skipped one, which branch protection counts as passed.
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
 
     strategy:
@@ -109,7 +118,7 @@ jobs:
     # canvas-lms SDL, neither in the repo.  The GraphQL contract test reads
     # the committed fixture and fails on a document that names what the
     # fixture lacks, which is the cue to regenerate (test/contract/README.md).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
@@ -153,7 +162,7 @@ jobs:
   isolation:
     needs: isolation-shards
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
 
     steps:
@@ -163,7 +172,7 @@ jobs:
           [ "${{ needs.isolation-shards.result }}" = success ]
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -174,12 +183,13 @@ jobs:
         uses: ./.github/actions/setup-emacs-env
         with:
           emacs-version: '30.1'
+          cache-purpose: lint
 
       - name: Run linter
         run: eldev lint
 
   complexity:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
@@ -190,6 +200,7 @@ jobs:
         uses: ./.github/actions/setup-emacs-env
         with:
           emacs-version: '30.1'
+          cache-purpose: complexity
 
       - name: Check cognitive complexity
         run: |
@@ -214,7 +225,7 @@ jobs:
     # The timeout covers the full pass: ~195 mutations at --jobs 3, plus
     # six known non-terminating mutants that each burn the 120s timeout.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mutation)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
 
     steps:
@@ -225,6 +236,7 @@ jobs:
         uses: ./.github/actions/setup-emacs-env
         with:
           emacs-version: '30.1'
+          cache-purpose: suite
 
       - name: Setup Python
         uses: actions/setup-python@v5

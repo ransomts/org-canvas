@@ -8,6 +8,14 @@ inputs:
   emacs-version:
     description: Emacs version for jcs090218/setup-emacs
     required: true
+  cache-purpose:
+    description: >-
+      What the job runs (suite, coverage, lint, complexity).  Each
+      purpose installs its own packages into .eldev, so each gets its
+      own cache: one shared key was saved by whichever job finished
+      first, and the complexity job, done in seconds, left a near-empty
+      30.1 cache that sent every other 30.1 job to ELPA.
+    required: true
   pandoc:
     description: Install pandoc ("true" or "false")
     required: false
@@ -24,11 +32,20 @@ runs:
     - name: Setup Eldev
       uses: emacs-eldev/setup-eldev@v1.5
 
+    # A key is immutable once saved, so a change to Eldev starts a new
+    # one.  A pull request can only restore caches saved on its own
+    # branch or on main, and an exact key exists on main only after a
+    # green main run since the change; restore-keys fall back to the
+    # last cache of the same purpose and version, so Eldev fetches only
+    # what changed.  Without them every PR went to ELPA for every
+    # package, and the 2026-10-06 outage stalled them all.
     - name: Cache Eldev dependencies
       uses: actions/cache@v5
       with:
         path: .eldev
-        key: eldev-${{ inputs.emacs-version }}-${{ hashFiles('Eldev') }}
+        key: eldev-${{ inputs.cache-purpose }}-${{ inputs.emacs-version }}-${{ hashFiles('Eldev') }}
+        restore-keys: |
+          eldev-${{ inputs.cache-purpose }}-${{ inputs.emacs-version }}-
 
     # pandoc's release binary, cached: apt-get took 8-11 s in every job.
     # 3.1.3 is the version ubuntu-24.04's apt carried, so the specs see
