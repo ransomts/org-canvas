@@ -76,7 +76,7 @@ Also in the menu: Files (=F= force re-upload all, =z= the file at point), Publis
 | =new-quizzes.org=       | 1=quiz, 2=Q   | Q text       | =CANVAS_ASSIGNMENT_ID= |
 | =pages.org=             | 1 = pages     | page content | =CANVAS_URL=  |
 | =modules.org=           | 1=mod, 2=item | item link    | =CANVAS_ID=   |
-| =rubrics.org=           | 1 = rubrics   | criteria tbl | =CANVAS_ID=   |
+| =rubrics.org=           | 1=rub, 2=crit | ratings tbl  | =CANVAS_ID=   |
 | =outcomes.org=          | 1=grp, 2=out  | description  | =CANVAS_ID=   |
 | =discussions.org=       | 1 = topics    | initial post | =CANVAS_ID=   |
 | =announcements.org=     | 1 = items     | message      | =CANVAS_ID=   |
@@ -215,17 +215,24 @@ Item body = =[[file:assignments.org::*Name][Name]]= link.
 
 ** rubrics.org
 
-Properties: =FREE_FORM_CRITERION_COMMENTS=, =HIDE_SCORE_TOTAL= (both boolean).
+Rubric property: =FREE_FORM_CRITERION_COMMENTS= (boolean).  Hiding the total is per assignment: =RUBRIC_HIDE_SCORE_TOTAL= in =assignments.org=.
 
-Criteria table: | Criterion | Points | Long Description | Outcome link |
-
-Multi-level ratings: rows prefixed with => =:
+Each criterion is a level-2 heading tagged with its points (=:10pt:=; =:3_5pt:= for 3.5), an optional =OUTCOME= link, an optional long description, and its own =| Rating | Points | Description |= table.  =CANVAS_CRITERION_ID= is written by push and pull.
 
 #+begin_example
-| Code Quality |   10 | ...           |
-| > Excellent  |   10 | Outstanding   |
-| > Good       |    7 | Solid         |
-| > Poor       |    0 | Unacceptable  |
+* Lab Rubric
+:PROPERTIES:
+:FREE_FORM_CRITERION_COMMENTS: true
+:END:
+** Code Quality :10pt:
+:PROPERTIES:
+:OUTCOME: [[file:outcomes.org::*Name][Name]]
+:END:
+Clean, readable, well-organized
+| Rating     | Points | Description |
+|------------+--------+-------------|
+| Full Marks |     10 |             |
+| No Marks   |      0 |             |
 #+end_example
 
 ** outcomes.org

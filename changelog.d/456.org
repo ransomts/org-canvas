@@ -1,0 +1,2 @@
+* Fixed
+- #456 The cheatsheet's =rubrics.org= section shows the format the parser reads, a level-2 heading tagged =:Npt:= per criterion with its own =| Rating | Points | Description |= table and an optional =OUTCOME= link, in place of a single criteria table that =org-canvas-validate= rejected; it no longer lists =HIDE_SCORE_TOTAL= as a rubric property (the assignment's =RUBRIC_HIDE_SCORE_TOTAL= is the setting)

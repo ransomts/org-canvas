@@ -4558,6 +4558,29 @@ Body.
                 "[[file:content/syllabus.pdf][Syllabus.pdf]]" nil "CANVAS_ID" "file")))
         (expect (markerp m) :to-be-truthy))))
 
+  (it "matches a files.org link heading by its description (issue #446)"
+    (with-temp-org-buffer "* course\n** [[file:../syllabus.pdf][syllabus.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 31861753\n:END:\n"
+      (dolist (target '("syllabus.pdf" "[[file:../syllabus.pdf][syllabus.pdf]]"))
+        (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL>0"
+                                                target nil "CANVAS_ID" "file")))
+          (save-excursion (goto-char m)
+                          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "31861753"))))))
+
+  (it "matches a link heading by its description whether or not org-get-heading strips links"
+    ;; Org 9.7 (Emacs 30) strips link markup in `org-get-heading'; Org 9.6
+    ;; (Emacs 29) keeps it.  Both readings must find the heading.
+    (with-temp-org-buffer "* [[file:../syllabus.pdf][syllabus.pdf]]\n"
+      (dolist (reading '("[[file:../syllabus.pdf][syllabus.pdf]]" "syllabus.pdf"))
+        (cl-letf (((symbol-function 'org-get-heading) (lambda (&rest _) reading)))
+          (goto-char (point-min))
+          (expect (org-canvas--sync-heading-matches-p "syllabus.pdf" nil "CANVAS_ID")
+                  :to-be-truthy)
+          (expect (org-canvas--sync-heading-matches-p
+                   "[[file:../syllabus.pdf][syllabus.pdf]]" 'title "CANVAS_ID")
+                  :to-be-truthy)
+          (expect (org-canvas--sync-heading-matches-p "syllabus" nil "CANVAS_ID")
+                  :not :to-be-truthy)))))
+
   (it "looks only at the headings the query selects"
     (with-temp-org-buffer test-org-canvas-heading-file-content
       (expect (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "A child" nil "CANVAS_ID" "page")

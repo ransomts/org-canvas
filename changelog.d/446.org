@@ -1,0 +1,2 @@
+* Fixed
+- #446 The sync and pull by heading commands, and =org-canvas-sync-headings=, find a heading that is a link by its description as well as its full link text, so =(file . "syllabus.pdf")= names the =files.org= heading =[[file:../syllabus.pdf][syllabus.pdf]]= on Emacs 29 and 30 alike; before, only the =canvas-id= form could name a file heading in batch
