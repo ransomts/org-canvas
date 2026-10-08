@@ -145,5 +145,45 @@
         (expect (plist-of reading) :to-be-truthy)
         (expect (gated-p reading) :to-be nil)))))
 
+;;;; Autoloads
+
+(describe "the generated autoloads (issue #469)"
+  ;; A bare cookie on `transient-define-prefix' made `loaddefs-generate'
+  ;; copy each whole form into the autoloads file, so loading it before
+  ;; transient failed with void-function.  The file is generated and
+  ;; loaded in a fresh `emacs -Q', as a package manager does: generated
+  ;; here, where transient is loaded, the macro would be expanded and
+  ;; the copied forms would never show.
+  (it "declare the menus without loading transient"
+    (let* ((lisp-dir (file-name-directory (locate-library "org-canvas-transient")))
+           (tmp (make-temp-file "org-canvas-autoloads-" t))
+           (out (expand-file-name "org-canvas-autoloads.el" tmp))
+           (emacs (expand-file-name invocation-name invocation-directory))
+           (menus '(org-canvas-dispatch org-canvas-dispatch-sync-at-point
+                    org-canvas-dispatch-pull-single
+                    org-canvas-dispatch-delete-at-point))
+           (script
+            `(progn
+               (loaddefs-generate ,lisp-dir ,out)
+               (load ,out nil t)
+               (prin1 (list (featurep 'transient)
+                            (mapcar (lambda (s)
+                                      (and (autoloadp (symbol-function s))
+                                           (commandp s)))
+                                    ',menus)))))
+           (status nil)
+           (result nil))
+      (unwind-protect
+          (setq result
+                (with-temp-buffer
+                  (setq status (call-process emacs nil (list t nil) nil
+                                             "-Q" "--batch" "--eval"
+                                             (prin1-to-string script)))
+                  (buffer-string)))
+        (delete-directory tmp t))
+      (expect status :to-equal 0)
+      (expect (car (read-from-string result))
+              :to-equal (list nil (make-list (length menus) t))))))
+
 (provide 'org-canvas-transient-test)
 ;;; org-canvas-transient-test.el ends here
