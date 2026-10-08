@@ -355,33 +355,50 @@ ID is what `org-canvas--local-file-canvas-id' answered for it."
     "no files.org heading links to it (add one and sync files)")
    (t "no such file")))
 
-(defun org-canvas--resolve-single-file-link (rep source-dir)
+(defun org-canvas--warn-unresolved-file-link (path dir)
+  "Warn that local file PATH, relative to DIR, went out as plain text."
+  (let ((why (org-canvas--local-file-unresolved-reason
+              (org-canvas--local-file-canvas-id path dir) path dir)))
+    (org-canvas--log-warning org-canvas--logger
+      "[Links] Unresolved file link %s: %s → plain text" path why)
+    (message "WARNING: File link %s sent as plain text: %s" path why)))
+
+(defun org-canvas--resolve-single-file-link (rep source-dir &optional ctx)
   "Replace the local file link REP describes with its Canvas URL link.
 REP is a plist (:start :end :path :display); PATH is relative to
 SOURCE-DIR.  A file with no Canvas URL is warned about and left as
 its description, as an unresolved cross-file link is: a relative
-href would only 404 on Canvas."
+href would only 404 on Canvas.
+
+With a run context CTX, a file files.org has but has not uploaded
+yet is recorded under its :file-links-unsynced as (PATH . SOURCE-DIR)
+instead of warned about: the caller syncs files later in the same
+run and decides then (issue #477)."
   (let* ((path (plist-get rep :path))
          (display (or (plist-get rep :display)
                       (file-name-nondirectory path)))
          (id (org-canvas--local-file-canvas-id path source-dir)))
     (goto-char (plist-get rep :start))
     (delete-region (plist-get rep :start) (plist-get rep :end))
-    (if (stringp id)
-        (insert (format "[[%s][%s]]" (org-canvas--local-file-url id) display))
-      (let ((why (org-canvas--local-file-unresolved-reason
-                  id path source-dir)))
-        (org-canvas--log-warning org-canvas--logger
-          "[Links] Unresolved file link %s: %s → plain text" path why)
-        (message "WARNING: File link %s sent as plain text: %s" path why))
-      (insert display))))
+    (cond
+     ((stringp id)
+      (insert (format "[[%s][%s]]" (org-canvas--local-file-url id) display)))
+     ((and ctx (eq id 'unsynced))
+      (org-canvas--log-debug org-canvas--logger
+        "[Links] File link %s waits for the files sync" path)
+      (org-canvas--ctx-push ctx :file-links-unsynced (cons path source-dir))
+      (insert display))
+     (t
+      (org-canvas--warn-unresolved-file-link path source-dir)
+      (insert display)))))
 
-(defun org-canvas--resolve-file-links (source-dir)
+(defun org-canvas--resolve-file-links (source-dir &optional ctx)
   "Resolve links to local non-image files in current buffer to Canvas URLs.
 SOURCE-DIR is the directory of the source .org file.  A file resolves
 through the `org-canvas-files-file' heading whose link target is the
-same file; see `org-canvas--resolve-single-file-link'.  Run after the
-cross-file and image passes, which own the other `file:' links."
+same file; see `org-canvas--resolve-single-file-link', which CTX is
+passed on to.  Run after the cross-file and image passes, which own
+the other `file:' links."
   (goto-char (point-min))
   (let ((reps nil))
     (while (re-search-forward org-canvas--local-file-link-re nil t)
@@ -394,7 +411,7 @@ cross-file and image passes, which own the other `file:' links."
                 reps))))
     ;; Last match first, so earlier positions stay valid.
     (dolist (rep reps)
-      (org-canvas--resolve-single-file-link rep source-dir))))
+      (org-canvas--resolve-single-file-link rep source-dir ctx))))
 
 ;;;; HTML Export
 
@@ -445,7 +462,8 @@ Canvas as a heading (issue #175)."
   (org-canvas--with-body-export-settings
     (org-export-string-as text 'html t)))
 
-(defun org-canvas--export-subtree-body-to-html (&optional offline no-children)
+(defun org-canvas--export-subtree-body-to-html (&optional offline no-children
+                                                         ctx)
   "Export current Org subtree to HTML, resolving cross-file links.
 Returns the HTML string.  Cross-file links [[file:*.org::*...][...]]
 are resolved to Canvas URLs when the target has a CANVAS_ID, and so
@@ -460,7 +478,10 @@ When NO-CHILDREN is non-nil, the body ends at the entry's first
 child heading: the children are structure the module reads for
 itself, not text.  Without it, settings.org's `** Navigation' tab
 list went to the Canvas syllabus page as a numbered section, with
-Org's table of contents above the body pointing at it (issue #275)."
+Org's table of contents above the body pointing at it (issue #275).
+
+CTX, a run context, goes to `org-canvas--resolve-file-links': a
+link to a file not uploaded yet is recorded there, not warned about."
   (save-excursion
     (org-back-to-heading t)
     (let* ((beg (point))
@@ -502,7 +523,7 @@ Org's table of contents above the body pointing at it (issue #275)."
             ;; Resolve inline image links to Canvas URLs
             (org-canvas--resolve-image-links source-dir)
             ;; Resolve links to other local files (issue #468)
-            (org-canvas--resolve-file-links source-dir))
+            (org-canvas--resolve-file-links source-dir ctx))
           ;; Export the subtree to HTML (body only)
           (goto-char (point-min))
           (let ((org-export-with-broken-links 'mark)

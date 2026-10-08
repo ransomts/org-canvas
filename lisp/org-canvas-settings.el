@@ -217,7 +217,7 @@ Returns a plist with transformed keys (no `-raw' suffixes)."
                                    org-canvas--late-policy-field-specs)
               append (org-canvas--settings-transform-field spec raw)))))
 
-(defun org-canvas--settings-parse-entry ()
+(defun org-canvas--settings-parse-entry (&optional ctx)
   "Parse course settings from the first heading in the current buffer.
 Returns a plist with keys :title, :pom, :time-zone, :default-view,
 :apply-weights, :hide-final-grades, :public-syllabus, :is-public,
@@ -229,12 +229,17 @@ The syllabus is the text above the first sub-heading.  The
 `** Navigation' child feeds the tab sync and is never body: exported
 with the subtree, it reached the syllabus page every student reads
 as a numbered \"Navigation\" section under a table of contents
-\(issue #275)."
+\(issue #275).
+
+CTX, the run context `org-canvas-sync' asks for, collects syllabus
+links to files not uploaded yet (issue #477); see
+`org-canvas--export-subtree-body-to-html'."
   (org-back-to-heading t)
   (let* ((pom (point-marker))
          (raw (org-canvas--settings-read-props pom))
          (transformed (org-canvas--settings-transform-props raw))
-         (syllabus-body (org-canvas--export-subtree-body-to-html nil 'no-children))
+         (syllabus-body (org-canvas--export-subtree-body-to-html
+                         nil 'no-children ctx))
          ;; Resolve course image file path relative to buffer
          (course-image-file-path (plist-get transformed :course-image-file-path))
          (course-image-path (when course-image-file-path
@@ -590,11 +595,19 @@ Otherwise returns DATA unchanged."
 (defun org-canvas-sync-settings ()
   "Synchronize course settings to Canvas.
 Reads settings from the first heading in `org-canvas-settings-file'
-and pushes them to Canvas via PUT /courses/:id."
+and pushes them to Canvas via PUT /courses/:id.
+
+Inside `org-canvas-sync', return the run context on success: its
+:file-links-unsynced names the syllabus links to files the files
+tier has yet to upload, which `org-canvas--settings-heal-file-links'
+retries after it (issue #477).  Run alone, such a link is warned
+about as it is sent."
   (interactive)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (let ((settings-file (expand-file-name org-canvas-settings-file)))
+  (let ((settings-file (expand-file-name org-canvas-settings-file))
+        (ctx (and org-canvas--sync-in-progress
+                  (org-canvas--sync-make-ctx :feature-name "Settings"))))
     (unless (file-exists-p settings-file)
       (org-canvas--signal 'org-canvas-config-error
         "Settings file not found: %s" settings-file))
@@ -610,7 +623,7 @@ and pushes them to Canvas via PUT /courses/:id."
             "No heading found in settings file"))
         (org-back-to-heading t)
         (condition-case err
-            (let* ((data (org-canvas--settings-parse-entry))
+            (let* ((data (org-canvas--settings-parse-entry ctx))
                    (navigation (org-canvas--settings-parse-navigation))
                    ;; Upload course image if local file specified
                    (data (org-canvas--settings-resolve-course-image data))
@@ -631,13 +644,67 @@ and pushes them to Canvas via PUT /courses/:id."
                                                      (if org-canvas--dry-run
                                                          '(:dry-run 1)
                                                        '(:success 1)))
-              (message "Settings sync complete."))
+              (message "Settings sync complete.")
+              ctx)
           (error
            (org-canvas--log-error org-canvas--logger "[FAILED] Settings sync: %s"
              (error-message-string err))
            (org-canvas--sync-record-feature-stats "Settings"
                                                   '(:fail 1 :failed-titles ("Settings")))
-           (org-canvas--user-message "Settings sync FAILED: %s" (error-message-string err))))))))
+           (org-canvas--user-message "Settings sync FAILED: %s" (error-message-string err))
+           nil))))))
+
+(defun org-canvas--settings-push-syllabus ()
+  "Push the syllabus of `org-canvas-settings-file' alone, in one PUT.
+The body is exported again, so a file link whose file the files
+sync has uploaded since goes out as its Canvas URL.  A failure is
+logged and named, never signalled: the sync goes on."
+  (with-current-buffer (org-canvas--find-file-noselect
+                        (expand-file-name org-canvas-settings-file))
+    (save-excursion
+      (goto-char (point-min))
+      (condition-case err
+          (progn
+            (re-search-forward "^\\*+ ")
+            (org-back-to-heading t)
+            (let ((payload (make-hash-table :test 'equal))
+                  (course (make-hash-table :test 'equal)))
+              (puthash "syllabus_body"
+                       (org-canvas--export-subtree-body-to-html nil 'no-children)
+                       course)
+              (puthash "course" course payload)
+              (org-canvas--settings-push
+               (list :title (org-get-heading t t t t)) payload)))
+        (error
+         (org-canvas--user-message "Syllabus push FAILED: %s"
+                                   (error-message-string err))
+         nil)))))
+
+(defun org-canvas--settings-heal-file-links (unsynced)
+  "Push the syllabus again if a file link it sent as text resolves now.
+UNSYNCED is the settings run's :file-links-unsynced, a list of
+\(PATH . DIR) for each syllabus link to a file files.org had not
+uploaded when Tier -1 pushed the syllabus.  `org-canvas-sync' calls
+this after the files tier: when one of them has a CANVAS_ID now, the
+syllabus goes again, one PUT, and any link still unresolved is warned
+about by that export.  Otherwise, and under a dry run or on a
+read-only course, each one still waiting is warned about as a
+standalone push would have (issue #477)."
+  (when unsynced
+    (let ((waiting (cl-remove-if
+                    (lambda (link)
+                      (stringp (org-canvas--local-file-canvas-id
+                                (car link) (cdr link))))
+                    unsynced)))
+      (if (and (not org-canvas--dry-run)
+               (not org-canvas-read-only)
+               (< (length waiting) (length unsynced)))
+          (progn
+            (org-canvas--log-info org-canvas--logger
+              "[Settings] Pushing the syllabus again: the files sync uploaded a file it links")
+            (org-canvas--settings-push-syllabus))
+        (dolist (link waiting)
+          (org-canvas--warn-unresolved-file-link (car link) (cdr link)))))))
 
 (defun org-canvas--settings-replace-syllabus-body (syllabus-body)
   "Replace the syllabus under the current heading with SYLLABUS-BODY.

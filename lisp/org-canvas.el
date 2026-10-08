@@ -300,6 +300,10 @@ and :deferred, so a batch caller can set its exit status."
     (message "Syncing: %s..." (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (setq results (append results (org-canvas--run-tier (nth 1 org-canvas--sync-tiers)
                                                         #'org-canvas--safe-sync)))
+    ;; The syllabus went at Tier -1; send it again if a file it links
+    ;; was uploaded just now (issue #477).
+    (org-canvas--settings-heal-file-links
+     (plist-get (alist-get 'org-canvas-sync-settings results) :file-links-unsynced))
     (org-canvas--log-info org-canvas--logger
       "[Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve")
     ;; Tiers 1 through 2

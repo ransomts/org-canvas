@@ -451,7 +451,9 @@ own state: the capital answers above, =:pull-item-fn= (which is what
 makes "pull" available at a conflict prompt), =:remote-touched= (set by
 a finalize post-fn that wrote to Canvas again, issue #124),
 =:module-items-moved= and =:module-items-pending=, =:file-changed-ids=
-and =:file-recreated-ids=.
+and =:file-recreated-ids=, and =:file-links-unsynced= (the syllabus
+links to files not uploaded yet, which the master sync retries after
+the files tier, issue #477).
 
 Every key is present from creation so =plist-put= mutates the context
 in place and the functions sharing it see one another's writes; a new
