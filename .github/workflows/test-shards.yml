@@ -24,7 +24,7 @@ on:
 jobs:
   shard:
     name: ${{ inputs.each-file && 'alone' || 'suite' }} ${{ matrix.shard }}/${{ strategy.job-total }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     strategy:
@@ -40,6 +40,7 @@ jobs:
         uses: ./.github/actions/setup-emacs-env
         with:
           emacs-version: ${{ inputs.emacs-version }}
+          cache-purpose: suite
           pandoc: "true"
 
       - name: Run the shard's files together

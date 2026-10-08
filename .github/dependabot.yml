@@ -1,0 +1,17 @@
+# Keep the actions the workflows and the setup-emacs-env composite
+# action use up to date.  One grouped PR a week, so a batch of bumps
+# gets one CI run and one review.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"
