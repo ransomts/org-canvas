@@ -1426,11 +1426,12 @@ Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
   "| [[file:sections.org::*Section A][Section A]] | <2026-02-15 Sun> | | |\n"
   "An overrides row for Section A, whose section id is 777.")
 
-(defun test-ovr348-run (stamp before after rows &optional dry-run)
+(defun test-ovr348-run (stamp before after rows &optional dry-run extra)
   "Run `org-canvas-sync-overrides' on one heading stamped STAMP.
 The assignment's `updated_at' is BEFORE until an override write
 lands and AFTER from then on.  ROWS is the table's body.  DRY-RUN
-binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
+binds `org-canvas--dry-run'.  EXTRA is an alist added to every read
+of the assignment.  Return (FILE-TEXT . API-CALLS)."
   (let ((dir (make-temp-file "ovr348-" t)))
     (unwind-protect
         (let ((file (expand-file-name "assignments.org" dir)))
@@ -1451,7 +1452,7 @@ binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
                   (setq test-org-canvas-api-responses
                         `(("assignments/456/overrides" . [])
                           ("assignments/456\\'"
-                           . ((id . 456) (updated_at . ,before)))))
+                           . ((id . 456) (updated_at . ,before) ,@extra))))
                   (cl-letf (((symbol-function 'org-canvas-api-request)
                              (lambda (method url &rest args)
                                (prog1 (apply #'test-org-canvas-mock-api-request
@@ -1459,7 +1460,8 @@ binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
                                  (unless (eq method 'GET)
                                    (push `("assignments/456\\'"
                                            . ((id . 456)
-                                              (updated_at . ,after)))
+                                              (updated_at . ,after)
+                                              ,@extra))
                                          test-org-canvas-api-responses))))))
                     (org-canvas-sync-overrides))
                   (let ((buf (find-buffer-visiting file)))
@@ -1534,7 +1536,7 @@ binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
     (with-org-canvas-test-config
       (with-mock-api
         (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n"
-          (expect (org-canvas--override-baseline-clean-p (point) "456")
+          (expect (org-canvas--override-baseline-clean-p (point) "456" "A")
                   :to-be nil)
           (expect test-org-canvas-api-calls :to-equal nil)))))
 
@@ -1571,6 +1573,59 @@ binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
                    (lambda (&rest _) (setq warned t))))
           (org-canvas--override-restamp (point-min) "456" "A")
           (expect warned :to-be t))))))
+
+;;;; A Scheduled Date Before the Override Writes (issue #478)
+
+(defconst test-ovr478-unlock '((unlock_at . "2026-09-25T02:25:00Z"))
+  "An unlock date that passed after the 02:19:07 stamp.")
+
+(defun test-ovr478-next-push-conflict (text after)
+  "Return what the next push's conflict check of TEXT's heading answers.
+TEXT is the assignments file after the override sync; Canvas reports
+the assignment as AFTER, with the unlock date of `test-ovr478-unlock'."
+  (with-org-canvas-test-config
+    (with-mock-api
+      (setq test-org-canvas-api-responses
+            `(("assignments/456\\'"
+               . ((id . 456) (updated_at . ,after) ,@test-ovr478-unlock))))
+      (with-temp-org-buffer text
+        (goto-char (point-min))
+        (org-canvas--conflict-check
+         "assignments" "456" (point) "Assignment 1" nil nil nil
+         (org-canvas--feature-scheduled-dates-fn
+          (org-canvas--registry-find-feature "Assignments")))))))
+
+(describe "org-canvas-sync-overrides allows a scheduled bump (issue #478)"
+  (it "restamps a heading whose newer stamp the passed unlock date explains"
+    (let ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                   "2026-09-25T02:25:05Z"
+                                   "2026-09-25T02:44:10Z"
+                                   test-ovr348-row nil test-ovr478-unlock)))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:44:10Z")
+      (expect (test-ovr478-next-push-conflict (car result)
+                                              "2026-09-25T02:44:10Z")
+              :to-be nil)))
+
+  (it "keeps the stamp when the newer one is not the unlock date's bump"
+    (let ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                   "2026-09-25T02:30:00Z"
+                                   "2026-09-25T02:44:10Z"
+                                   test-ovr348-row nil test-ovr478-unlock)))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:19:07Z")
+      (expect (car (test-ovr478-next-push-conflict (car result)
+                                                   "2026-09-25T02:44:10Z"))
+              :to-equal 'conflict)))
+
+  (it "reads nothing under a dry run, the bump notwithstanding"
+    (let ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                   "2026-09-25T02:25:05Z"
+                                   "2026-09-25T02:44:10Z"
+                                   test-ovr348-row t test-ovr478-unlock)))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:19:07Z")
+      (expect (test-ovr348-assignment-reads (cdr result)) :to-equal nil))))
 
 ;;;; ================================================================
 ;;;; Meeting Times and Section Windows (issue #383)

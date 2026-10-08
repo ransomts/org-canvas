@@ -833,19 +833,41 @@ Nil when the read fails or names no timestamp; see
   (org-canvas--override-item-updated
    (org-canvas--override-read-assignment-item assignment-id)))
 
-(defun org-canvas--override-baseline-clean-p (pom assignment-id)
-  "Return non-nil when the heading at POM agrees with Canvas's ASSIGNMENT-ID.
-Agreement means the heading's own CANVAS_UPDATED_AT is no earlier
-than the assignment's remote `updated_at', which is what the push's
-conflict check asks.  A heading with no stamp of its own, and every
-heading under a dry run, answers nil without a read: there is then
-no baseline to keep, or nothing will be written that moves it."
+(defun org-canvas--assignment-stamp-current-p (pom assignment-id title)
+  "Return non-nil if the stamp at POM is current for assignment ASSIGNMENT-ID.
+The stamp is current when its CANVAS_UPDATED_AT is no earlier than
+Canvas's `updated_at', or when a date at which Canvas touches the
+assignment by itself explains the newer one, as the push's conflict
+check allows (issue #453).  TITLE names the assignment in the log.
+A heading with no stamp of its own answers nil without a read.  The
+override reconcile (issue #348) and the rubric update (issue #470)
+both ask this before restamping, so they agree with the push on what
+drift is (issue #478)."
   (let ((stamp (org-canvas--parse-iso8601-time
                 (org-entry-get pom "CANVAS_UPDATED_AT"))))
-    (when (and stamp (not org-canvas--dry-run))
-      (let ((remote (org-canvas--parse-iso8601-time
-                     (org-canvas--override-read-assignment assignment-id))))
-        (and remote (not (time-less-p stamp remote)))))))
+    (when stamp
+      (let* ((item (org-canvas--override-read-assignment-item assignment-id))
+             (remote (org-canvas--parse-iso8601-time
+                      (org-canvas--override-item-updated item))))
+        (and remote
+             (or (not (time-less-p stamp remote))
+                 (org-canvas--conflict-scheduled-bump
+                  stamp remote
+                  (org-canvas--conflict-scheduled-dates
+                   (org-canvas--feature-scheduled-dates-fn
+                    (org-canvas--registry-find-feature "Assignments"))
+                   item title))))))))
+
+(defun org-canvas--override-baseline-clean-p (pom assignment-id title)
+  "Return non-nil when the heading at POM agrees with Canvas's ASSIGNMENT-ID.
+Agreement is what `org-canvas--assignment-stamp-current-p' asks,
+which is what the push's conflict check asks, a newer `updated_at'
+that a passed unlock or lock date explains included (issue #478).
+TITLE names the heading in the log.  Under a dry run every heading
+answers nil without a read: nothing will be written that moves the
+baseline."
+  (unless org-canvas--dry-run
+    (org-canvas--assignment-stamp-current-p pom assignment-id title)))
 
 (defun org-canvas--override-restamp (pom assignment-id title &optional item)
   "Restamp CANVAS_UPDATED_AT at POM from ASSIGNMENT-ID's `updated_at'.
@@ -913,7 +935,8 @@ with Canvas, in which case the drift was the overrides just matched
 and the stamp moves (issue #410; `org-canvas--override-restamp-explained').
 `:confirm-deletes' in OPTIONS asks before an override Canvas holds is
 deleted (issue #411).  Return the reconcile's counts."
-  (let* ((clean (org-canvas--override-baseline-clean-p pom assignment-id))
+  (let* ((clean (org-canvas--override-baseline-clean-p
+                 pom assignment-id title))
          (counts (org-canvas--override-sync-for-assignment
                   assignment-id overrides (plist-get options :confirm-deletes)))
          (mismatch-fn (plist-get options :mismatch-fn)))

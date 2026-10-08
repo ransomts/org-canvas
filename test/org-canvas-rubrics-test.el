@@ -1054,7 +1054,7 @@ back.  Return (FILE-TEXT . CALLS)."
     (with-org-canvas-test-config
       (with-mock-api
         (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 5001\n:END:\n"
-          (expect (org-canvas--rubric-assignment-clean-p (point) 5001 "A")
+          (expect (org-canvas--assignment-stamp-current-p (point) 5001 "A")
                   :to-be nil)
           (expect test-org-canvas-api-calls :to-equal nil))))))
 

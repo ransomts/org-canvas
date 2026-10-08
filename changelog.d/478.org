@@ -1,0 +1,2 @@
+* Fixed
+- #478 An override sync now restamps an assignment whose newer Canvas timestamp a passed unlock or lock date explains, as a rubric update and the push's conflict check already did, so the next push no longer reports a conflict nobody made.
