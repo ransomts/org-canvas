@@ -1,0 +1,16 @@
+* Fixed
+- #470 Updating a rubric no longer leaves the assignments that grade
+  with it to report a conflict at their next push.  The update moves
+  each assignment's =updated_at= (a =use_for_grading= association
+  resets its points to the rubric's total), so the rubric push now
+  restamps the =CANVAS_UPDATED_AT= of every assignment heading that
+  agreed with Canvas before the update, as an override sync does
+  (#348); =PAYLOAD_HASH= is kept.  A heading that had already drifted
+  keeps its stamp, so an edit made on Canvas still reports.
+
+* Added
+- #470 =scripts/org-canvas push --conflict push|pull|skip
+  FEATURE:TITLE...= sets =org-canvas-conflict-strategy= for that push
+  alone, so a conflict checked with =diff= can be overwritten (or
+  pulled) from the shell without a scratch script.  Any other value
+  is a usage error.

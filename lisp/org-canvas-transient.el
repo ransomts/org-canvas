@@ -18,7 +18,7 @@ writing commands greyed rather than only erroring when one is chosen
 \(issue #163)."
   (not (bound-and-true-p org-canvas-read-only)))
 
-;;;###autoload
+;;;###autoload (autoload 'org-canvas-dispatch-sync-at-point "org-canvas-transient" nil t)
 (transient-define-prefix org-canvas-dispatch-sync-at-point ()
   "Sync a single item at point."
   ["Sync at point"
@@ -37,7 +37,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("k" "Grading scheme" org-canvas-sync-grading-scheme-at-point)
    ("A" "Quiz accommodations" org-canvas-sync-quiz-accommodations-at-point)])
 
-;;;###autoload
+;;;###autoload (autoload 'org-canvas-dispatch-pull-single "org-canvas-transient" nil t)
 (transient-define-prefix org-canvas-dispatch-pull-single ()
   "Pull a single content type from Canvas."
   ["Pull single"
@@ -66,7 +66,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("z" "Quiz submissions" org-canvas-pull-quiz-submissions)
    ("w" "Peer reviews" org-canvas-pull-peer-reviews)])
 
-;;;###autoload
+;;;###autoload (autoload 'org-canvas-dispatch-delete-at-point "org-canvas-transient" nil t)
 (transient-define-prefix org-canvas-dispatch-delete-at-point ()
   "Delete a single item at point from Canvas."
   ["Delete at point"
@@ -83,7 +83,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("k" "Grading scheme" org-canvas-delete-grading-scheme-at-point)
    ("G" "Group Category" org-canvas-delete-group-category-at-point)])
 
-;;;###autoload
+;;;###autoload (autoload 'org-canvas-dispatch "org-canvas-transient" nil t)
 (transient-define-prefix org-canvas-dispatch ()
   "Dispatch menu for org-canvas commands."
   ["Sync"
@@ -128,6 +128,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("K" "Check this file's comments (missing, flagged, shared)" org-canvas-submissions-check-comments)
    ("H" "Export this file's comments as JSON" org-canvas-submissions-export-comments)
    ("I" "Import comment text from JSON" org-canvas-submissions-import-comments)
+   ("Y" "Verify a push: read the column back from Canvas" org-canvas-submissions-verify)
+   ("L" "Text of this file's uploads, pairs grouped (SAME_AS)" org-canvas-submissions-upload-text)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)
    ("C" "Push only edited and deleted sent comments" org-canvas-push-submission-comment-edits

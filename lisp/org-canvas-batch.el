@@ -186,10 +186,15 @@ copy silently.  Return the credentials file loaded, or nil."
      "Import the whole course; exit 1 if anything failed (#458).")
     ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
      "Pull gradebook.org; print its Sections table and the course's scores.")
+    ("verify" org-canvas-batch--cmd-verify 1 nil "[--hidden] ASSIGNMENT..."
+     "Read pushed columns back from Canvas; exit 1 on a difference (#450).")
+    ("apply-ruling" org-canvas-batch--cmd-apply-ruling 2 2 "FILE RULING.json"
+     "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
-    ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
-     "Push named headings (org-canvas-sync-headings).")
+    ("push" org-canvas-batch--cmd-push 1 nil
+     "[--conflict push|pull|skip] FEATURE:TITLE..."
+     "Push named headings; --conflict resolves conflicts (#470).")
     ("publish" org-canvas-batch--cmd-publish 1 nil "FEATURE:TITLE..."
      "Publish named headings, sending only the flag (#466).")
     ("unpublish" org-canvas-batch--cmd-unpublish 1 nil "FEATURE:TITLE..."
@@ -442,6 +447,32 @@ Return 1 if any check found an error."
                         (plist-get parsed :args))))
     (if (cl-every #'zerop errors) 0 1)))
 
+(defun org-canvas-batch--cmd-verify (parsed)
+  "Read back each column PARSED names and compare it with its grading file.
+--hidden counts a posted submission as a difference.  Return 1 if any
+column differs (`org-canvas-submissions-verify')."
+  (let* ((args (plist-get parsed :args))
+         (hidden (and (member "--hidden" args) t))
+         (targets (remove "--hidden" args)))
+    (unless targets
+      (org-canvas-batch--usage "verify takes [--hidden] ASSIGNMENT..."))
+    (if (cl-every (lambda (r) (zerop (plist-get r :differences)))
+                  (org-canvas-submissions-verify targets hidden))
+        0 1)))
+
+(defun org-canvas-batch--cmd-apply-ruling (parsed)
+  "Apply the JSON rulings PARSED names to its grading file.
+A dry run on --dry-run.  Return 1 if a user id matched nothing or a
+student was kept back."
+  (let* ((args (plist-get parsed :args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run)))
+         (results (org-canvas-submissions-apply-ruling-json
+                   (nth 0 args) (expand-file-name (nth 1 args)))))
+    (if (cl-some (lambda (r) (or (plist-get r :unmatched) (plist-get r :skipped)))
+                 results)
+        1 0)))
+
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."
   (let ((entries (mapcar #'org-canvas-batch-heading-entry
@@ -462,12 +493,47 @@ skip, expected of a Designer or TA, and leaves the status 0."
             (org-canvas--pull-summary-records-of-kind 'error))
         1 0)))
 
+(defun org-canvas-batch--conflict-strategy (value)
+  "Return the strategy symbol for VALUE, the word after --conflict.
+VALUE is \"push\", \"pull\" or \"skip\"; anything else, or nil when
+--conflict ended the line, is a usage error."
+  (cond
+   ((member value '("push" "pull" "skip")) (intern value))
+   (value (org-canvas-batch--usage
+           "--conflict takes push, pull or skip, not %s" value))
+   (t (org-canvas-batch--usage "--conflict needs push, pull or skip"))))
+
+(defun org-canvas-batch--push-args (args)
+  "Read push ARGS into (STRATEGY . HEADINGS).
+STRATEGY is the symbol --conflict STRATEGY or --conflict=STRATEGY
+named, anywhere among ARGS, or nil without one; HEADINGS are the
+other arguments, in order.  No heading is a usage error."
+  (let ((strategy nil) (headings nil))
+    (while args
+      (let ((arg (pop args)))
+        (cond
+         ((equal arg "--conflict")
+          (setq strategy (org-canvas-batch--conflict-strategy (pop args))))
+         ((string-prefix-p "--conflict=" arg)
+          (setq strategy (org-canvas-batch--conflict-strategy
+                          (substring arg (length "--conflict=")))))
+         (t (push arg headings)))))
+    (unless headings
+      (org-canvas-batch--usage "push takes %s"
+                               (nth 4 (assoc "push" org-canvas-batch--commands))))
+    (cons strategy (nreverse headings))))
+
 (defun org-canvas-batch--cmd-push (parsed)
-  "Push the headings PARSED names; return 1 if any failed."
-  (let ((entries (mapcar #'org-canvas-batch-heading-entry
-                         (plist-get parsed :args)))
-        (org-canvas--dry-run (or org-canvas--dry-run
-                                 (plist-get parsed :dry-run))))
+  "Push the headings PARSED names; return 1 if any failed.
+A --conflict among the arguments binds `org-canvas-conflict-strategy'
+for this run: push overwrites Canvas, pull the heading, and skip
+leaves the entry alone, as a batch Emacs does without it (#470)."
+  (let* ((args (org-canvas-batch--push-args (plist-get parsed :args)))
+         (entries (mapcar #'org-canvas-batch-heading-entry (cdr args)))
+         (org-canvas-conflict-strategy (or (car args)
+                                           org-canvas-conflict-strategy))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
     (if (zerop (org-canvas-batch--failed-count
                 (org-canvas-sync-headings entries)))
         0 1)))
