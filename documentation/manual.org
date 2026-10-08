@@ -124,8 +124,10 @@ ARGS=, which is also the line to use without it.
 | =overview=                    | =org-canvas-status= (local, no API call)           |                    |
 | =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
+| =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores | |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
+| =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
 | =push FEATURE:TITLE...=       | =org-canvas-sync-headings=                         | any heading failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
@@ -159,6 +161,15 @@ did not land, a row was held as a conflict, a sent-comment change was
 not sent, or an =--only= id had no row or nothing to send.  =pull-queue=
 needs a version of org-canvas that defines
 =org-canvas-submissions-pull-queue= (#415), and says so otherwise.
+=pull-all= imports the whole course, as =M-x org-canvas-pull-all= does,
+into an empty course directory as well as a full one; it prints the
+pull summary and the closing line.  A content type the enrolment may
+not read (a Designer's or a TA's 403) is a skip and leaves the status
+0; a type that failed, or an item lost to an error, makes it 1 (#458).
+=gradebook= refreshes =gradebook.org= and prints its Sections table,
+then one line with the course's mean and median current and final
+scores, so a script can read class standing without opening the file
+(#451).
 
 The exit status is 0 when the command succeeded, 1 as the table says,
 2 for a command line it could not read and 3 when an error stopped it
@@ -2296,6 +2307,10 @@ file.  Treat =gradebook.org= as you treat the submissions directory:
 keep it out of a course repository (add it to =.gitignore=) and out
 of anything you share.
 
+From the shell, =scripts/org-canvas gradebook= pulls the file and
+prints the Sections table and the course's mean and median scores
+(see [[*Running from the Shell][Running from the Shell]]).
+
 ** grading-schemes.org
 
 Grading schemes (Canvas calls them grading standards): the cutoffs
@@ -3792,7 +3807,7 @@ Instructors with existing Canvas courses can import their entire course into Org
 M-x org-canvas-pull-all
 #+end_src
 
-This creates (or updates) all =.org= files in your course directory with content pulled from Canvas.  HTML content (page bodies, assignment descriptions, discussion messages, syllabus) is converted to Org format via [[https://pandoc.org/][pandoc]].
+This creates (or updates) all =.org= files in your course directory with content pulled from Canvas. From the shell, =scripts/org-canvas pull-all= does the same (see [[*Running from the Shell][Running from the Shell]]). A file the pull creates leaves no =~= backup behind: its first content is a stub the pull writes over at once.  HTML content (page bodies, assignment descriptions, discussion messages, syllabus) is converted to Org format via [[https://pandoc.org/][pandoc]].
 
 ** pandoc Dependency
 

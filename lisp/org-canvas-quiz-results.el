@@ -462,8 +462,7 @@ but keep the file out of a course repository all the same."
 
 (defun org-canvas--quiz-results-write (file entries)
   "Rewrite FILE whole with one heading per entry of ENTRIES."
-  (unless (file-exists-p file)
-    (with-temp-file file (insert "")))
+  (org-canvas--create-file file)
   (with-current-buffer (org-canvas--find-file-noselect file)
     (erase-buffer)
     (insert (format "#+TITLE: %s\n\n"

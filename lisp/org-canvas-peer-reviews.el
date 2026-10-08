@@ -236,8 +236,7 @@ file."
 The buffer is left read-only: the tables are derived from Canvas and a
 pull rewrites them."
   (let ((file (org-canvas--peer-reviews-file-path assignment)))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
+    (org-canvas--create-file file)
     (with-current-buffer (org-canvas--find-file-noselect file)
       (let ((inhibit-read-only t))
         (erase-buffer)

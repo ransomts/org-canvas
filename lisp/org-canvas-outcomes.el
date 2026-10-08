@@ -585,8 +585,7 @@ Point must be at the parent group heading."
              (not (org-canvas--pull-file-has-headings-p file)))
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "outcomes"))
-      (unless (file-exists-p file)
-        (with-temp-file file (insert "")))
+      (org-canvas--create-file file)
       (with-current-buffer (org-canvas--find-file-noselect file)
         (dolist (group (org-canvas--pull-sort-items remote-groups))
           (cl-incf group-count)

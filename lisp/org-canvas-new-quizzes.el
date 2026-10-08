@@ -952,8 +952,7 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
              (not (org-canvas--pull-file-has-headings-p file)))
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "new-quizzes"))
-      (unless (file-exists-p file)
-        (with-temp-file file (insert "")))
+      (org-canvas--create-file file)
       (with-current-buffer (org-canvas--find-file-noselect file)
         (let ((idless-before (org-canvas--pull-idless-entry-count
                               "CANVAS_ASSIGNMENT_ID")))

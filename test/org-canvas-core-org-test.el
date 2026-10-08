@@ -1688,6 +1688,46 @@ Page content.
                 (kill-buffer))))
         (delete-file file)))))
 
+(describe "org-canvas--create-file (issue #458)"
+  (it "writes the stub and leaves no backup when the pull saves over it"
+    (let* ((dir (make-temp-file "create-458-" t))
+           (file (expand-file-name "settings.org" dir))
+           (make-backup-files t)
+           (backup-inhibited nil)
+           (backup-directory-alist nil)
+           (backup-enable-predicate (lambda (_) t)))
+      (unwind-protect
+          (progn
+            (expect (org-canvas--create-file file "#+TITLE: Settings\n") :to-be t)
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (expect (buffer-string) :to-equal "#+TITLE: Settings\n")
+              (goto-char (point-max))
+              (insert "* Course\n")
+              (org-canvas--save-buffer)
+              (kill-buffer))
+            (expect (file-exists-p (concat file "~")) :to-be nil))
+        (delete-directory dir t))))
+
+  (it "leaves a file that already exists, and its backup, alone"
+    (let* ((dir (make-temp-file "create-458-" t))
+           (file (expand-file-name "pages.org" dir))
+           (make-backup-files t)
+           (backup-inhibited nil)
+           (backup-directory-alist nil)
+           (backup-enable-predicate (lambda (_) t)))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Mine\n"))
+            (expect (org-canvas--create-file file) :to-be nil)
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (expect (buffer-string) :to-equal "* Mine\n")
+              (goto-char (point-max))
+              (insert "* Pulled\n")
+              (org-canvas--save-buffer)
+              (kill-buffer))
+            (expect (file-exists-p (concat file "~")) :to-be t))
+        (delete-directory dir t)))))
+
 (describe "org-canvas--find-file-noselect (issue #121)"
   (defun test-visit-121--stale (file text)
     "Rewrite FILE with TEXT behind its buffer and move its modtime forward."

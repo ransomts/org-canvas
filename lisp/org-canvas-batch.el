@@ -13,8 +13,9 @@
 ;; `org-canvas-batch-setup' is the half a script still wants: given a
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
-;; command line with subcommands (status, grades, pull, push, diff,
-;; validate, sync ...), which `scripts/org-canvas' wraps:
+;; command line with subcommands (status, grades, gradebook, pull,
+;; pull-all, push, diff, validate, sync ...), which `scripts/org-canvas'
+;; wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -181,6 +182,10 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
     ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
+    ("pull-all" org-canvas-batch--cmd-pull-all 0 0 ""
+     "Import the whole course; exit 1 if anything failed (#458).")
+    ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
+     "Pull gradebook.org; print its Sections table and the course's scores.")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil "FEATURE:TITLE..."
@@ -327,6 +332,13 @@ Return t, or nil after reporting a failure."
                           names))
         0 1)))
 
+(defun org-canvas-batch--cmd-gradebook (_parsed)
+  "Pull gradebook.org and print the class standing; return 0.
+The Sections table, then the course's mean and median scores
+\(`org-canvas-gradebook-summary-text', issue #451)."
+  (princ (org-canvas-gradebook-summary-text (org-canvas-pull-gradebook)))
+  0)
+
 (defun org-canvas-batch--cmd-pull-queue (_parsed)
   "Pull each column in need of it, by the grading queue; return 0."
   (unless (fboundp 'org-canvas-submissions-pull-queue)
@@ -433,6 +445,18 @@ Return 1 if any check found an error."
     (if (zerop (org-canvas-batch--failed-count
                 (org-canvas-pull-headings entries)))
         0 1)))
+
+(defun org-canvas-batch--cmd-pull-all (_parsed)
+  "Import the whole course and print how the pull went.
+The pull summary is printed by `org-canvas-pull-all' itself; the
+closing line follows it.  Return 1 if a content type failed or an
+item was lost to an error.  A type the enrolment may not read is a
+skip, expected of a Designer or TA, and leaves the status 0."
+  (let ((counters (org-canvas-pull-all)))
+    (princ (format "%s\n" (org-canvas--pull-completion-line counters)))
+    (if (or (> (plist-get counters :fail) 0)
+            (org-canvas--pull-summary-records-of-kind 'error))
+        1 0)))
 
 (defun org-canvas-batch--cmd-push (parsed)
   "Push the headings PARSED names; return 1 if any failed."

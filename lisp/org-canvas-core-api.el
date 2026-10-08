@@ -824,6 +824,11 @@ TIMEOUT is the request timeout in seconds.
 AS `response' returns the `plz-response' with its headers instead of
 the decoded body; `org-canvas-api-request-all-pages' asks for it to
 follow the Link header.
+A GET of a list endpoint returns one page only, whatever per_page
+asks for: Canvas caps the page, and some lists (enrollments) page by
+bookmark.  Use `org-canvas-api-request-all-pages' to read a whole
+list; a script reading enrollments here silently got 100 of about
+200 (issue #451).
 A course marked read-only with `org-canvas-read-only' refuses anything
 but GET, before the request is built (issue #163).
 

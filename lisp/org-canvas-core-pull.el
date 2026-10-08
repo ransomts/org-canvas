@@ -228,8 +228,7 @@ Saves the buffer.  Creates the file if it does not yet exist."
                    (format "%s" canvas-id))))
     (unless files-file
       (error "Variable `org-canvas-files-file' not set"))
-    (unless (file-exists-p files-file)
-      (with-temp-file files-file (insert "")))
+    (org-canvas--create-file files-file)
     (with-current-buffer (org-canvas--find-file-noselect files-file)
       (org-with-wide-buffer
        (goto-char (point-min))
@@ -1404,8 +1403,7 @@ wholesale (issue #67)." feature-name)
                     (not (org-canvas--pull-file-has-headings-p file)))
                (org-canvas--pull-emit-empty-file
                 file (org-canvas--pull-label-for ,feature-name))
-             (unless (file-exists-p file)
-               (with-temp-file file (insert "")))
+             (org-canvas--create-file file)
              (with-current-buffer (org-canvas--find-file-noselect file)
                (let ((idless-before
                       (org-canvas--pull-idless-entry-count ,id-property)))

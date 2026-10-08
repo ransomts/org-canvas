@@ -1,0 +1,8 @@
+* Added
+- #451 =scripts/org-canvas gradebook= refreshes =gradebook.org= and
+  prints its Sections table, then one line with the course's mean and
+  median current and final scores, so a script can read class standing
+  without opening the file.  =org-canvas-pull-gradebook= now returns
+  the student rows, and =org-canvas-gradebook-summary-text= renders
+  them.  =org-canvas-api-request='s docstring now says it returns one
+  page of a list and points to =org-canvas-api-request-all-pages=.

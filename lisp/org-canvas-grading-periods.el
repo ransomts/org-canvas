@@ -109,8 +109,7 @@ grading periods gets the empty-file note every pull writes."
     (if (null remote)
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "grading-periods"))
-      (unless (file-exists-p file)
-        (with-temp-file file (insert "")))
+      (org-canvas--create-file file)
       (with-current-buffer (org-canvas--find-file-noselect file)
         (dolist (item (org-canvas--pull-sort-items remote nil 'start_date))
           (org-canvas--pull-process-item
