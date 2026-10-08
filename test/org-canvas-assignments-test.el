@@ -3297,4 +3297,66 @@ TEXT is the file afterwards, CALLS the API calls made."
       (expect text :to-match "Hi")
       (expect text :to-match "| S777 "))))
 
+;;; Scheduled dates explain an updated_at bump (issue #453)
+
+(describe "org-canvas--assignment-scheduled-dates (issue #453)"
+  (it "answers the assignment's own dates, then each override's"
+    (with-org-canvas-test-config
+      (let ((urls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _)
+                     (push url urls)
+                     (vector '((id . 9) (unlock_at . "2026-10-05T15:00:00Z")
+                               (lock_at . :null))))))
+          (expect (org-canvas--assignment-scheduled-dates
+                   '((id . 61) (unlock_at . "2026-10-05T14:10:00Z")
+                     (lock_at . "2026-10-12T04:00:00Z")))
+                  :to-equal '(("unlock_at" . "2026-10-05T14:10:00Z")
+                              ("lock_at" . "2026-10-12T04:00:00Z")
+                              ("override 9 unlock_at" . "2026-10-05T15:00:00Z"))))
+        (expect (car urls) :to-match "assignments/61/overrides\\'"))))
+
+  (it "reads no overrides for an item without an id"
+    (with-org-canvas-test-config
+      (spy-on 'org-canvas-api-request-all-pages)
+      (expect (org-canvas--assignment-scheduled-dates
+               '((unlock_at . :null)))
+              :to-be nil)
+      (expect 'org-canvas-api-request-all-pages :not :to-have-been-called)))
+
+  (it "is the scheduled-dates function the Assignments feature declares"
+    (expect (org-canvas--feature-scheduled-dates-fn
+             (org-canvas--registry-find-feature "assignments"))
+            :to-be #'org-canvas--assignment-scheduled-dates))
+
+  (it "lets a push past a bump an override's unlock date explains"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Column
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-10-05T13:04:21Z
+:END:
+"
+        (org-back-to-heading)
+        (let ((org-canvas-detect-conflicts t)
+              (org-canvas-conflict-strategy nil)
+              (methods nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method _url &rest _)
+                       (push method methods)
+                       (if (eq method 'GET)
+                           '((id . 61) (updated_at . "2026-10-05T14:10:05Z")
+                             (unlock_at . :null))
+                         '((id . 61) (updated_at . "2026-10-06T09:00:00Z")))))
+                    ((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (&rest _)
+                       (vector '((id . 9)
+                                 (unlock_at . "2026-10-05T14:10:00Z"))))))
+            (org-canvas--push-to-api
+             (list :title "Column" :canvas-id "61" :pom (point-marker))
+             '((assignment . ((name . "Column"))))
+             :endpoint "assignments"
+             :ctx (org-canvas--sync-make-ctx :feature-name "assignments")))
+          (expect (reverse methods) :to-equal '(GET PUT)))))))
+
 ;;; org-canvas-assignments-test.el ends here

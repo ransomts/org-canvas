@@ -1449,8 +1449,45 @@ that was fine (issue #86)."
       (cons (encode-time (org-parse-time-string header))
             (format "#+LAST_SYNCED %s (entry has no CANVAS_UPDATED_AT)" header))))))
 
+(defconst org-canvas--scheduled-bump-window 60
+  "Seconds after a scheduled date within which a timestamp bump is Canvas's.
+Canvas moves an assignment's `updated_at' when its `unlock_at' passes,
+with nothing edited: five seconds after it, on the course that
+reported it (issue #453).  The allowance covers a busy job queue; a
+web edit made inside it is taken for the bump.")
+
+(defun org-canvas--conflict-scheduled-bump (local-time remote-time dates)
+  "Return the entry of DATES that explains REMOTE-TIME, or nil.
+DATES is a list of (LABEL . ISO8601), the dates at which Canvas
+touches the item on its own.  One explains the remote timestamp when
+it passed after LOCAL-TIME, the baseline, and REMOTE-TIME sits no more
+than `org-canvas--scheduled-bump-window' seconds after it (issue #453)."
+  (cl-find-if
+   (lambda (entry)
+     (let ((time (org-canvas--parse-iso8601-time (cdr entry))))
+       (and time
+            (time-less-p local-time time)
+            (not (time-less-p remote-time time))
+            (<= (float-time (time-subtract remote-time time))
+                org-canvas--scheduled-bump-window))))
+   dates))
+
+(defun org-canvas--conflict-scheduled-dates (scheduled-fn response title)
+  "Return what SCHEDULED-FN answers for RESPONSE, or nil when it fails.
+A failure is logged under TITLE and answers nil, so the newer
+timestamp stays a conflict: a read that could not explain the bump
+must not let the push past it (issue #453)."
+  (when scheduled-fn
+    (condition-case err
+        (funcall scheduled-fn response)
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[Conflict] Could not read the scheduled dates of '%s' (%s); a bump they would explain stays a conflict"
+         title (error-message-string err))
+       nil))))
+
 (cl-defun org-canvas--conflict-check (endpoint id pom &optional title modified-field
-                                               params url)
+                                               params url scheduled-fn)
   "Check if the remote item at ENDPOINT/ID was modified after the baseline at POM.
 TITLE names the entry in the log line; without it ENDPOINT/ID does.
 MODIFIED-FIELD names the response field that tracks content
@@ -1466,6 +1503,10 @@ URL, when non-nil, is the item's address, as
 under the course, which 404s for a feature that does not live there —
 calendar events are global, and every one of them used to push
 unguarded (issue #344).
+SCHEDULED-FN, when non-nil, is the feature's `:scheduled-dates-fn': a
+remote timestamp that one of the dates it answers explains is not an
+edit, and the push goes ahead (`org-canvas--conflict-scheduled-bump',
+issue #453).
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
 nil otherwise.  Returns nil on GET failure (allows push to proceed) or
 when there is no baseline at all (first sync).
@@ -1484,14 +1525,22 @@ the header regardless (issue #86)."
                (response (org-canvas-api-request 'GET full-url :params params))
                (updated-at (alist-get field response))
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
-          (if (and remote-time (time-less-p local-time remote-time))
-              (progn
+          (when (and remote-time (time-less-p local-time remote-time))
+            (let* ((label (or title (format "%s/%s" endpoint id)))
+                   (bump (org-canvas--conflict-scheduled-bump
+                          local-time remote-time
+                          (org-canvas--conflict-scheduled-dates
+                           scheduled-fn response label))))
+              (if bump
+                  (progn
+                    (org-canvas--log-info org-canvas--logger
+                      "[Conflict] '%s': remote %s %s is newer than %s, but it follows %s %s, a bump Canvas makes itself; not a conflict"
+                      label field updated-at (cdr source) (car bump) (cdr bump))
+                    nil)
                 (org-canvas--log-warning org-canvas--logger
                   "[Conflict] '%s': remote %s %s is newer than %s"
-                  (or title (format "%s/%s" endpoint id)) field updated-at
-                  (cdr source))
-                (cons 'conflict response))
-            nil))
+                  label field updated-at (cdr source))
+                (cons 'conflict response)))))
       (error
        ;; A failed remote check must not be silent: proceeding with the push
        ;; could overwrite remote changes the user never saw.
@@ -1648,6 +1697,15 @@ pass `:canvas-url') reads from the item."
                (org-canvas--handle-timeout-recovery find-fn title post-err)
              (signal (car post-err) (cdr post-err)))))))))
 
+(defun org-canvas--sync-item-scheduled-fn (ctx)
+  "Return the `:scheduled-dates-fn' of the feature CTX is running, or nil.
+CTX is the run context; its :feature-name finds the registry entry
+\(issue #453)."
+  (let ((name (plist-get ctx :feature-name)))
+    (when name
+      (org-canvas--feature-scheduled-dates-fn
+       (org-canvas--registry-find-feature name)))))
+
 (defun org-canvas--sync-item-params (ctx)
   "Return the query parameters for a single-item read in this run.
 CTX is the run context; its :feature-name finds the registry entry,
@@ -1686,13 +1744,16 @@ available, its :conflict-apply-all remembers a capital answer, and its
 :feature-name finds the `:item-params' the check reads with, so what
 the pull option writes is the item's own dates (issue #273).
 PUT-URL-FN and CTX resolve the address read, through
-`org-canvas--sync-item-url' (issue #344).
+`org-canvas--sync-item-url' (issue #344).  CTX's feature also says
+which dates explain a newer remote timestamp that nobody edited
+\(`org-canvas--sync-item-scheduled-fn', issue #453).
 Returns `push', `skip', or `pulled'."
   (let ((conflict-result (org-canvas--conflict-check
                           endpoint id (plist-get data :pom) title
                           modified-field (org-canvas--sync-item-params ctx)
                           (org-canvas--sync-item-url
-                           endpoint id ctx put-url-fn))))
+                           endpoint id ctx put-url-fn)
+                          (org-canvas--sync-item-scheduled-fn ctx))))
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
@@ -2447,14 +2508,20 @@ group 4, the way the modules whose headings are links read it, since
 
 (defun org-canvas--sync-heading-matches-p (target by id-property)
   "Return non-nil when the heading at point is the one TARGET names.
-With BY nil or `title', TARGET is the heading's exact text, either as
-written or as `org-get-heading' reads it (the two differ only by link
-markup).  With BY `canvas-id', TARGET is the value of ID-PROPERTY, a
-string or an integer.  Any other BY is a `user-error'."
+With BY nil or `title', TARGET is the heading's exact text: as
+written, as `org-get-heading' reads it, or with each link reduced to
+its description, so the files.org heading
+[[file:../syllabus.pdf][syllabus.pdf]] also answers to \"syllabus.pdf\".
+`org-get-heading' keeps link markup before Org 9.7 and strips it after,
+so only the reduced form names a link heading by its description on
+every Emacs (issue #446).  With BY `canvas-id', TARGET is the value of
+ID-PROPERTY, a string or an integer.  Any other BY is a `user-error'."
   (pcase by
     ((or 'nil 'title)
-     (or (equal target (org-canvas--sync-heading-text))
-         (equal target (string-trim (or (org-get-heading t t t t) "")))))
+     (let ((text (org-canvas--sync-heading-text)))
+       (member target (list text
+                            (and text (org-link-display-format text))
+                            (string-trim (or (org-get-heading t t t t) ""))))))
     ('canvas-id
      (equal (format "%s" target) (org-entry-get (point) id-property)))
     (_ (user-error "Sync by heading: BY must be nil, `title' or `canvas-id', not %S" by))))

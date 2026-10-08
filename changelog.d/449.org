@@ -1,0 +1,15 @@
+* Added
+- #449 A grading file can take a rubric assessment away: =none= (or
+  =-=) in a Rubric row's =Score= cell sends that criterion with empty
+  points and comment (its comment if one is written), and =none= in
+  every row clears the whole assessment.  A score sent in the same
+  entry, such as a ruled =SCORE: 0=, goes after the rows so Canvas
+  keeps it (#444), and =SCORE: none= is accepted beside rows that carry
+  no points.  Once pushed, the cleared cells are emptied and
+  =CANVAS_RUBRIC= follows.
+* Fixed
+- #449 A refresh no longer fills back Rubric rows emptied or cleared by
+  hand from Canvas's assessment; they are kept as typed.  A push of a
+  Rubric table emptied by hand while Canvas holds an assessment stops
+  before anything is sent and names =none=, instead of sending nothing
+  for the rows and leaving Canvas's assessment beside the new score.
