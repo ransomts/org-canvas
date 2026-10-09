@@ -42,7 +42,11 @@ REGISTRY-KEY names the feature being pulled, whose registration alone
 supplies the spec; without it the first registration of PROPERTY in
 any feature is used (see `org-canvas--registry-find-property').  A
 spec declaring `:absent-inherits' has no default to suppress: both
-values are written, since only absence means \"inherit\" (issue #323)."
+values are written, since only absence means \"inherit\" (issue #323).
+For the same reason such a spec leaves PROPERTY untouched when VALUE is
+nil or `:null': Canvas omits a module item's `published' for a student
+token, and reading that silence as false wrote PUBLISHED: false on
+every item, an unpublish waiting for the next push (issue #487)."
   (let* ((spec (org-canvas--registry-find-property property registry-key))
          (boolean-spec (and spec (eq (plist-get spec :type) 'boolean)
                             (not (plist-get spec :absent-inherits))))
@@ -55,12 +59,14 @@ values are written, since only absence means \"inherit\" (issue #323)."
                                   ((string= value "false") nil)
                                   (t value)))
                            (t value))))
-    (if (or org-canvas-emit-defaults
-            (not boolean-spec)
-            (not (eq (and normalized t) (and default t))))
-        (org-canvas-org-set-property
-         pom property (if normalized "true" "false"))
-      (org-entry-delete pom property))))
+    (cond
+     ((and (plist-get spec :absent-inherits) (memq value '(nil :null))))
+     ((or org-canvas-emit-defaults
+          (not boolean-spec)
+          (not (eq (and normalized t) (and default t))))
+      (org-canvas-org-set-property
+       pom property (if normalized "true" "false")))
+     (t (org-entry-delete pom property)))))
 
 (defun org-canvas--pull-write-file-header (&optional time)
   "Write or replace the #+LAST_SYNCED header in the current buffer.
