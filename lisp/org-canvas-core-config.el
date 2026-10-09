@@ -48,6 +48,16 @@
 (define-error 'org-canvas-permission-error
   "Canvas role cannot access this resource"
   '(org-canvas-credentials-error org-canvas-api-error))
+;; A course can switch a tab off (Pages, Quizzes), and Canvas then
+;; answers its API with a 404 "That page has been disabled for this
+;; course".  That is the course's setting, not a breakage, so a pull
+;; counts it as a skip the way it counts a 403 (issue #486).  It is not
+;; a permission error, whose remedy is a different enrolment, and its
+;; one parent keeps it a failed request for every handler written that
+;; way; it is also not the 404 that marks a heading deleted
+;; (`org-canvas--api-not-found-p' names the parent alone).
+(define-error 'org-canvas-feature-disabled-error
+  "Canvas feature is disabled in this course" 'org-canvas-api-error)
 (define-error 'org-canvas-conflict-error
   "Sync conflict between local and remote state" 'org-canvas-error)
 (define-error 'org-canvas-timeout-error

@@ -496,21 +496,23 @@ item was pulled."
 (defun org-canvas--safe-pull (pull-fn label &optional counters)
   "Call PULL-FN, catching errors gracefully.
 LABEL names the content type, for the log and the closing line.
-COUNTERS, when non-nil, is a plist (:success N :fail N :skipped LIST)
-mutated in place with the outcome.
+COUNTERS, when non-nil, is a plist (:success N :fail N :skipped LIST
+:disabled LIST) mutated in place with the outcome; a label skipped for
+a disabled tab is in both lists.
 
 A refusal your enrolment cannot do anything about is counted apart from
 a failure: pulling a course you hold as a Designer 403s on the types
 that role cannot read, which is a gap to accept or a Teacher enrolment
-to ask for, not something that broke (issue #155).  Either way the
-reason is recorded in the pull summary, so a run that ends with a
-number also says which type and why."
+to ask for, not something that broke (issue #155).  So is a tab the
+course has switched off, which Canvas answers with a 404 (issue #486).
+Either way the reason is recorded in the pull summary, so a run that
+ends with a number also says which type and why."
   (condition-case err
       (progn
         (funcall pull-fn)
         (when counters
           (plist-put counters :success (1+ (plist-get counters :success)))))
-    (org-canvas-permission-error
+    ((org-canvas-permission-error org-canvas-feature-disabled-error)
      (org-canvas--log-warning org-canvas--logger "[Pull] %s skipped: %s"
        label (error-message-string err))
      (org-canvas--pull-summary-record
@@ -519,7 +521,10 @@ number also says which type and why."
       :log-line (org-canvas--pull-summary-current-log-line))
      (when counters
        (plist-put counters :skipped
-                  (cons label (plist-get counters :skipped)))))
+                  (cons label (plist-get counters :skipped)))
+       (when (eq (car err) 'org-canvas-feature-disabled-error)
+         (plist-put counters :disabled
+                    (cons label (plist-get counters :disabled))))))
     (error
      (org-canvas--log-warning org-canvas--logger "[Pull] %s failed: %s"
        label (error-message-string err))
@@ -533,15 +538,25 @@ number also says which type and why."
 (defun org-canvas--pull-completion-line (counters)
   "Return the closing line for a pull with COUNTERS.
 Names the types a role could not read, rather than leaving a bare
-count for the operator to chase through the log (issue #155)."
-  (let ((skipped (reverse (plist-get counters :skipped))))
+count for the operator to chase through the log (issue #155), apart
+from those whose tab the course has disabled (issue #486)."
+  (let* ((skipped (reverse (plist-get counters :skipped)))
+         (disabled (plist-get counters :disabled))
+         (refused (cl-remove-if (lambda (l) (member l disabled)) skipped))
+         (off (cl-remove-if-not (lambda (l) (member l disabled)) skipped))
+         (groups (delq nil
+                       (list (and refused
+                                  (format "%s: insufficient permission"
+                                          (string-join refused ", ")))
+                             (and off
+                                  (format "%s: tab disabled in this course"
+                                          (string-join off ", ")))))))
     (format "Pull complete: %d pulled, %d failed%s."
             (plist-get counters :success)
             (plist-get counters :fail)
             (if skipped
-                (format ", %d skipped (%s: insufficient permission)"
-                        (length skipped)
-                        (mapconcat #'identity skipped ", "))
+                (format ", %d skipped (%s)" (length skipped)
+                        (string-join groups "; "))
               ""))))
 
 ;; Pull in dependency order:
@@ -694,7 +709,8 @@ as needed.  HTML content is converted to Org format via pandoc.
 This is the migration entry point for instructors with existing
 Canvas courses who want to adopt org-canvas.
 
-Return the counters plist (:success N :fail N :skipped LABELS), so a
+Return the counters plist (:success N :fail N :skipped LABELS
+:disabled LABELS), so a
 script can tell a failure from a type the enrolment may not read
 \(`org-canvas--safe-pull', issue #458)."
   (interactive)
@@ -703,7 +719,7 @@ script can tell a failure from a type the enrolment may not read
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--pull-summary-reset)
   (let ((org-canvas--inhibit-log-clear t)
-        (counters (list :success 0 :fail 0 :skipped nil)))
+        (counters (list :success 0 :fail 0 :skipped nil :disabled nil)))
     (unwind-protect
         (org-canvas--pull-all-run counters)
       (org-canvas--pull-all-report counters))))

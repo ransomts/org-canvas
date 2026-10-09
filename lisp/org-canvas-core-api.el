@@ -595,7 +595,30 @@ in [FAILED] lines stays readable."
      (t
       (org-canvas--log-debug org-canvas--logger "%s\n  URL: %s\n  Body: %S"
         err-msg full-url body)
-      (signal 'org-canvas-api-error (list err-msg))))))
+      (signal (if (org-canvas--api-feature-disabled-p status canvas-msg)
+                  'org-canvas-feature-disabled-error
+                'org-canvas-api-error)
+              (list err-msg))))))
+
+(defun org-canvas--api-feature-disabled-p (status canvas-msg)
+  "Return non-nil when STATUS and CANVAS-MSG say a course tab is off.
+Canvas answers the API of a tab the course has disabled with a 404
+whose message is \"That page has been disabled for this course\"
+\(issue #486)."
+  (and (eql status 404)
+       (stringp canvas-msg)
+       (string-match-p "disabled for this course" canvas-msg)))
+
+(defun org-canvas--api-skip-error-p (err)
+  "Return non-nil when ERR is a refusal a pull counts as a skip.
+ERR is a `condition-case' value.  A role refusal
+\(`org-canvas-permission-error', issue #155) and a tab the course has
+disabled (`org-canvas-feature-disabled-error', issue #486) are the
+course's or the enrolment's doing, gaps to accept, not breakages."
+  (let ((conditions (and (consp err) (get (car err) 'error-conditions))))
+    (and (or (memq 'org-canvas-permission-error conditions)
+             (memq 'org-canvas-feature-disabled-error conditions))
+         t)))
 
 (defun org-canvas--api-failure-p (err)
   "Return non-nil when ERR, a caught error, is a failed Canvas request.

@@ -2338,6 +2338,20 @@ and a heading with no stamp.")
       (expect (plist-get rec :file) :to-equal "Settings")
       (expect (plist-get rec :error) :to-match "Permission denied")))
 
+  (it "counts a tab the course disabled as a skip, marked disabled (issue #486)"
+    (let ((counters (list :success 0 :fail 0 :skipped nil :disabled nil)))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--safe-pull
+         (lambda () (signal 'org-canvas-feature-disabled-error
+                            (list "That page has been disabled for this course (HTTP 404)")))
+         "Pages" counters))
+      (expect (plist-get counters :fail) :to-equal 0)
+      (expect (plist-get counters :skipped) :to-equal '("Pages"))
+      (expect (plist-get counters :disabled) :to-equal '("Pages"))
+      (expect (org-canvas--pull-summary-records-of-kind 'error) :to-be nil)
+      (expect (plist-get (car (org-canvas--pull-summary-records-of-kind 'skip)) :error)
+              :to-match "disabled for this course")))
+
   (it "still counts a real failure as a failure, and records it"
     (let ((counters (list :success 0 :fail 0 :skipped nil)))
       (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
@@ -2359,6 +2373,14 @@ and a heading with no stamp.")
              (list :success 14 :fail 0 :skipped '("Settings" "Group Categories")))
             :to-equal
             "Pull complete: 14 pulled, 0 failed, 2 skipped (Group Categories, Settings: insufficient permission)."))
+
+  (it "names a disabled tab apart from a role refusal (issue #486)"
+    (expect (org-canvas--pull-completion-line
+             (list :success 15 :fail 0
+                   :skipped '("Quizzes" "Pages" "People" "Quiz Results")
+                   :disabled '("Quizzes" "Pages" "Quiz Results")))
+            :to-equal
+            "Pull complete: 15 pulled, 0 failed, 4 skipped (People: insufficient permission; Quiz Results, Pages, Quizzes: tab disabled in this course)."))
 
   (it "stays as it was when nothing was skipped"
     (expect (org-canvas--pull-completion-line (list :success 15 :fail 0 :skipped nil))

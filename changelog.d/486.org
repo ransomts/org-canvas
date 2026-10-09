@@ -1,0 +1,2 @@
+* Fixed
+- #486 A content type whose tab the course has disabled (Canvas's 404 "That page has been disabled for this course") is counted as a skip, not a failure, and the closing line names it apart from a role refusal, so ~scripts/org-canvas pull-all~ no longer exits 1 on a pull that got everything Canvas would give.

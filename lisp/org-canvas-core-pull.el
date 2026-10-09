@@ -297,12 +297,11 @@ that buffer names where the link lives (issue #390)."
 
 (defun org-canvas--rewrite-record-failure (id err)
   "Log and record the failed fetch of Canvas file ID, signalled as ERR.
-A role refusal (`org-canvas-permission-error') is a skip, as
-`org-canvas--safe-pull' counts one (issue #155); anything else is an
-error.  The record names the file whose body held the link, not
-files.org (issue #390)."
-  (let* ((skip (memq 'org-canvas-permission-error
-                     (get (car err) 'error-conditions)))
+A role refusal or a disabled tab (`org-canvas--api-skip-error-p') is
+a skip, as `org-canvas--safe-pull' counts one (issues #155, #486);
+anything else is an error.  The record names the file whose body held
+the link, not files.org (issue #390)."
+  (let* ((skip (org-canvas--api-skip-error-p err))
          (msg (error-message-string err)))
     (org-canvas--log-warning org-canvas--logger
       "[Rewrite] file %s %s: %s" id (if skip "skipped" "fetch failed") msg)
