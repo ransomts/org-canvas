@@ -1,0 +1,2 @@
+* Fixed
+- #487 A module-item pull leaves PUBLISHED unwritten when Canvas omits the field, as it does for a student token, instead of writing PUBLISHED: false on every item, which the next push would have sent as an unpublish.

@@ -2874,6 +2874,27 @@
            (org-back-to-heading)
            (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))))
 
+  (it "writes no PUBLISHED when Canvas leaves the field out (issue #487)"
+    ;; A student token gets module items with no `published' key; that
+    ;; is silence, not false, and a false would unpublish on push.
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Module
+"
+       (goto-char (point-max))
+       (let ((items [((type . "SubHeader") (title . "Section 1") (id . 1))
+                     ((type . "ExternalUrl") (title . "Link") (id . 2)
+                      (external_url . "https://x.com"))
+                     ((type . "Assignment") (title . "HW 1") (id . 3)
+                      (content_id . 99))]))
+         (org-canvas--module-pull-insert-items items)
+         (dolist (title '("Section 1" "Link" "HW 1"))
+           (goto-char (point-min))
+           (re-search-forward title)
+           (org-back-to-heading)
+           (expect (org-entry-get (point) "CANVAS_ID") :not :to-be nil)
+           (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))))
+
   (it "rewrites an unpublished item as published on a re-pull (issue #323)"
     (let ((org-canvas-emit-defaults nil))
       (with-temp-org-buffer

@@ -419,7 +419,22 @@
        (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
        (org-canvas--pull-set-boolean-property
         (point) "PUBLISHED" t "module-items")
-       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))
+
+  (it "leaves a boolean whose absence inherits alone when Canvas sent nothing (issue #487)"
+    (dolist (emit '(nil t))
+      (let ((org-canvas-emit-defaults emit))
+        (with-temp-org-buffer
+         "* Heading\n:PROPERTIES:\n:PUBLISHED: true\n:END:\n"
+         (dolist (value '(nil :null))
+           (org-canvas--pull-set-boolean-property
+            (point) "PUBLISHED" value "module-items"))
+         (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))
+        (with-temp-org-buffer
+         "* Heading\n"
+         (org-canvas--pull-set-boolean-property
+          (point) "PUBLISHED" nil "module-items")
+         (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))))
 
 (describe "org-canvas--registry-find-property with a registry key (issue #323)"
   (it "returns the spec registered under that key"
