@@ -1,0 +1,8 @@
+* Fixed
+- #492 A quiz pull writes a question group that draws every question
+  from a bank, as a =TYPE: group= heading carrying its =PICK_COUNT=,
+  =QUESTION_POINTS= and =QUESTION_BANK_ID=.  Such a group names no
+  question of the quiz, so the pull, which found groups only through
+  their questions, left it out; it now lists each quiz's groups once
+  and takes every group from that list, fetching a group on its own
+  only when Canvas refuses the list.
