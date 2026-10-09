@@ -1,0 +1,2 @@
+* Fixed
+- #485 A course with its Pages tab disabled no longer pulls no pages: when Canvas refuses the pages list, the pull reads each page its modules link one at a time and writes those into pages.org, and the pull summary says the list came from modules, so a page no module links is known to be missing.

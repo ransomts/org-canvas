@@ -204,6 +204,27 @@ A scheduled page's payload loses `published', through
 
 ;;;; Pull
 
+(defun org-canvas--page-pull-detail (item url)
+  "Return the full page ITEM lists as URL, or nil when it cannot be read.
+An ITEM that already carries `body' is the detail already: the module
+fallback reads each page one at a time (issue #485).  A failed fetch is
+logged and recorded in `org-canvas--pull-summary'."
+  (if (assq 'body item)
+      item
+    (condition-case err
+        (org-canvas-api-request
+         'GET (org-canvas-api-course-endpoint "pages/%s" url))
+      (org-canvas-api-error
+       (org-canvas--log-warning org-canvas--logger
+         "[Pull] page detail fetch failed for %s: %s"
+         url (error-message-string err))
+       (org-canvas--pull-summary-record
+        :file (file-name-nondirectory org-canvas-pages-file)
+        :item url
+        :error (error-message-string err)
+        :log-line (org-canvas--pull-summary-current-log-line))
+       nil))))
+
 (defun org-canvas--page-pull-item (item pos)
   "Set per-item properties for a pulled page.
 ITEM is the API response alist, POS is the heading position.
@@ -214,6 +235,7 @@ fetch fails (after retries are exhausted) the error is recorded in
 the list response.  Also sets `:CANVAS_ID:' from the numeric page_id
 for schema consistency with other content types — CANVAS_URL remains
 the primary identifier used for push/sync, but pages now expose both.
+An ITEM that already carries `body' is not fetched again.
 
 Records :FRONT_PAGE: on the course home page so the pull round-trips
 \(issue #82): pull no longer skips the front page, and without the
@@ -222,19 +244,7 @@ removed from a page Canvas no longer serves as the home page, so a
 home page moved in the web UI does not leave two headings claiming it."
   (let* ((url (alist-get 'url item))
          (page-id (alist-get 'page_id item))
-         (detail-url (org-canvas-api-course-endpoint "pages/%s" url))
-         (detail (condition-case err
-                     (org-canvas-api-request 'GET detail-url)
-                   (org-canvas-api-error
-                    (org-canvas--log-warning org-canvas--logger
-                      "[Pull] page detail fetch failed for %s: %s"
-                      url (error-message-string err))
-                    (org-canvas--pull-summary-record
-                     :file (file-name-nondirectory org-canvas-pages-file)
-                     :item url
-                     :error (error-message-string err)
-                     :log-line (org-canvas--pull-summary-current-log-line))
-                    nil)))
+         (detail (org-canvas--page-pull-detail item url))
          (body (when detail (alist-get 'body detail))))
     (when page-id
       (org-canvas-org-set-property pos "CANVAS_ID" (format "%s" page-id)))
@@ -252,6 +262,80 @@ home page moved in the web UI does not leave two headings claiming it."
       (org-with-point-at pos
         (org-canvas--pull-insert-body body)))))
 
+(defun org-canvas--pages-module-items (feature mod)
+  "Return the items of MOD, a module of the Modules FEATURE, as a list.
+A module whose listing left its items out is read through its own
+items endpoint."
+  (append (if (assq 'items mod)
+              (alist-get 'items mod)
+            (org-canvas-api-request-all-pages
+             'GET (org-canvas--feature-item-url
+                   feature (format "%s/items" (alist-get 'id mod)))))
+          nil))
+
+(defun org-canvas--pages-module-page-urls ()
+  "Return the distinct `page_url's the course's module items name.
+Nil when the modules cannot be read either."
+  (condition-case err
+      (let ((feature (org-canvas--registry-find-feature "Modules"))
+            (urls nil))
+        (dolist (mod (append (org-canvas-api-request-all-pages
+                              'GET (org-canvas--feature-list-url feature)
+                              '(("include[]" . "items")))
+                             nil))
+          (dolist (item (org-canvas--pages-module-items feature mod))
+            (when (equal (alist-get 'type item) "Page")
+              (when-let* ((url (alist-get 'page_url item)))
+                (cl-pushnew url urls :test #'equal)))))
+        (nreverse urls))
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Pull] Pages: module items not readable either (%s)"
+       (error-message-string err))
+     nil)))
+
+(defun org-canvas--pages-read-linked (url)
+  "Return the page whose slug is URL, or nil when Canvas refuses it.
+A refusal is recorded in the pull summary, a skip or an error as
+`org-canvas--api-skip-error-p' says."
+  (condition-case err
+      (org-canvas-api-request
+       'GET (org-canvas--feature-item-url
+             (org-canvas--registry-find-feature "Pages") url))
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Pull] page %s not readable: %s" url (error-message-string err))
+     (org-canvas--pull-summary-record
+      :kind (if (org-canvas--api-skip-error-p err) 'skip 'error)
+      :file (file-name-nondirectory org-canvas-pages-file)
+      :item url
+      :error (error-message-string err)
+      :log-line (org-canvas--pull-summary-current-log-line))
+     nil)))
+
+(defun org-canvas--pages-list-from-modules (err)
+  "Return the pages the course's modules link, read one at a time.
+The `:list-fallback-fn' of the pages pull, called with ERR when Canvas
+refuses the pages list: a course can disable its Pages tab, which 404s
+the list, and still serve each page a module links (issue #485).  The
+pull summary says the list came from modules, so a page no module
+links is known to be missing.  Nil when no page could be read, and the
+refusal then stands."
+  (let ((pages (delq nil (mapcar #'org-canvas--pages-read-linked
+                                 (org-canvas--pages-module-page-urls)))))
+    (when pages
+      (org-canvas--log-warning org-canvas--logger
+        "[Pull] Pages list refused (%s); read %d page(s) the modules link"
+        (error-message-string err) (length pages))
+      (org-canvas--pull-summary-record
+       :kind 'skip
+       :file (file-name-nondirectory org-canvas-pages-file)
+       :item "pages no module links"
+       :error (format "%s; pulled the %d page(s) modules link, one at a time, so a page no module links is not in pages.org"
+                      (error-message-string err) (length pages))
+       :log-line (org-canvas--pull-summary-current-log-line))
+      pages)))
+
 ;; No :skip-fn here on purpose (issue #82).  Push and delete-all guard
 ;; the front page because clobbering or deleting the course home page is
 ;; destructive; pull only writes local files, so skipping it left the one
@@ -262,6 +346,7 @@ home page moved in the web UI does not leave two headings claiming it."
   :endpoint "pages"
   :id-field 'url
   :id-property "CANVAS_URL"
+  :list-fallback-fn #'org-canvas--pages-list-from-modules
   :pull-item-fn #'org-canvas--page-pull-item)
 
 (provide 'org-canvas-pages)

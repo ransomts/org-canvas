@@ -35,6 +35,7 @@ Located in =lisp/org-canvas-core-pull.el=. Generates an interactive
 | =:endpoint=    | yes      |                | API endpoint suffix               |
 | =:item-fn=     | yes      |                | Function =(item pos)= per item    |
 | =:params=      | no       | nil            | Extra GET query params alist      |
+| =:list-fallback-fn= | no | nil            | =(err)= items when the list is refused |
 | =:skip-fn=     | no       | nil            | Predicate =(item)= to skip        |
 | =:skip-reason= | no       | nil            | Why =:skip-fn= skips (reported)   |
 | =:id-field=    | no       | ='id=          | Alist key for Canvas ID           |
@@ -266,6 +267,18 @@ Before pulling, =pull-all= checks for existing content:
 fails, the error is logged and the counter incremented, but pulling
 continues with the next module. A final summary reports successes and
 failures.
+
+A refusal is not a failure. A 403 the enrolment cannot read
+(=org-canvas-permission-error=, #155) and a 404 for a tab the course has
+disabled (=org-canvas-feature-disabled-error=, #486) are counted as
+skips, and the closing line names each group with its reason.
+
+Before a refusal reaches the wrapper, a pull declaring
+=:list-fallback-fn= gets a chance to gather the items another way
+(=org-canvas--pull-list-remote=). Pages do: a course can hide its Pages
+tab and still serve every page a module links, so the pull reads those
+one at a time and records in the summary that the list came from
+modules (#485). A fallback that finds nothing lets the refusal stand.
 
 * Conflict Pull
 

@@ -1055,4 +1055,102 @@ Notes.
        (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
        (expect (org-entry-get (point) "PUBLISH_AT") :to-be nil)))))
 
+
+(describe "org-canvas-pull-pages with the Pages tab disabled (issue #485)"
+  :var (temp-dir test-file requests)
+  (before-each
+    (setq temp-dir (make-temp-file "pull-pages-485" t)
+          test-file (expand-file-name "pages.org" temp-dir)
+          requests nil)
+    (org-canvas--pull-summary-reset))
+  (after-each
+    (let ((buf (find-buffer-visiting test-file)))
+      (when buf (kill-buffer buf)))
+    (delete-directory temp-dir t)
+    (org-canvas--pull-summary-reset))
+
+  (cl-defun test-org-canvas-pages-485--pull (&key modules-error)
+    "Pull pages with the list disabled; MODULES-ERROR fails the modules too."
+    (let ((org-canvas-pages-file test-file)
+          (disabled '("That page has been disabled for this course (HTTP 404)")))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &optional _params)
+                     (cond
+                      ((string-match-p "/pages\\'" url)
+                       (signal 'org-canvas-feature-disabled-error disabled))
+                      (modules-error
+                       (signal 'org-canvas-api-error '("Server error (HTTP 500)")))
+                      ((string-match-p "/modules/2/items\\'" url)
+                       '(((type . "Page") (page_url . "cohort-calendar"))))
+                      ((string-match-p "/modules\\'" url)
+                       '(((id . 1)
+                          (items . [((type . "Page") (page_url . "welcome"))
+                                    ((type . "Assignment") (content_id . 9))
+                                    ((type . "Page") (page_url . "welcome"))
+                                    ((type . "Page") (page_url . "hidden"))]))
+                         ((id . 2)))))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest _args)
+                     (push url requests)
+                     (cond
+                      ((string-match-p "/pages/hidden\\'" url)
+                       (signal 'org-canvas-feature-disabled-error disabled))
+                      ((string-match-p "/pages/welcome\\'" url)
+                       '((url . "welcome") (title . "Welcome") (page_id . 7)
+                         (body . "<p>Hello</p>")))
+                      (t '((url . "cohort-calendar") (title . "Cohort Calendar")
+                           (page_id . 8) (body . "<p>Dates</p>"))))))
+                  ((symbol-function 'org-canvas--log-warning) #'ignore)
+                  ((symbol-function 'org-canvas-clear-log) #'ignore)
+                  ((symbol-function 'display-buffer) #'ignore))
+          (org-canvas-pull-pages)))))
+
+  (it "pulls each page the modules link, one request apiece"
+    (test-org-canvas-pages-485--pull)
+    (let ((content (with-temp-buffer
+                     (insert-file-contents test-file)
+                     (buffer-string))))
+      (expect content :to-match "^\\* Welcome")
+      (expect content :to-match "^\\* Cohort Calendar")
+      (expect content :to-match ":CANVAS_URL: +welcome")
+      (expect content :to-match "Hello")
+      (expect content :to-match "Dates"))
+    ;; Read once each, never fetched a second time for its body.
+    (expect (length requests) :to-equal 3))
+
+  (it "says in the summary that the list came from modules"
+    (test-org-canvas-pages-485--pull)
+    (let* ((skips (org-canvas--pull-summary-records-of-kind 'skip))
+           (note (cl-find "pages no module links" skips
+                          :key (lambda (r) (plist-get r :item)) :test #'equal)))
+      (expect (plist-get note :error) :to-match "pulled the 2 page(s) modules link")
+      (expect (cl-find "hidden" skips
+                       :key (lambda (r) (plist-get r :item)) :test #'equal)
+              :to-be-truthy)
+      (expect (org-canvas--pull-summary-records-of-kind 'error) :to-be nil)))
+
+  (it "lets the refusal stand when the modules cannot be read either"
+    (expect (test-org-canvas-pages-485--pull :modules-error t)
+            :to-throw 'org-canvas-feature-disabled-error)
+    (expect (file-exists-p test-file) :to-be nil)))
+
+(describe "org-canvas--pull-list-remote (issue #485)"
+  (it "signals the refusal again without a fallback, or when it finds nothing"
+    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+               (lambda (&rest _)
+                 (signal 'org-canvas-permission-error '("Permission denied (HTTP 403)")))))
+      (expect (org-canvas--pull-list-remote "u" nil)
+              :to-throw 'org-canvas-permission-error)
+      (expect (org-canvas--pull-list-remote "u" nil #'ignore)
+              :to-throw 'org-canvas-permission-error)
+      (expect (org-canvas--pull-list-remote "u" nil (lambda (_err) '(((id . 1)))))
+              :to-equal '(((id . 1))))))
+
+  (it "leaves any other failure alone"
+    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+               (lambda (&rest _) (signal 'org-canvas-api-error '("boom")))))
+      (expect (org-canvas--pull-list-remote "u" nil (lambda (_err) '(x)))
+              :to-throw 'org-canvas-api-error))))
+
 ;;; org-canvas-pages-test.el ends here

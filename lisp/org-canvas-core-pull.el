@@ -1313,6 +1313,20 @@ lose every heading and its text on a misread."
          (insert-file-contents file)
          (re-search-forward "^\\*+ " nil t))))
 
+(defun org-canvas--pull-list-remote (endpoint params &optional fallback-fn)
+  "Return every item ENDPOINT lists with PARAMS.
+When Canvas refuses the list — a role refusal, or a tab the course has
+disabled (`org-canvas--api-skip-error-p') — FALLBACK-FN, if given, is
+called with the error and may return the items gathered another way:
+a course can hide its Pages tab and still serve each page a module
+links (issue #485).  A nil answer, or no FALLBACK-FN, signals the
+refusal again, so the type is counted a skip as before."
+  (condition-case err
+      (org-canvas-api-request-all-pages 'GET endpoint params)
+    ((org-canvas-permission-error org-canvas-feature-disabled-error)
+     (or (and fallback-fn (funcall fallback-fn err))
+         (signal (car err) (cdr err))))))
+
 (defmacro org-canvas-define-pull (feature &rest args)
   "Define `org-canvas-pull-FEATURE' function.
 FEATURE is a symbol like \\='pages or \\='announcements.
@@ -1321,6 +1335,9 @@ ARGS is a plist with the following keys:
   :file        - Symbol for file path defcustom (required)
   :endpoint    - API endpoint suffix string (required)
   :params      - Extra GET params alist (optional)
+  :list-fallback-fn - Function (err) gathering the items another way when
+                 Canvas refuses the list (optional; see
+                 `org-canvas--pull-list-remote')
   :pull-item-fn - Function (item pos) for per-item property setting (required)
   :skip-fn     - Predicate (item) to skip item when non-nil (optional)
   :skip-reason - Short phrase naming why `:skip-fn' skips, reported in
@@ -1358,6 +1375,7 @@ Example:
          (file-expr (plist-get args :file))
          (endpoint-expr (plist-get args :endpoint))
          (params-expr (plist-get args :params))
+         (list-fallback-fn (plist-get args :list-fallback-fn))
          (item-fn (plist-get args :pull-item-fn))
          (skip-fn (plist-get args :skip-fn))
          (skip-reason (plist-get args :skip-reason))
@@ -1384,8 +1402,8 @@ wholesale (issue #67)." feature-name)
          (org-canvas--start-operation ,(format "PULLING %s" op-label))
          (let* ((file (expand-file-name ,file-expr))
                 (endpoint (org-canvas-api-course-endpoint ,endpoint-expr))
-                (remote (org-canvas-api-request-all-pages
-                         'GET endpoint ,params-expr))
+                (remote (org-canvas--pull-list-remote
+                         endpoint ,params-expr ,list-fallback-fn))
                 (count 0)
                 (skipped 0)
                 (known-ids (when managed-only
