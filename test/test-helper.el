@@ -438,6 +438,15 @@ Suppresses `org-canvas-clear-log' and `display-buffer' side effects."
              ((symbol-function 'display-buffer) (lambda (_) nil)))
      ,@body))
 
+;; A classic quiz pull lists each quiz's question groups (issue #492)
+(defun test-org-canvas-quiz-no-groups (_method url &rest _)
+  "Stand in for `org-canvas-api-request' in a quiz pull with no groups.
+Answer a quiz's groups list (URL ending in /groups) with no groups and
+refuse any other URL as an unmocked call, so the stub hides nothing."
+  (if (string-match-p "/quizzes/[0-9]+/groups\\'" url)
+      '((quiz_groups . []))
+    (error "Unmocked org-canvas-api-request in a quiz pull test: %s" url)))
+
 (defun test-org-canvas-pull-texts (file-var pull-fn api-fn &optional initial times)
   "Run PULL-FN TIMES times (default 2) and return the file text after each.
 FILE-VAR names the `org-canvas-*-file' variable, bound to a fresh

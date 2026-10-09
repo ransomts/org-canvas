@@ -259,7 +259,8 @@ Read the syllabus first.
   (it "runs from org-canvas-pull-quizzes and keeps the table out of the description"
     (test-accommodations--with-course
         (list (test-accommodations--submission 9 0 20 nil))
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+      (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                ((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (_method url &optional _params)
                    ;; A stub of the paginated helper answers the rows
                    ;; themselves; the unwrap happens inside the real one.
@@ -328,7 +329,8 @@ on the quiz heading."
   `(dolist (path '(whole single))
      (test-accommodations--with-course test-accommodations--submissions
        (with-temp-file org-canvas-quizzes-file (insert ,content))
-       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+       (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                 ((symbol-function 'org-canvas-api-request-all-pages)
                   (lambda (_method url &optional _params)
                     (cond ((string-match "/submissions" url) test-accommodations--submissions)
                           ((string-match "/questions" url) nil)

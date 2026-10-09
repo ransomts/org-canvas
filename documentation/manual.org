@@ -1045,7 +1045,7 @@ names it and its questions are written at level 2, ungrouped.
 - *Bank ID is create-only*: ~assessment_question_bank_id~ is accepted on POST but ignored on PUT.  To change the bank, delete the group from Canvas and remove ~CANVAS_ID~ from the heading, then re-sync.
 - *Bank ID must be obtained manually*: Canvas has no public API for listing question banks.  Get the ID from the Canvas UI URL after QTI import.
 - *Invalid bank IDs are silently accepted*: Canvas creates the group without linking to a bank.  Verify the bank exists in Canvas before syncing.
-- *A group nobody names is not pulled*: a group whose questions all live in a bank names no question in the Quiz Questions API, so a pull cannot discover it; a group holding its own questions is pulled (see above).
+- *A bank-only group is pulled without its questions*: a pull lists each quiz's groups, so a group drawing every question from a bank is written as a =TYPE: group= heading with its =QUESTION_BANK_ID= and no level-3 questions; the bank's own questions are not pulled (#492).  Should Canvas refuse the groups list, the pull falls back to fetching each group a question names, and a bank-only group is then left out.
 - *Bank questions are invisible via API*: Questions from banks are resolved at quiz delivery time and do not appear in the Quiz Questions API response.
 - *Classic Quizzes only*: This feature is for Classic Quizzes.  New Quizzes uses a separate "item banks" system with a different API.
 

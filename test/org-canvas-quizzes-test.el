@@ -2382,7 +2382,8 @@ Content.
 :END:
 "
      (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+     (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+               ((symbol-function 'org-canvas-api-request-all-pages)
                 (lambda (_method _url &optional _params)
                   '(((question_name . "Q1") (question_text . "Body")
                      (question_type . "short_answer_question")
@@ -2400,7 +2401,8 @@ Content.
 :END:
 "
      (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+     (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+               ((symbol-function 'org-canvas-api-request-all-pages)
                 (lambda (_method _url &optional _params)
                   (signal 'error '("API error")))))
        ;; Should not throw
@@ -2415,7 +2417,8 @@ Content.
           (let ((org-canvas-quizzes-file quiz-file))
             (with-org-canvas-test-config
               (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                          ((symbol-function 'org-canvas-api-request-all-pages)
                            (lambda (_method url &optional _params)
                              (if (string-match "questions" url)
                                  '()
@@ -2447,7 +2450,8 @@ Content.
             (let ((org-canvas-quizzes-file quiz-file))
               (with-org-canvas-test-config
                 (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                            ((symbol-function 'org-canvas-api-request-all-pages)
                              (lambda (_method url &optional _params)
                                (if (string-match "questions" url)
                                    '()
@@ -2470,7 +2474,8 @@ Content.
           (let ((org-canvas-quizzes-file quiz-file))
             (with-org-canvas-test-config
               (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                          ((symbol-function 'org-canvas-api-request-all-pages)
                            (lambda (_method _url &optional _params) '()))
                           ((symbol-function 'org-canvas--html-to-org)
                            (lambda (html) html)))
@@ -3506,7 +3511,8 @@ Write an essay.
       (unwind-protect
           (progn
             (with-temp-file temp (insert ""))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (cond
                           ((string-match-p "quizzes\\'" url)
@@ -3540,7 +3546,8 @@ Write an essay.
       (unwind-protect
           (progn
             (with-temp-file temp (insert ""))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (cond
                           ((string-match-p "quizzes\\'" url)
@@ -3567,7 +3574,8 @@ Write an essay.
       (unwind-protect
           (progn
             (with-temp-file temp (insert ""))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (cond
                           ((string-match-p "quizzes\\'" url)
@@ -3665,7 +3673,8 @@ This is inline.
       (unwind-protect
           (progn
             (with-temp-file temp (insert ""))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (cond
                           ((string-match-p "quizzes\\'" url) quiz-data)
@@ -3738,7 +3747,8 @@ old Q text B
       (unwind-protect
           (progn
             (with-temp-file temp (insert initial))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (cond
                           ((string-match-p "quizzes\\'" url) quiz-data)
@@ -4041,7 +4051,8 @@ it, and <p> as a paragraph; the rest is left as it is."
       (unwind-protect
           (progn
             (with-temp-file temp (insert ""))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (cond
                           ((string-match-p "quizzes\\'" url)
@@ -4266,7 +4277,8 @@ URL, a POST with id 900, and the question list GET with REMOTE."
       (unwind-protect
           (progn
             (with-temp-file temp (insert initial))
-            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
                        (lambda (_method url &rest _)
                          (if (string-match-p "quizzes\\'" url) quiz-data questions)))
                       ((symbol-function 'message) #'ignore))
@@ -4360,9 +4372,13 @@ With REFUSE-GROUP the group request signals an API error."
                       ((symbol-function 'org-canvas-api-request)
                        (lambda (_method url &rest _)
                          (cl-incf group-calls)
-                         (if (and (string-match-p "/groups/7\\'" url) (not refuse-group))
-                             test-quiz-243--group
-                           (signal 'org-canvas-api-error (list "403 Forbidden")))))
+                         (cond
+                          (refuse-group
+                           (signal 'org-canvas-api-error (list "403 Forbidden")))
+                          ((string-match-p "/groups\\'" url)
+                           `((quiz_groups . [,test-quiz-243--group])))
+                          ((string-match-p "/groups/7\\'" url) test-quiz-243--group)
+                          (t (signal 'org-canvas-api-error (list "404 Not Found"))))))
                       ((symbol-function 'org-canvas--log-warning)
                        (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned)))
                       ((symbol-function 'message) #'ignore))
@@ -4484,6 +4500,108 @@ old
         (expect (length posted) :to-equal 2)
         (let ((grouped (cl-find-if (lambda (p) (string-match-p "questions/1\\'" (nth 1 p))) posted)))
           (expect (alist-get 'quiz_group_id (alist-get 'question (nth 2 grouped))) :to-equal 7))))))
+
+(describe "quiz pull writes a group that draws only from a bank (issue #492)"
+  (defconst test-quiz-492--bank-group
+    '((id . 531944) (quiz_id . 100) (name . "Module 7 Quiz") (pick_count . 10)
+      (question_points . 3.0) (assessment_question_bank_id . 572313) (position . 1))
+    "A group naming no question of the quiz: all ten come from bank 572313.")
+
+  (defun test-quiz-492--pull (initial questions list-reply &optional times)
+    "Pull QUESTIONS over INITIAL TIMES times (default 2); return (TEXT URLS).
+LIST-REPLY answers the quiz's groups list, or `refuse' for a 403.  A
+request for one group answers group 7 of #243.  URLS lists every
+`org-canvas-api-request' made, oldest first."
+    (let ((temp (make-temp-file "quiz-492-" nil ".org"))
+          (urls nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert initial))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (if (string-match-p "quizzes\\'" url)
+                             '(((id . 100) (title . "Quiz A") (description . "") (published . t)))
+                           questions)))
+                      ((symbol-function 'org-canvas-api-request)
+                       (lambda (_method url &rest _)
+                         (push url urls)
+                         (cond
+                          ((string-match-p "/groups/7\\'" url) test-quiz-243--group)
+                          ((and (string-match-p "/groups\\'" url) (not (eq list-reply 'refuse)))
+                           list-reply)
+                          (t (signal 'org-canvas-api-error (list "403 Forbidden"))))))
+                      ((symbol-function 'message) #'ignore))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (dotimes (_ (or times 2))
+                      (org-canvas-pull-quizzes))))))
+            (list (with-temp-buffer (insert-file-contents temp) (buffer-string))
+                  (nreverse urls)))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "writes the bank-only group as a group heading with its bank id, once, after two pulls"
+    (let* ((result (test-quiz-492--pull
+                    "" nil `((quiz_groups . [,test-quiz-492--bank-group]))))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* Module 7 Quiz$" text) :to-equal 1)
+      (expect text :to-match ":CANVAS_ID: +531944\n")
+      (expect text :to-match ":TYPE: +group\n")
+      (expect text :to-match ":PICK_COUNT: +10\n")
+      (expect text :to-match ":QUESTION_POINTS: +3.0\n")
+      (expect text :to-match ":QUESTION_BANK_ID: +572313\n")
+      (expect text :not :to-match "^\\*\\*\\* ")))
+
+  (it "rewrites a hand-written group heading stamped with the group's id in place"
+    (let* ((result (test-quiz-492--pull
+                    "* Quiz A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Module 7 Quiz
+:PROPERTIES:
+:CANVAS_ID: 531944
+:TYPE: group
+:PICK_COUNT: 5
+:END:
+"
+                    nil `((quiz_groups . [,test-quiz-492--bank-group])) 1))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* Module 7 Quiz$" text) :to-equal 1)
+      (expect text :to-match ":PICK_COUNT: +10\n")
+      (expect text :not :to-match ":PICK_COUNT: +5\n")))
+
+  (it "takes a named group from the list, with no request of its own"
+    (let* ((result (test-quiz-492--pull
+                    "" (list (test-quiz-243--question 1 "A1" 7))
+                    `((quiz_groups . [,test-quiz-243--group ,test-quiz-492--bank-group]))
+                    1))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* Pool$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\*\\* A1$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* Module 7 Quiz$" text) :to-equal 1)
+      (expect (string-match "\\*\\* Pool" text)
+              :to-be-less-than (string-match "\\*\\* Module 7 Quiz" text))
+      (expect (cl-count-if (lambda (u) (string-match-p "/groups/" u)) (nth 1 result))
+              :to-equal 0)))
+
+  (it "falls back to fetching each named group when the list is refused"
+    (let* ((result (test-quiz-492--pull
+                    "" (list (test-quiz-243--question 1 "A1" 7)) 'refuse 1))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* Pool$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\*\\* A1$" text) :to-equal 1)
+      (expect text :not :to-match "Module 7 Quiz")
+      (expect (cl-count-if (lambda (u) (string-match-p "/groups/7\\'" u)) (nth 1 result))
+              :to-equal 1)))
+
+  (it "lists the groups once per quiz"
+    (let ((result (test-quiz-492--pull "" nil '((quiz_groups . [])) 1)))
+      (expect (nth 1 result)
+              :to-equal (list (concat test-org-canvas-base-url
+                                      "/api/v1/courses/99999/quizzes/100/groups"))))))
 
 ;;;; Single-item pull (issue #295)
 
@@ -4794,7 +4912,9 @@ Unpushed wording.
 
 (describe "A quizzes re-pull leaves the file as it was (issue #403)"
   (it "writes the same quizzes, descriptions and questions on every pull"
-    (let ((texts (test-org-canvas-pull-texts
+    (let ((texts (cl-letf (((symbol-function 'org-canvas-api-request)
+                            #'test-org-canvas-quiz-no-groups))
+                   (test-org-canvas-pull-texts
                   'org-canvas-quizzes-file #'org-canvas-pull-quizzes
                   (lambda (_method url &rest _)
                     (cond
@@ -4810,7 +4930,7 @@ Unpushed wording.
                         ((id . 2) (question_name . "A2")
                          (question_type . "essay_question")
                          (question_text . "u") (points_possible . 2.0) (answers . []))))))
-                  nil 3)))
+                  nil 3))))
       (expect (car texts) :to-match "^\\*\\* A2$")
       (expect (nth 1 texts) :to-equal (car texts))
       (expect (nth 2 texts) :to-equal (car texts)))))
