@@ -1194,6 +1194,31 @@ search), so a spec can script which login carries the token."
          (expect msg :to-match "group categories")
          (expect msg :to-match "user not authorized to perform that action")))))
 
+  (it "404 for a disabled tab -> feature-disabled error, an api error still (issue #486)"
+    (let ((err (cons 'plz-http-error
+                     (list "HTTP error"
+                           (make-plz-error
+                            :response (make-plz-response
+                                       :status 404
+                                       :body "{\"status\":\"not_found\",\"message\":\"That page has been disabled for this course\"}"))))))
+      (condition-case caught
+          (org-canvas--api-handle-plz-error err "u")
+        (org-canvas-api-error
+         (expect (car caught) :to-be 'org-canvas-feature-disabled-error)
+         (expect (error-message-string caught)
+                 :to-match "disabled for this course (HTTP 404)")
+         (expect (org-canvas--api-skip-error-p caught) :to-be t)
+         ;; Not the 404 that marks a heading deleted.
+         (expect (org-canvas--api-not-found-p caught) :to-be nil)))))
+
+  (it "any other 404 stays a plain api error (issue #486)"
+    (condition-case caught
+        (org-canvas--api-handle-plz-error
+         (org-canvas-fault--status-err 404 "not found") "u")
+      (org-canvas-api-error
+       (expect (car caught) :to-be 'org-canvas-api-error)
+       (expect (org-canvas--api-skip-error-p caught) :to-be nil))))
+
   (it "502/503/504 -> :retry-transient"
     (dolist (status '(502 503 504))
       (expect (org-canvas--api-handle-plz-error

@@ -1882,6 +1882,20 @@ from; without it the pull creates the file.  Returns a plist
       (expect kind :to-equal 'skip)
       (expect (plist-get rec :item) :to-equal "navigation tabs")))
 
+  (it "records a disabled tab on the navigation tabs as a skip (issue #486)"
+    (let* ((result (test-org-canvas-settings--pull-with
+                    (lambda (url)
+                      (cond
+                       ((string-match "late_policy" url) nil)
+                       ((string-match "tabs" url)
+                        (signal 'org-canvas-feature-disabled-error
+                                '("That page has been disabled for this course (HTTP 404)")))
+                       (t test-org-canvas-settings--course-response)))))
+           (rec (car (plist-get result :records)))
+           (kind (plist-get rec :kind)))
+      (expect kind :to-equal 'skip)
+      (expect (plist-get rec :item) :to-equal "navigation tabs")))
+
   (it "keeps any other late-policy failure an error (issue #397)"
     (let* ((result (test-org-canvas-settings--pull-with
                     (lambda (url)

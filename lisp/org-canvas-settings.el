@@ -813,10 +813,10 @@ A role refusal (`org-canvas-permission-error') is a skip, as
 `org-canvas--safe-pull' counts one for a whole type (issue #155) and
 `org-canvas--rewrite-record-failure' for a body file link (issue
 #390): a Designer enrolment 403s on the late policy, which is a gap
-to accept, not something that broke (issue #397).  Anything else is
-an error."
-  (let ((skip (memq 'org-canvas-permission-error
-                    (get (car err) 'error-conditions)))
+to accept, not something that broke (issue #397).  A tab the course
+has disabled is a skip too (`org-canvas--api-skip-error-p', issue
+#486).  Anything else is an error."
+  (let ((skip (org-canvas--api-skip-error-p err))
         (msg (error-message-string err)))
     (org-canvas--log-warning org-canvas--logger
       "[Pull] Settings: %s not pulled (%s); settings.org keeps what it had"
