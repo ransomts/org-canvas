@@ -163,6 +163,8 @@ If NAME is nil and called interactively, prompt with completion."
       (unless (file-exists-p cred-file)
         (user-error "No org-canvas-credentials.el in %s" dir))
       (load cred-file nil t)
+      ;; Style settings live apart from the token (issue #499).
+      (org-canvas-load-course-config dir)
       ;; A token rotated in authinfo for the same host and course would
       ;; otherwise stay cached until Emacs restarts (issue #138).
       (org-canvas--api-token-forget)

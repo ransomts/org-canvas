@@ -1,0 +1,13 @@
+* Added
+- #484 =org-canvas-submissions-draft-late-notes= (and =scripts/org-canvas
+  draft-late-notes [--hold ID,ID] FILE...=) drafts the late-policy
+  comment of every late student with a score, under =Comment to post=:
+  when it came in, the due time it missed, the lateness, the percent
+  the course late policy takes and the score after it, from
+  =org-canvas-submissions-late-note-format=.  A note already drafted or
+  sent is left alone, one whose numbers a regrade changed is named,
+  held students are named and skipped, and a dry run shows each note.
+  Nothing is sent.
+- #484 The submissions pull writes =DUE_AT=, the due time a late
+  submission missed (the student's own, with any override), beside
+  =DAYS_LATE=.
