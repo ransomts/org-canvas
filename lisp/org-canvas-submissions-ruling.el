@@ -53,12 +53,19 @@ RULING is the plist `org-canvas-submissions-apply-ruling' takes."
     (unless (or (null row-comment) (stringp row-comment)
                 (org-canvas--submissions-ruling-empty-p row-comment))
       (user-error "Ruling :row-comment is %S; give a string, `empty' or nil" row-comment))
-    (unless (or (null score) (numberp score) (functionp score))
-      (user-error "Ruling :score is %S; give a number, a function or nil" score))
+    (unless (or (null score) (numberp score) (functionp score)
+                (org-canvas--submissions-ruling-excuse-p score))
+      (user-error "Ruling :score is %S; give a number, \"EX\", a function or nil"
+                  score))
     (unless (or (null comment) (stringp comment))
       (user-error "Ruling :comment is %S; give a string or nil" comment))
     (when (and comment (string-match-p "^[ \t]*#" comment))
       (user-error "Ruling :comment has a line starting with #, which Org reads as a comment"))))
+
+(defun org-canvas--submissions-ruling-excuse-p (score)
+  "Return non-nil when SCORE, a ruling's, is \"EX\": excuse the student.
+Any spelling SCORE accepts, \"ex\" or \"excused\" too (issue #501)."
+  (and (stringp score) (equal (org-canvas--submissions-parse-score score) "EX")))
 
 (defun org-canvas--submissions-ruling-row (ruling row)
   "Return ROW, a Rubric row, as an (ID SCORE COMMENT) triple after RULING."
@@ -90,6 +97,7 @@ the column's points; what it returns below 0 is 0."
   (let ((score (plist-get ruling :score)))
     (cond ((null score) nil)
           ((numberp score) (org-canvas--submissions-format-number score))
+          ((stringp score) "EX")
           (t (let ((total (apply #'+ (mapcar (lambda (tr)
                                                (org-canvas--submissions-ruling-number
                                                 (nth 1 tr)))
@@ -102,9 +110,11 @@ the column's points; what it returns below 0 is 0."
 (defun org-canvas--submissions-ruling-disagrees (score triples)
   "Return why SCORE cannot stand beside TRIPLES, or nil when it can.
 Only on a column whose grade comes from its rubric, where the push
-refuses a SCORE that is not the rows' total."
+refuses a SCORE that is not the rows' total.  An excusal stands
+beside any rows, as the push lets it."
   (let ((total (org-canvas--submissions-rubric-total triples)))
-    (when (and score total (org-canvas--submissions-rubric-for-grading-p)
+    (when (and score total (not (equal score "EX"))
+               (org-canvas--submissions-rubric-for-grading-p)
                (/= (string-to-number score) (string-to-number total)))
       (format "SCORE %s disagrees with the rubric total %s, and the rubric is used for grading"
               score total))))
@@ -251,7 +261,8 @@ strings.  For each listed student:
                rows' total after the ruling and the column's points
                \(POINTS_POSSIBLE, else the rows' Max summed), as in
                (lambda (total max) (- total (* 0.2 max))), whose
-               result below 0 is 0; nil leaves SCORE;
+               result below 0 is 0; \"EX\" excuses the student;
+               nil leaves SCORE;
   COMMENT      the draft under Comment to post, replacing one there
                \(the heading is added when missing); nil leaves it;
   NOTE         the reason, written in the Notes item.
@@ -295,8 +306,8 @@ for each student kept back; :dry-run."
 
 (defun org-canvas--submissions-ruling-json-score (value)
   "Return VALUE, a JSON ruling's score, as the ruling function takes it.
-A number is itself; (:deduct-percent P) is the rows' total less P% of
-the column's points."
+A number is itself, and so is \"EX\"; (:deduct-percent P) is the
+rows' total less P% of the column's points."
   (if (and (consp value) (plist-member value :deduct-percent))
       (let ((percent (plist-get value :deduct-percent)))
         (unless (numberp percent)
@@ -317,9 +328,9 @@ The file holds one ruling object or an array of them."
 (defun org-canvas-submissions-apply-ruling-json (file path)
   "Apply each ruling of the JSON file PATH to grading file FILE.
 Each ruling is an object with user_ids (an array) and any of rows (a
-number or \"empty\"), row_comment, score (a number, or
-{\"deduct_percent\": P} for the rows' total less P% of the column's
-points), comment and note, as `org-canvas-submissions-apply-ruling'
+number or \"empty\"), row_comment, score (a number, \"EX\" to excuse,
+or {\"deduct_percent\": P} for the rows' total less P% of the
+column's points), comment and note, as `org-canvas-submissions-apply-ruling'
 takes them.  Return the list of results, one per ruling."
   (mapcar (lambda (r)
             (org-canvas-submissions-apply-ruling

@@ -1,0 +1,16 @@
+* Fixed
+- #496 A grade push whose Canvas job outlived the wait (=:state
+  unconfirmed=) stored its Rubric rows but left =CANVAS_RUBRIC= behind,
+  so the next refresh marked every pushed student =CONFLICT= (=rubric:
+  assessed on Canvas since these rows were typed=) although the typed
+  rows and Canvas's were the same.  A refresh now leaves typed rows
+  Canvas already holds as pulled, the fresh =CANVAS_RUBRIC= their
+  baseline, as it already did for a typed score.  The push's own check
+  does the same: a change whose score, rows and late status Canvas
+  already holds is sent again and recorded, not held as a conflict.
+* Added
+- #496 =org-canvas-submissions-resolve-conflicts= resolves the
+  =CONFLICT= of a list of students in a grading file by user id,
+  taking Canvas's grade or keeping the typed one, as =t= and =k= do at
+  point; from the shell, =scripts/org-canvas take FILE USER-ID...= and
+  =keep FILE USER-ID...=.

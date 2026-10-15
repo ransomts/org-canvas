@@ -124,7 +124,7 @@ ARGS=, which is also the line to use without it.
 | =overview=                    | =org-canvas-status= (local, no API call)           |                    |
 | =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
-| =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores | |
+| =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
@@ -133,12 +133,20 @@ ARGS=, which is also the line to use without it.
 | =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
+| =post ASSIGNMENT...= | =org-canvas-post-grades=, no grading file needed (=--queue=: every column the queue marks =post=) | a column was not posted |
+| =take FILE USER-ID...= | =org-canvas-submissions-resolve-conflicts=, taking Canvas's grade | an id had no heading or no =CONFLICT= |
+| =keep FILE USER-ID...= | the same, keeping the typed grade | an id had no heading or no =CONFLICT= |
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
 | =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
+| =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
+| =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
+| =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
+| =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
+| =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
 | =version= (=--version=, =-V=) | the version, commit and directory loaded           |                    |
@@ -154,9 +162,16 @@ feature is a module's name, singular or plural, and ends at the first
 colon or hash sign, so a title may hold either.  =publish= and
 =unpublish= take the same names, for assignments, quizzes, discussions
 and pages (see [[*Publishing One Heading][Publishing One Heading]]).
+=adopt= takes the same names, or =--all= for every CHANGED row of the
+drift report, and writes what Canvas holds of the fields each row
+names (see [[*Adopting the Drift][Adopting the Drift]]); =--body= lets
+it replace a body, and =--overrides= appends the heading's EXTRA
+override rows to its table.  =show= takes the same names and prints
+each heading's Canvas version, writing nothing (see [[*Showing the
+Canvas Version][Showing the Canvas Version]]).
 =--dry-run= (=-n=)
 before the command makes =push=, =publish=, =unpublish=,
-=push-comments= and =sync= send nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
+=push-comments= and =sync= send nothing, and =adopt= write nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
 among its arguments) sets =org-canvas-conflict-strategy= for that run
 alone: =push= overwrites Canvas, =pull= overwrites the heading, and
 =skip= leaves the entry alone and names it, which is also what a batch
@@ -172,7 +187,13 @@ or with =--only 5001,5002= only those students' rows (see
 =--dry-run= may also follow the command, and prints one line per
 student with the fields that would be sent.  It exits 1 when a grade
 did not land, a row was held as a conflict, a sent-comment change was
-not sent, or an =--only= id had no row or nothing to send.  =pull-queue=
+not sent, or an =--only= id had no row or nothing to send.  =post=
+takes columns by Canvas id or exact name and posts their grades, with
+no grading file, so a column graded elsewhere and sent to Canvas posts
+as one graded in Org does (see [[*Posting a Column Without a Grading File][Posting a Column Without a Grading File]]);
+=post --queue= posts every column the grading queue marks =post=, and
+=-n= sends nothing.  =take= and =keep= resolve the =CONFLICT= of the
+students named by user id in one grading file (see [[*Conflicts][Conflicts]]).  =pull-queue=
 needs a version of org-canvas that defines
 =org-canvas-submissions-pull-queue= (#415), and says so otherwise.
 =pull-all= imports the whole course, as =M-x org-canvas-pull-all= does,
@@ -255,6 +276,7 @@ silently.
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; API credentials (gitignored)
+├── org-canvas-config.el       ; Optional course settings, no secrets (comment rules)
 ├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
@@ -598,6 +620,15 @@ This uploads the local image to Canvas and sets it as the course card image.  Yo
 Image links in page, announcement, discussion, and assignment body text (=[[file:diagram.png]]=) are automatically uploaded to Canvas and replaced with preview URLs during sync.  Supported formats: PNG, JPEG, GIF, SVG, WebP, BMP.
 
 Images are uploaded to a Canvas folder named =org-canvas-images/= and cached per sync session to avoid re-uploading unchanged files.
+
+A bare image link becomes an =<img>= in the pushed body, whose =src= is the image's =/courses/<id>/files/<file-id>/preview= URL, the form Canvas's own editor writes.  The paragraph's =#+ATTR_HTML= attributes land on the =<img>=, so give every figure its alt text there (unquoted: =:alt "x"= keeps the quotes):
+
+#+begin_src org
+,#+ATTR_HTML: :alt Bar chart of quiz scores by week :width 400
+[[file:images/scores.png]]
+#+end_src
+
+An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file, so a pull followed by a push sends it back as an image; pandoc drops an =<img>='s alt text, though, so a pull does not bring =#+ATTR_HTML= back.
 
 *** Links to Other Local Files
 
@@ -2400,6 +2431,33 @@ lacks (which keeps Canvas's weight and rules), is listed above the
 tables.  Nothing is sent, and the what-if makes no request at all;
 pull the gradebook again for newer scores.
 
+*** A Student's Own Grades
+
+Every gradebook pull first reads the course once with its totals
+(=GET /courses/:id?include[]=total_scores=), which also names the
+token's own enrolments in it.  When the token holds a student
+enrolment and no teacher, TA or designer one, the class tables would
+be a roster of classmates with no scores and notes on refused
+analytics, so the pull writes the student's own standing instead and
+removes the Students, Sections, Assignments and Groups headings:
+
+- =* My grades=: one table, by due date with undated work last, with
+  Assignment, Due, Points, Score, Grade, Status (Canvas's
+  =workflow_state=, or =excused=), Late and Missing (=yes= or =no=),
+  from the student's own submissions
+  (=students/submissions?include[]=assignment&include[]=submission_comments=).
+  The Assignment cell links to =assignments.org= as in the teacher's
+  table.  Under it, one line with the current and final totals Canvas
+  computes for the enrolment, the letter beside each when the course
+  shows one, =-= when the course hides totals; then, under
+  =Comments:=, one item per submission comment with its assignment,
+  author and time
+
+A score the instructor has not posted is =-=, as Canvas shows it to the
+student.  A teacher's pull is unchanged, and removes a =* My grades=
+heading a student pull left.  The Groups table reuses the same course
+read, so a teacher's pull costs no extra request with it on.
+
 *** Personal Data
 
 Scores are more sensitive than names.  Only the name, the numbers and
@@ -2419,7 +2477,9 @@ logs a warning instead; remove it from the index yourself
 
 From the shell, =scripts/org-canvas gradebook= pulls the file and
 prints the Sections table and the course's mean and median scores
-(see [[*Running from the Shell][Running from the Shell]]).
+(see [[*Running from the Shell][Running from the Shell]]); for a student token, the My grades
+heading and a line with the assignment and missing counts and the
+two totals.
 
 ** grading-schemes.org
 
@@ -3171,7 +3231,16 @@ Per feature:
   change is in something the report does not compare (overrides, a rubric
   association).  Such a row has nothing to push or pull; =a= on it adopts
   the Canvas timestamp as the heading's baseline instead (see
-  [[*Adopting a Stamp][Adopting a Stamp]]).
+  [[*Adopting a Stamp][Adopting a Stamp]]).  For assignments, pages,
+  quizzes, discussions and announcements, whose push sends the heading
+  as the title, a title Canvas holds otherwise is a =TITLE= field of the
+  row (#498).  A heading silent on =PUBLISHED= is compared as the push
+  sends it, published, so an item unpublished on Canvas reads
+  =PUBLISHED org: (unset: true) canvas: false=; a pull leaves
+  =PUBLISHED= out exactly when Canvas holds true.  =A= on a CHANGED row
+  writes what Canvas holds of its fields into the heading, and ~=~
+  shows the Canvas version in full (see [[*Adopting the Drift][Adopting
+  the Drift]]).
 - *MISSING* -- a heading carries a Canvas id the course no longer has.
 - *EXTRA* -- an item in the course that no Org heading claims.  An extra
   assignment or assignment group carries a second line saying what it is,
@@ -3400,6 +3469,9 @@ something the keys act on:
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
 | =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming; the question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved first (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
+| =A=       | CHANGED                 | Write what Canvas holds of the fields the row names into the heading, and nothing else (=org-canvas-diff-adopt-drift=); a body only if you say so; sends nothing |
+| =A=       | EXTRA (an override)     | Append the override to the heading's overrides table, the other rows untouched; sends nothing |
+| ~=~       | CHANGED                 | Show the Canvas version in full: every compared property, the title, and the body as HTML, as Org and as a unified diff (=org-canvas-diff-show-row=); writes nothing |
 | =p=       | CHANGED, EXTRA (New Quiz items) | Pull the quiz the item sits in over its heading, items included, after confirming |
 | =p=       | EXTRA (classic and New Quizzes) | Pull the quiz, questions or items and all, into a new heading at the end of =quizzes.org= or =new-quizzes.org=, after confirming |
 | =s=       | MOVED                   | Stamp the item id on the heading the row paired (=org-canvas-diff-stamp-move=); sends nothing |
@@ -3408,7 +3480,7 @@ something the keys act on:
 | =TAB= / =S-TAB= | anywhere          | Move to the next / previous row                                     |
 
 An action rewrites its row in place (=ACK=, =DELETED=, =PULLED=, =DROPPED=,
-=ADOPTED=, =STAMPED=) rather than re-running every list request; =g= refreshes when you
+=ADOPTED=, =PARTIAL=, =STAMPED=) rather than re-running every list request; =g= refreshes when you
 want the totals recounted.  Acknowledgments are persisted through
 =org-canvas-diff-acknowledge-function=, which receives the whole new list.
 The default saves with =customize-save-variable=; a course that keeps its
@@ -3437,6 +3509,88 @@ asks (not in batch), adopts, and reports what it adopted, what it could
 not find, and how many =CHANGED= rows it left alone because a property
 differs.  A settings push that changes the post policy logs a warning
 naming this command as the follow-up.
+
+** Adopting the Drift
+
+A CHANGED row names the fields where Canvas differs, and =p= used to be
+the only way to take Canvas's side.  A pull rewrites the whole heading:
+it drops =PUBLISHED: true= (the default), drops =PAYLOAD_HASH= and the
+drawer's alignment, and converts the description from Canvas's HTML,
+which loses export attributes, table rules and line wrapping Canvas
+never held (#498).  =A= on the row writes what the row names and
+nothing else:
+
+- each differing property, in the Org spelling a pull would write,
+  written out even when it is the default -- a heading that said
+  =PUBLISHED: false= now says =PUBLISHED: true=, and a date Canvas
+  cleared is removed;
+- the heading's title, when Canvas renamed the item (a link to the old
+  title elsewhere needs updating; =org-canvas-validate= lists them);
+- the body, only if you answer yes when =A= asks.  Only the heading's
+  own text is replaced, from the end of its drawer to its first
+  sub-heading; its =overrides= and =accommodations= tables are kept as
+  they are and written first.  A quiz's description, a New Quiz item's
+  body, and a heading whose sub-headings are part of its body are held
+  back: use ~=~ to read the text and copy what you want by hand.
+
+A declared intent (=WANT_DOCUMENT_PROCESSOR=) is never adopted from
+Canvas.  When every field was written, =CANVAS_UPDATED_AT= takes
+Canvas's stamp; =PAYLOAD_HASH= is hashed again if the heading was what
+its last push sent, and otherwise kept, so local edits of its own are
+still pushed.  When a field was held back the row reads =PARTIAL= and
+the stamp stays, so the next push still stops at the conflict check
+rather than overwriting what Canvas holds.  A row with no compared
+property differing adopts only its stamp, as =a= does.
+
+On an EXTRA override row, =A= appends the override to the heading's
+=#+NAME: overrides= table as a new last row, its dates in the columns
+the header names, and leaves the other rows exactly as they are.  A
+date the table has no column for is refused (adding the column would
+rewrite every row); a heading with no table gets one under its drawer.
+The next push then keeps the override instead of deleting it.
+
+=org-canvas-diff-adopt-drifts= does the same for the rows it is given,
+without asking:
+
+#+begin_src emacs-lisp
+(org-canvas-diff-adopt-drifts '(("assignment" . "Midterm Exam")
+                                ("assignment" "2563805" canvas-id))
+                              :overrides t)   ; and their EXTRA override rows
+(org-canvas-diff-adopt-drifts 'all)           ; every CHANGED row, bodies held
+#+end_src
+
+=:body t= lets it replace bodies.  It runs the comparison itself, writes
+a report naming each row =ADOPTED=, =PARTIAL= (with what was held and
+why), =NOT FOUND= or =HELD=, and returns one plist per row.
+=M-x org-canvas-diff-adopt-all-drifts= (=Z= in the transient menu) asks
+once and adopts every CHANGED row, bodies held back.  From the shell,
+=scripts/org-canvas adopt --all=, or =adopt "assignment:Midterm Exam"=,
+with =--body= and =--overrides= as above, exits 1 when a row was left;
+=-n= names what it would write and writes nothing.  Nothing is ever
+sent to Canvas.
+
+** Showing the Canvas Version
+
+The report shows a changed body as two short excerpts around the first
+difference: enough to know the text changed, not what it says (#500).
+~=~ on a CHANGED row shows the Canvas version of its heading in full,
+from the copy the report already read: the title and every compared
+property beside the Org value, starred where they differ, then the
+body as Canvas's HTML, as the Org a pull would convert it to, and as a
+unified diff of the heading's own body against that Org.
+
+=M-x org-canvas-show-at-point= (~=~ in the transient menu) does the
+same for the heading at point, reading the item from Canvas, and
+=org-canvas-show-headings= for headings named as =org-canvas-pull-headings=
+names them.  From the shell:
+
+#+begin_src sh
+scripts/org-canvas show "assignment:Closer 07" "page#week-05-objectives"
+#+end_src
+
+None of them writes anything, locally or on Canvas, so they are the
+way to read what an instructor changed in the web UI before choosing
+between =A=, =p=, a push, or copying a paragraph by hand.
 
 ** Deleting Rows in Batch
 
@@ -3508,10 +3662,14 @@ next sync moves it into its new module, keeping its id.
 
 One list request per feature.  The report writes nothing, locally or on
 Canvas, so it is safe to run at any time.  Stamp adoption and stamping a
-moved item are the only local writes in this part of the package.  They
+moved item were the first local writes in this part of the package.  They
 happen only when you ask for them, with =a= or
 =org-canvas-diff-adopt-stamps= and with =s=, =S= or
-=org-canvas-diff-stamp-moves=, and neither sends anything.
+=org-canvas-diff-stamp-moves=, and neither sends anything.  Adopting
+the drift (=A=, =org-canvas-diff-adopt-drifts=) is a third, writing
+only the fields a row names, and it sends nothing either; showing a
+heading's Canvas version (~=~, =org-canvas-show-at-point=) writes
+nothing at all.
 Deleting is a separate verb too -- =k= or =org-canvas-diff-delete-rows= --
 and each delete reads the object and saves it before it sends the DELETE.
 
@@ -3679,9 +3837,24 @@ Nothing else in the file moves, and a text equal to the file's is no change, so 
 =M-x org-canvas-submissions-check-comments= (=K=) checks the students not yet posted (and not departed) before a push, and lists:
 
 - *errors*: a =Rubric= row scored below its =Max= with no comment; a row comment, draft or sent comment matching one of =org-canvas-submissions-comment-flag-regexps= (empty by default — a course puts the dashes or words its feedback guide bans there);
-- *warnings*: a sentence of =org-canvas-submissions-comment-sentence-min-length= (25) characters or more given word for word to more than =org-canvas-submissions-comment-shared-threshold= (3) students in the column; nil turns the count off.
+- *warnings*: a sentence of =org-canvas-submissions-comment-sentence-min-length= (25) characters or more given word for word to more than =org-canvas-submissions-comment-shared-threshold= (3) students in the column; nil turns the count off.  Also, each off by default (#499):
+  - a text matching one of =org-canvas-submissions-comment-warn-regexps=, matched as the error list is and listed under /Text to reread/: a word that is fine describing the work but not as an instruction ("rewrite"), or a topic the instructor wants to see (a mention of AI);
+  - a =Rubric= row comment longer than =org-canvas-submissions-comment-max-length= characters;
+  - a deducted row's comment shorter than =org-canvas-submissions-comment-deduction-min-length= characters, so "See rubric." does not pass as the explanation of a deduction (a row with no comment at all stays an error).
 
-The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence is only a warning: a stock line can be meant.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
+The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence, a reread word and a length are only warnings: a stock line can be meant, and a word or a length needs a person's eyes, not a failed check.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=; a length finding adds =:length= and =:limit=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
+
+These are a course's own rules, so they belong with the course, not in your init file and not in =org-canvas-credentials.el=, the file that holds the token.  Put them in =org-canvas-config.el= beside it in the course directory:
+
+#+begin_src emacs-lisp
+;;; org-canvas-config.el --- Course settings, no secrets  -*- lexical-binding: t; -*-
+(setq org-canvas-submissions-comment-flag-regexps '("—")
+      org-canvas-submissions-comment-warn-regexps '("\\badd\\b" "\\brewrite\\b" "\\bAI\\b")
+      org-canvas-submissions-comment-max-length 300
+      org-canvas-submissions-comment-deduction-min-length 100)
+#+end_src
+
+=scripts/org-canvas= (=org-canvas-batch-setup=) and =M-x org-canvas-activate-course= load it after the credentials file, so a setting in both takes its value there; a file that signals while loading is named in the echo area and the run carries on.  It holds nothing secret, so it can be committed beside the course's feedback guide.
 
 A course-wide pass from the shell:
 
@@ -3692,6 +3865,42 @@ scripts/org-canvas -n import-comments Essay_1 essay1.json   # counts, nothing wr
 scripts/org-canvas import-comments Essay_1 essay1.json
 scripts/org-canvas check-comments Essay_1
 #+end_src
+
+** Drafting Late-Policy Comments
+
+A course whose feedback rules ask for a comment on every late upload — when it came in, the due time it missed, how late Canvas counts it, the percent the late policy takes, and what the score shows as — has every number it needs in the grading file and the settings.  =org-canvas-submissions-draft-late-notes= writes that comment for every student with =STATUS: late= and a score (#484).  It is local: nothing is read from Canvas and nothing is sent; the drafts go out with the next =S=.  It takes its grading file as =org-canvas-submissions-export-comments= does.
+
+The numbers come from:
+
+- =SUBMITTED_AT=, and =DUE_AT=, the due time the submission missed — the student's own, an override's when there is one — which the pull writes beside =DAYS_LATE= (a file pulled before =DUE_AT= existed needs a re-pull; its late rows are skipped and named);
+- =DAYS_LATE= for a daily policy, or the hours between the two times for an hourly one;
+- the course late policy, the =LATE_SUBMISSION_*= properties =org-canvas-pull-settings= writes on the heading of =settings.org= (a course with no enabled deduction is refused);
+- =SCORE= and the file's =POINTS_POSSIBLE=.
+
+The deduction is Canvas's arithmetic: the policy's percent per interval, of the points possible, never taking the score below the floor percent (when the floor is on) and never raising a score already under it, rounded to two places.  The note is =org-canvas-submissions-late-note-format=, a =format-spec= string:
+
+| Spec | Fills in                                                              |
+|------+-----------------------------------------------------------------------|
+| =%s= | the submitted time                                                    |
+| =%d= | the due time it missed                                                |
+| =%l= | the lateness in the policy's unit, "2 days" or "35 hours"             |
+| =%n= | the same as a bare number                                             |
+| =%p= | the percent the policy takes                                          |
+| =%r= | the score as entered                                                  |
+| =%f= | the score after the deduction                                         |
+| =%m= | the points possible                                                   |
+| =%%= | a percent sign                                                        |
+
+The default reads "This came in Fri Oct 9 at 10:00, after the due time of Wed Oct 7 at 23:59: 2 days late.  The course's late policy takes 20% for that, so your 8 shows as 6 of 10."; the times follow =org-canvas-submissions-late-note-time-format=.  The note is written under =** Comment to post=, below the template and after any draft already there; a student with no such heading gets one.
+
+A student whose draft or sent comments already carry the same note is left alone, so the command can be run again after more grading.  One carrying a note of the same shape with other numbers — a regrade since the note was drafted or sent — is named and not rewritten: fix or delete the old note, then run it again.  =HOLD= lists students to skip, by user id or heading name, such as one awaiting an extension ruling; interactively a prefix argument asks for them, and the report names them.  Under a dry run nothing is written and each note is shown.  From Lisp:
+
+#+begin_src emacs-lisp
+(org-canvas-submissions-draft-late-notes "Essay 1" '("5003"))      ; hold 5003
+(org-canvas-submissions-draft-late-notes "Essay 1" nil t)          ; dry run
+#+end_src
+
+returns =:drafted= (=(NAME USER-ID NOTE)= each), =:same=, =:changed=, =:held=, =:skipped= (with why) and =:dry-run=.  From the shell, =scripts/org-canvas [-n] draft-late-notes [--hold ID,ID] FILE...= exits 1 when a student was skipped or carries a note with other numbers.
 
 ** Applying a Ruling to Listed Students
 
@@ -3730,7 +3939,54 @@ From the shell, =scripts/org-canvas apply-ruling FILE RULING.json= applies one r
   "comment": "Submitted after the extra-credit window, so 20% of the column comes off."}]
 #+end_src
 
-=rows= is a number or ="empty"=; =score= is a number, or ={"deduct_percent": P}= for the rows' total less P% of the column's points.
+=rows= is a number or ="empty"=; =score= is a number, ="EX"= to excuse the listed students, or ={"deduct_percent": P}= for the rows' total less P% of the column's points.  An excusal stands beside any rows, as the push lets it, so =:score "EX"= is never kept back for the rubric total.
+
+** Excusing Students
+
+A column called off after it opened — a cancelled session, a closer the clock ran out on — leaves every student who did not submit marked Missing on Canvas, even after =OMIT_FROM_GRADES= takes the column out of the grade.  The fix is to excuse them.  =M-x org-canvas-submissions-excuse= does it in the grading file: it writes =EX= as each student's =SCORE=, and the grade push (=S=) sends it as =excused=, as it does a hand-typed one.  Nothing is read from Canvas and nothing is sent.
+
+Which students it takes:
+
+- every student with no submission (no =SUBMITTED_AT=), the default;
+- every student (=all=);
+- the student at point, or every student heading in the active region (=point=).
+
+Interactively an active region means the students in it; otherwise the command asks.  A student already graded, by a =SCORE= or a =CANVAS_SCORE= behind an empty one, is kept back and named, unless you give a prefix argument; a student who left the course (=STATUS: left=) is always kept back, since no push sends anything for one; one already excused is counted and left.  From Lisp, =(org-canvas-submissions-excuse FILE SCOPE OVERWRITE)= takes the file as the comment export does and SCOPE as =unsubmitted=, =all= or =point=, and returns =:excused= (=:user-id=, =:name=, =:old-score= each), =:already=, =:skipped= (=(USER-ID . WHY)=) and =:dry-run=.  From the shell:
+
+#+begin_src sh
+scripts/org-canvas -n excuse Closer_07        # who would be excused
+scripts/org-canvas excuse Closer_07           # the students with no submission
+scripts/org-canvas excuse --all Closer_07     # every student not graded
+scripts/org-canvas push-grades Closer_07
+#+end_src
+
+To excuse a listed set of students instead, give a ruling a score of ="EX"= (see [[*Applying a Ruling to Listed Students][Applying a Ruling to Listed Students]]).
+
+** Importing a Drafted Grade Set
+
+A column graded outside the buffer — by a second grader, or a drafting pass writing JSON per student — comes back as scores, notes and comments.  =M-x org-canvas-submissions-import-grades= writes all of them into the grading file from one JSON file of the export's shape (see [[*Exporting, Importing and Checking Comments][Exporting, Importing and Checking Comments]]), through the writers the buffer uses, so the Rubric table is read and written as a table and a criterion id padded to the column's width (=| _409  |= beside =| _5390 |=) is found like any other:
+
+#+begin_src js
+[{"user_id": 5001,
+  "rows": [{"criterion_id": "_409", "score": 3, "comment": "Say what the claim is early."},
+           {"criterion_id": "_5390", "score": 5}],
+  "notes": "Drafted by the TA, 2026-10-08."},
+ {"user_id": 5002, "score": "", "notes": "Held: waiting on the extension ruling."}]
+#+end_src
+
+- a row's =score= goes into its Score cell, a number from 0 to the row's =Max=; a row without one, or with an empty one, is left;
+- =score= sets =SCORE=, a number or ="EX"=.  Without the key, when every row is scored and the import scored any, =SCORE= is the rows' sum, which is what the push sends for a rubric used for grading;
+- =notes= is added at the end of =** Notes=, never over them; a text the Notes already hold is no change;
+- an empty =score= beside =notes= holds the student: the notes go in, and no row score or =SCORE=;
+- then the comment keys (a row's =comment=, =draft=, a sent comment's =text=) are imported as =org-canvas-submissions-import-comments= imports them.
+
+Importing an unchanged export changes nothing.  A student is kept back whole, every grade change named, when one of its values is refused — a score off its row's range, a =SCORE= that is no number or =EX=, one the rows' total contradicts on a column graded by its rubric, notes with a line starting with =*= or =#= — since half a grade is worse than none; so is a student who left, and one whose grade is posted unless =--posted= (from Lisp, a third argument).  The echo area (stderr in batch) names every key that matched nothing, every change kept back and every student held.  Under a dry run nothing is written and the counts are the same.  From Lisp, =(org-canvas-submissions-import-grades FILE DATA ALLOW-POSTED)= returns =:scores=, =:score= and =:notes= (the cells, =SCORE= values and notes changed), =:held=, the comment import's =:rows=, =:drafts= and =:sent=, =:unmatched=, =:skipped= and =:dry-run=.
+
+#+begin_src sh
+scripts/org-canvas -n import-grades Exam_2 drafts.json    # counts, nothing written
+scripts/org-canvas import-grades Exam_2 drafts.json
+scripts/org-canvas check-comments Exam_2                  # a deducted row with no comment
+#+end_src
 
 ** Scoring by Section Window
 
@@ -3777,6 +4033,8 @@ The grading workflow repeats every week per column, and the interactive path is 
 - =(org-canvas-open-submissions FILE)=: FILE is a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, whatever the file is called), an absolute path, or a name under the submissions directory with or without its =.org= — the file's name or the assignment's. Returns the buffer.
 - =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= to follow in code. A list of files re-pulls each and returns the list of buffers.
 - =(org-canvas-push-submission-grades ASSIGNMENT &optional POST ONLY)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments, sent comments rewritten or marked =DELETE=, and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back (with =org-canvas--dry-run= bound nothing is sent and the file is left as it was, drafts and all; the plist then counts what a push would send): =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:edited=, =:deleted=, =:refused=, =:failed= and =:dry-run= (sent comments rewritten, deleted, not sent, refused by Canvas and only previewed), =:conflicts= and =:conflict-names= (the headings held back as conflicts, see [[*Conflicts][Conflicts]]) and =:posted=. Every count is an integer — =:pushed= is how many grades were stored, not a list of them — =:conflict-names= is a list of names, =:missing= and =:unchanged= lists of user ids, and =:posted= non-nil or nil. ASSIGNMENT may also be a list of columns, =(org-canvas-push-submission-grades '("2573836" "2573840"))=: each is pushed in turn with the same POST and ONLY, and a list of plists comes back, one per column. With ONLY, a list of Canvas user ids, only those students' rows are pushed, and =:missing= and =:unchanged= name the ids that sent nothing; see [[*Pushing Some Rows][Pushing Some Rows]].
+- =(org-canvas-post-grades ASSIGNMENTS)=: posts the grades of a column, by id or name, or of a list of them, with no grading file; see [[*Posting a Column Without a Grading File][Posting a Column Without a Grading File]].
+- =(org-canvas-submissions-resolve-conflicts FILE USER-IDS TAKE)=: resolves the =CONFLICT= of each student in USER-IDS, taking Canvas's grade with TAKE non-nil and keeping the typed one otherwise; see [[*Conflicts][Conflicts]].
 - =(org-canvas-push-submission-comment-edits ASSIGNMENT)=: the same target, but only the sent comments rewritten or marked =DELETE= are sent (see [[*Editing Sent Comments][Editing Sent Comments]]); confirmed through =org-canvas--confirm=, which a batch Emacs answers yes.
 
 An id or name that matches nothing is a =user-error= naming it, and nothing in these five prompts when Emacs runs in batch. So, from a shell:
@@ -3790,6 +4048,23 @@ emacs --batch -l ~/.emacs.d/init.el \
 #+end_src
 
 The last line pushes that column and leaves its grades held; =(org-canvas-push-submission-grades "2573836" t)= posts them as well. =S= in a grading file confirms through the same question the rest of the package asks, so =org-canvas-assume-yes= or a batch Emacs answers it yes; the offer to post that follows a push under a manual policy is made only interactively, and =org-canvas-assume-yes= never answers it, since posting is what students see.
+
+** Posting a Column Without a Grading File
+
+=P= posts the column of the grading file it is pressed in, and =org-canvas-push-submission-grades= posts only a file it pushed. A column graded somewhere else — a paper exam scored on Gradescope and sent to Canvas, a journal synced in — has no grading file, though the grading queue lists it as =post (N)=. =M-x org-canvas-post-grades= posts it: it reads the assignment's name (from Lisp, a Canvas id, an exact name, or a list of them) and sends the gradebook's Post Grades for each, the same GraphQL mutation as =P=:
+
+#+begin_src emacs-lisp
+(org-canvas-post-grades '("2499696" "2499697"))   ; the two halves of an exam
+#+end_src
+
+It returns one plist per column, in order: =:id=, =:name= and =:state=, which is =posted= when Canvas accepted the request, =dry-run= under a dry run, or =failed=, with =:message= saying why (an id or name that matches nothing, a refused request). A failed column is named and the others are still posted. A course marked read-only is refused before anything is read. =M-x org-canvas-submissions-post-queue= posts every column the grading queue marks =post= (scored and not posted) and nothing else; from Lisp it also takes rows a script has filtered, as the pull queue does. From the shell:
+
+#+begin_src sh
+scripts/org-canvas post 2499696 "Chapter 3 Check"   # exit 1 if a column was not posted
+scripts/org-canvas -n post --queue                   # what the queue would post, sending nothing
+#+end_src
+
+Posting is what students see, and nothing in org-canvas posts a column it was not given.
 
 ** Verifying a Push
 
@@ -3845,7 +4120,11 @@ A heading marked =:CONFLICT:= is not pushed: =S= and =org-canvas-push-submission
 - =t= (=org-canvas-submissions-take-canvas=) takes Canvas's grade. It reads the student's submission, and =SCORE=, =LATE_STATUS= and the =Rubric= rows become what Canvas holds, as do their baselines. What you had typed is kept as one line under =Notes= (=- Typed before taking Canvas's grade <2026-10-01 Thu 10:12>: SCORE 10; Rubric _7104 6, _7105 3, _7106 1=). A drafted comment stays drafted, for you to send or clear.
 - =k= (=org-canvas-submissions-keep-mine=) keeps what you typed. It reads the student's submission and makes it the heading's baseline (=CANVAS_SCORE=, =CANVAS_RUBRIC=, =CANVAS_LATE_STATUS=, =ATTEMPT=), so the next push sends your values over Canvas's on purpose.
 
-Both clear =:CONFLICT:= and save the file. A successful push of a heading also clears it, which only a heading resolved with =k= or never marked reaches. Set =org-canvas-submissions-check-conflicts= to nil to push without the push's own check; a heading already marked is held back either way.
+Both clear =:CONFLICT:= and save the file. A script names the students instead of visiting their headings: =(org-canvas-submissions-resolve-conflicts "Journal_05" '(5001 5002) t)= takes Canvas's grade for both, and with nil as the last argument keeps the typed ones; it returns =:resolved= (the names), =:missing= (ids with no heading) and =:unmarked= (ids whose heading had no =CONFLICT=). From the shell it is =scripts/org-canvas take FILE USER-ID...= or =keep FILE USER-ID...=, which exit 1 on a miss.
+
+A push whose grades Canvas stored without the push seeing its job finish (=:state unconfirmed=, the job still running when the wait ran out) records no baselines, so the file still shows the old =CANVAS_SCORE= and =CANVAS_RUBRIC=. That is not a conflict: a refresh leaves typed rows and a typed score that Canvas now holds as pulled, their baselines Canvas's, and the push's own check sends again, without holding it, a row whose score, =Rubric= rows and late status Canvas already holds. Only a row where Canvas holds something else is marked.
+
+A successful push of a heading also clears it, which only a heading resolved with =k= or never marked reaches. Set =org-canvas-submissions-check-conflicts= to nil to push without the push's own check; a heading already marked is held back either way.
 
 ** Properties in a Grading File
 
@@ -4738,12 +5017,18 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-take-canvas= | Resolve the =CONFLICT= at point by taking Canvas's grade, the typed one kept under =Notes= (=t=) |
 | =org-canvas-submissions-keep-mine= | Resolve the =CONFLICT= at point by keeping the typed grade, which the next push sends (=k=) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
+| =org-canvas-post-grades= | Post the grades of columns by id or name, no grading file needed; returns whether Canvas accepted each |
+| =org-canvas-submissions-post-queue= | Post every column the grading queue marks =post= |
+| =org-canvas-submissions-resolve-conflicts= | Take or keep the =CONFLICT= of listed students in a grading file, by user id |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-score-by-window= | Score by submission time against each student's section window, outliers listed first (=W=) |
 | =org-canvas-submissions-export-comments= | A grading file's row comments, drafts, sent comments and notes as data, or JSON (=H=) |
 | =org-canvas-submissions-import-comments= | Write new comment text back by user, criterion and comment id, nothing else (=I=) |
 | =org-canvas-submissions-check-comments= | Deducted rows without a comment, flagged text, sentences many students share (=K=) |
+| =org-canvas-submissions-draft-late-notes= | Draft each late row's late-policy comment from its times, score and the course late policy (Lisp and batch; see [[*Drafting Late-Policy Comments][Drafting Late-Policy Comments]]) |
 | =org-canvas-submissions-apply-ruling= | Apply a ruling to listed students: rows, row comments, SCORE and draft replaced, the old kept in Notes (Lisp and batch) |
+| =org-canvas-submissions-excuse= | Excuse the students with no submission, every student, or those at point or in the region: =SCORE= =EX= for the push |
+| =org-canvas-submissions-import-grades= | Write a drafted grade set from JSON: row scores, =SCORE=, Notes, then the comments |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |
@@ -4791,6 +5076,11 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
 | =org-canvas-diff-delete-rows=     | Delete the Canvas objects of the EXTRA rows named, without asking, after safety checks and a JSON snapshot (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =org-canvas-diff-stamp-moves=     | Stamp the item id of every MOVED row on the heading it paired (local write only; see [[*Stamping a Moved Item][Stamping a Moved Item]]) |
+| =org-canvas-diff-adopt-drift= / =-show-row= | Row actions =A= and ~=~: write what a CHANGED row names into its heading, or show its Canvas version in full (see [[*Adopting the Drift][Adopting the Drift]]) |
+| =org-canvas-diff-adopt-drifts=    | Adopt the rows named, or every CHANGED row, without asking (local write only; see [[*Adopting the Drift][Adopting the Drift]]) |
+| =org-canvas-diff-adopt-all-drifts= | The same for every CHANGED row, after confirming, bodies held back |
+| =org-canvas-show-at-point=        | Show the Canvas version of the heading at point, writing nothing (see [[*Showing the Canvas Version][Showing the Canvas Version]]) |
+| =org-canvas-show-headings=        | The same for headings named by title or Canvas id |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |

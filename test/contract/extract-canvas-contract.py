@@ -72,6 +72,10 @@ MODULE_READ_OPS = {
 # both go to the course enrollments index with `state[]' and `user_id'.
 PULL_ONLY_READ_OPS = {
     "people": ("list_enrollments_courses",),
+    # gradebook: a student's own submissions, and the course read that
+    # tells the caller's role and carries their totals (issue #488).
+    "gradebook": ("list_submissions_for_multiple_assignments_courses",
+                  "get_single_course_courses"),
 }
 
 # Modules whose read (pull) response object is documented as a component
@@ -177,8 +181,12 @@ def extract_query_params(op):
 
     The spec names an array parameter without the brackets org-canvas
     sends (`include`, not `include[]`); the elisp side strips them too.
+    A few operations spell the brackets out (`student_ids[]` on
+    list_submissions_for_multiple_assignments_courses); they are
+    stripped here, so both spellings compare alike (issue #488).
     """
-    return sorted(p["name"] for p in op.get("parameters", []) or []
+    return sorted(p["name"].removesuffix("[]")
+                  for p in op.get("parameters", []) or []
                   if isinstance(p, dict) and p.get("in") == "query")
 
 

@@ -57,6 +57,10 @@
 ;; property is a comparable opinion at all: Canvas drops ALL_DAY on a
 ;; calendar event spanning days — the times are kept, the flag is not —
 ;; so comparing it would flag the entry on every run, forever (#93).
+;; The exception is a boolean that declares a `:default': the parse
+;; applies it, so the push acts on silence, and a pull deletes
+;; PUBLISHED: true as the default.  Such a property is compared against
+;; its default when the heading is silent (issue #498).
 ;;
 ;; ACKNOWLEDGED AND EXCLUDED (#98)
 ;; ===============================
@@ -353,25 +357,60 @@ for is a note, not drift (`org-canvas--diff-entry-notes')."
           (list (plist-get spec :org-prop) (string-trim local)
                 (org-canvas--diff-intent-remote-text observed-spec item)))))))
 
+(defun org-canvas--diff-declared-default (spec)
+  "Return the Org spelling of the default SPEC declares, or nil.
+Only a boolean with an explicit `:default' has one: the registry's
+default must match the parse side's fallback (pull-system.org), so a
+heading silent on PUBLISHED is pushed as published, and a pull deletes
+PUBLISHED: true as the default it is.  An `:absent-inherits' spec has
+no default; its silence means \"inherit\" (issue #323)."
+  (and (eq (plist-get spec :type) 'boolean)
+       (plist-member spec :default)
+       (not (plist-get spec :absent-inherits))
+       (if (plist-get spec :default) "true" "false")))
+
+(defun org-canvas--diff-compare-default (spec item)
+  "Compare the default SPEC declares with Canvas ITEM, for a silent heading.
+Returns (ORG-PROP LOCAL REMOTE) when Canvas holds the other value, else
+nil.  A heading the pull left without PUBLISHED, because Canvas said
+true, is pushed as published; when Canvas unpublishes it later, the
+next push publishes it again, and a report blind to silence called
+the row one with nothing compared, which `a' would have adopted
+\(issue #498).  A field Canvas did not send is not compared."
+  (let ((default (org-canvas--diff-declared-default spec)))
+    (when (and default (org-canvas--registry-remote-present-p spec item))
+      (let ((remote (org-canvas--diff-remote-field spec item)))
+        (unless (org-canvas--diff-values-equal-p 'boolean default remote)
+          (list (plist-get spec :org-prop)
+                (format "(unset: %s)" default)
+                (org-canvas--diff-format-remote 'boolean remote)))))))
+
+(defun org-canvas--diff-compare-written (spec local item)
+  "Compare LOCAL, SPEC's written value or nil, with Canvas ITEM.
+Returns (ORG-PROP LOCAL REMOTE) when they differ, else nil.  A nil
+LOCAL is compared only for a `:canvas-owned' spec."
+  (when (or local (plist-get spec :canvas-owned))
+    (let ((type (plist-get spec :type))
+          (remote (org-canvas--diff-remote-field spec item)))
+      (unless (if local
+                  (org-canvas--diff-values-equal-p type local remote)
+                (null (org-canvas--diff-normalize-remote remote)))
+        (list (plist-get spec :org-prop) (or local "(unset)")
+              (org-canvas--diff-format-remote type remote))))))
+
 (defun org-canvas--diff-compare-field (spec pom item)
   "Compare one ordinary property SPEC at POM against Canvas ITEM.
 Returns (ORG-PROP LOCAL REMOTE) when they differ, else nil.  See
 `org-canvas--diff-compare-fields' for which specs take part."
-  (let ((type (plist-get spec :type))
-        (compare-p (plist-get spec :compare-p))
-        (org-prop (plist-get spec :org-prop)))
-    (when (and (memq type org-canvas--diff-comparable-types)
+  (let ((compare-p (plist-get spec :compare-p)))
+    (when (and (memq (plist-get spec :type) org-canvas--diff-comparable-types)
                (not (plist-get spec :local-only))
                (or (null compare-p) (funcall compare-p pom item)))
-      (let* ((written (org-entry-get pom org-prop))
+      (let* ((written (org-entry-get pom (plist-get spec :org-prop)))
              (local (and written (not (string-empty-p written)) written)))
-        (when (or local (plist-get spec :canvas-owned))
-          (let ((remote (org-canvas--diff-remote-field spec item)))
-            (unless (if local
-                        (org-canvas--diff-values-equal-p type local remote)
-                      (null (org-canvas--diff-normalize-remote remote)))
-              (list org-prop (or local "(unset)")
-                    (org-canvas--diff-format-remote type remote)))))))))
+        (if (or local (plist-get spec :canvas-owned))
+            (org-canvas--diff-compare-written spec local item)
+          (org-canvas--diff-compare-default spec item))))))
 
 (defun org-canvas--diff-compare-fields (specs pom item)
   "Compare the properties at POM against Canvas ITEM using SPECS.
@@ -387,7 +426,9 @@ heading carries it: the file cannot hold an opinion on a field only
 Canvas may set, so its silence is not one, and a document processor
 attached in the web UI after the last pull is exactly what the report
 exists to show (issue #184).  Such a row reads \"(unset)\" on the
-local side.
+local side.  A boolean declaring a `:default' is compared too, its
+default standing in for the silent heading, since the push sends it
+\(`org-canvas--diff-compare-default', issue #498).
 
 An `:intent-of' spec is compared against the observed property it
 names, not against a field of its own: WANT_DOCUMENT_PROCESSOR differs
@@ -888,14 +929,44 @@ ID-FIELD may be a list of fields tried in order, as a New Quiz's
         (when id (puthash (format "%s" id) item index))))
     index))
 
-(defun org-canvas--diff-entry (entry index specs &optional props modified-field)
+(defconst org-canvas--diff-title-label "TITLE"
+  "The field name a CHANGED row gives a title Canvas holds otherwise.")
+
+(defun org-canvas--diff-squeeze (text)
+  "Return TEXT trimmed, with each stretch of whitespace one space, or nil."
+  (and (stringp text)
+       (string-trim (replace-regexp-in-string "[ \t\n\r ]+" " " text))))
+
+(defun org-canvas--diff-compare-title (props entry item title-field)
+  "Return (TITLE ORG CANVAS) when ITEM's title is not ENTRY's heading, or nil.
+PROPS is the feature's property registry entry, and only one that
+declares `:compare-title' takes part; TITLE-FIELD names the Canvas
+field.  The push sends the heading as the title, so a rename in the
+web UI is undone by the next push, and the report used to say only
+that nothing compared differed (issue #498).  A heading that is a link
+is left out: its title is the target's, read by its own module."
+  (let ((heading (plist-get entry :heading)))
+    (when (and (plist-get props :compare-title) title-field heading
+               (not (string-match-p "\\[\\[" heading)))
+      (let ((local (org-canvas--diff-squeeze (plist-get entry :match-title)))
+            (remote (org-canvas--diff-squeeze
+                     (org-canvas--diff-normalize-remote
+                      (alist-get title-field item)))))
+        (when (and local remote (not (string= local remote)))
+          (list org-canvas--diff-title-label local remote))))))
+
+(defun org-canvas--diff-entry (entry index specs &optional props modified-field
+                                     title-field)
   "Compare local ENTRY against the remote INDEX using property SPECS.
 PROPS, the feature's property registry entry, enables the body
-comparison when it names a `:body-api-key' (issue #83).
+comparison when it names a `:body-api-key' (issue #83), and the title
+comparison when it declares `:compare-title' with TITLE-FIELD the
+Canvas field (issue #498).
 MODIFIED-FIELD names the remote timestamp \"modified remotely\" is
 decided from, default `updated_at'; files pass `modified_at' (issue
 #94).  Returns a plist describing the divergence, or nil when they
-agree."
+agree.  A CHANGED row keeps the Canvas item as :item, which the
+row's verbs read rather than asking Canvas again (issues #498, #500)."
   (let* ((id (plist-get entry :id))
          (pom (plist-get entry :pom))
          (item (and id (gethash id index))))
@@ -906,7 +977,9 @@ agree."
             :deleted (plist-get entry :deleted)))
      (t
       (let* ((body (org-canvas--diff-compare-body props pom item))
-             (fields (append (org-canvas--diff-compare-fields specs pom item)
+             (title (org-canvas--diff-compare-title props entry item title-field))
+             (fields (append (and title (list title))
+                             (org-canvas--diff-compare-fields specs pom item)
                              (and (cdr body) (list (cdr body)))))
              (drifted (org-canvas--diff-modified-p pom item modified-field)))
         (when (or fields drifted)
@@ -914,6 +987,7 @@ agree."
                 :updated (alist-get (or modified-field 'updated_at) item)
                 :remote-newer drifted :fields fields
                 :body-compared (and body t)
+                :item item
                 ;; Where `b' on the row can take a reader (#292).
                 :html-url (org-canvas--diff-normalize-remote
                            (alist-get 'html_url item)))))))))
@@ -1753,6 +1827,8 @@ row for such an override (`org-canvas--override-row-redundant-p')."
    :id (format "%s" (alist-get 'id ov))
    :dates (org-canvas--diff-override-dates-text
            (lambda (d) (alist-get (nth 1 d) ov)))
+   ;; What `A' appends to the heading's table (issue #498).
+   :override ov
    :redundant (org-canvas--override-row-redundant-p
                ov (alist-get 'due_at item) (alist-get 'unlock_at item)
                (alist-get 'lock_at item))))
@@ -1845,7 +1921,7 @@ after this one (issue #177)."
                divergences notes)
           (dolist (entry local)
             (let ((d (org-canvas--diff-entry entry index specs props
-                                             modified-field)))
+                                             modified-field title-field)))
               (when d (push d divergences)))
             (setq notes (nconc notes (org-canvas--diff-entry-notes
                                       entry index specs)))
@@ -2241,13 +2317,17 @@ an EXTRA quiz or New Quiz into a new heading;
 \\[org-canvas-diff-stamp-move] stamps a MOVED row's item id on the heading it
 was paired with, and \\[org-canvas-diff-stamp-moves] every MOVED row's,
 sending nothing;
+\\[org-canvas-diff-adopt-drift] writes what Canvas holds of a CHANGED row's
+fields, and nothing else, into its heading, or appends an EXTRA
+override row to its table (`org-canvas-drift'), sending nothing;
+\\[org-canvas-diff-show-row] shows a CHANGED row's Canvas version in full;
 \\[org-canvas-diff-refresh] runs the report again;
 \\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row] move
 between rows."
   (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff))))
 
 (defconst org-canvas--diff-key-legend
-  "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt   k delete   p pull   s/S stamp moved   g refresh   TAB next row\n"
+  "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt   k delete   p pull   s/S stamp moved   A adopt drift   = show in full   g refresh   TAB next row\n"
   "One line naming the report's keys, shown in the interactive buffer only.")
 
 (defun org-canvas--diff-row-at-point ()

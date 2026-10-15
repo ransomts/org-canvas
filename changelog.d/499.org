@@ -1,0 +1,10 @@
+* Added
+- #499 =org-canvas-submissions-check-comments= lists text matching
+  =org-canvas-submissions-comment-warn-regexps= as warnings to reread,
+  apart from the flagged errors, and warns of a row comment longer than
+  =org-canvas-submissions-comment-max-length= or a deducted row's
+  comment shorter than =org-canvas-submissions-comment-deduction-min-length=
+  (all off by default).
+- #499 A course directory may hold =org-canvas-config.el=, settings
+  with no secrets in them, which =scripts/org-canvas= and
+  =org-canvas-activate-course= load after the credentials file.

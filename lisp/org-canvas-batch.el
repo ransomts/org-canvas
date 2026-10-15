@@ -14,7 +14,7 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
-;; pull-all, push, publish, diff, validate, sync ...), which
+;; pull-all, push, publish, diff, adopt, show, validate, sync ...), which
 ;; `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
@@ -128,7 +128,8 @@ for (issue #424)."
 DIRECTORY defaults to `default-directory'.  Load the credentials
 file found there, if any, without printing its name or contents,
 after setting `org-canvas-directory' to DIRECTORY, which the file may
-override.
+override; then the course settings file there, if any
+\(`org-canvas-load-course-config', issue #499).
 Set `find-file-visit-truename', so a script that opens a course file
 itself gets the buffer org-canvas uses (issue #97).  The
 changed-on-disk question is not answered here: org-canvas opens
@@ -146,6 +147,7 @@ copy silently.  Return the credentials file loaded, or nil."
     (setq org-canvas-directory dir)
     (when (file-exists-p credentials)
       (load credentials nil t t))
+    (org-canvas-load-course-config dir)
     (org-canvas--api-token-forget)
     (org-canvas--time-zone-reset)
     (and (file-exists-p credentials) credentials)))
@@ -175,6 +177,12 @@ copy silently.  Return the credentials file loaded, or nil."
     ("push-grades" org-canvas-batch--cmd-push-grades 1 4
      "ASSIGNMENT [--only ID,ID] [--dry-run]"
      "Push a grading file, or only the named students' rows (#441).")
+    ("post" org-canvas-batch--cmd-post 1 nil "--queue | ASSIGNMENT..."
+     "Post columns' grades by id or name, or every post row (#495).")
+    ("take" org-canvas-batch--cmd-take 2 nil "FILE USER-ID..."
+     "Resolve the students' CONFLICTs by taking Canvas's grade (#496).")
+    ("keep" org-canvas-batch--cmd-keep 2 nil "FILE USER-ID..."
+     "Resolve the students' CONFLICTs by keeping the typed grade (#496).")
     ("export-comments" org-canvas-batch--cmd-export-comments 1 2 "FILE [OUT.json]"
      "Write a grading file's comments as JSON, to OUT or stdout (#438).")
     ("import-comments" org-canvas-batch--cmd-import-comments 2 3
@@ -182,6 +190,9 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
     ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
+    ("draft-late-notes" org-canvas-batch--cmd-draft-late-notes 1 nil
+     "[--hold ID,ID] FILE..."
+     "Draft late rows' late-policy comments; exit 1 on a skip (#484).")
     ("pull-all" org-canvas-batch--cmd-pull-all 0 0 ""
      "Import the whole course; exit 1 if anything failed (#458).")
     ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
@@ -190,6 +201,11 @@ copy silently.  Return the credentials file loaded, or nil."
      "Read pushed columns back from Canvas; exit 1 on a difference (#450).")
     ("apply-ruling" org-canvas-batch--cmd-apply-ruling 2 2 "FILE RULING.json"
      "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
+    ("excuse" org-canvas-batch--cmd-excuse 1 3 "[--all] [--overwrite] FILE"
+     "Excuse the students with no submission, or --all of them (#501).")
+    ("import-grades" org-canvas-batch--cmd-import-grades 2 3
+     "[--posted] FILE IN.json"
+     "Write IN.json's scores, notes and comments; exit 1 on a miss (#483).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil
@@ -201,6 +217,11 @@ copy silently.  Return the credentials file loaded, or nil."
      "Unpublish named headings, sending only the flag (#466).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
+    ("adopt" org-canvas-batch--cmd-adopt 1 nil
+     "[--body] [--overrides] --all | FEATURE:TITLE..."
+     "Write what CHANGED rows name into Org, nothing sent (#498).")
+    ("show" org-canvas-batch--cmd-show 1 nil "FEATURE:TITLE..."
+     "Print Canvas's version of named headings; writes nothing (#500).")
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
      "Validate the Org files offline; exit 1 on errors.")
     ("sync" org-canvas-batch--cmd-sync 0 0 ""
@@ -415,6 +436,46 @@ send.  Return 1 if anything was left behind
       (princ (format "%s\n" (plist-get row :line))))
     (if (org-canvas-batch--push-grades-ok-p result) 0 1)))
 
+(defun org-canvas-batch--cmd-post (parsed)
+  "Post the grades of the columns PARSED names, or with --queue every post row.
+Grades are posted only for the columns named, by Canvas id or exact
+name, or under --queue for those the grading queue marks post.  A
+--dry-run sends nothing.  Return 1 if any column was not posted."
+  (let* ((args (plist-get parsed :args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run)))
+         (outcomes (cond ((equal args '("--queue"))
+                          (org-canvas-submissions-post-queue))
+                         ((member "--queue" args)
+                          (org-canvas-batch--usage "post takes --queue alone, or ASSIGNMENT..."))
+                         (t (org-canvas-post-grades args)))))
+    (dolist (outcome outcomes)
+      (princ (format "%s %s: %s\n" (plist-get outcome :id)
+                     (or (plist-get outcome :name) "")
+                     (or (plist-get outcome :message) (plist-get outcome :state)))))
+    (if (cl-some (lambda (o) (eq (plist-get o :state) 'failed)) outcomes) 1 0)))
+
+(defun org-canvas-batch--resolve-conflicts (parsed take)
+  "Resolve the CONFLICTs PARSED names, taking Canvas's grade when TAKE.
+The first argument is the grading file, the rest Canvas user ids.
+Return 1 if an id had no heading or no CONFLICT."
+  (let* ((args (plist-get parsed :args))
+         (result (org-canvas-submissions-resolve-conflicts
+                  (car args) (cdr args) take)))
+    (dolist (id (plist-get result :missing))
+      (message "No heading for user %s" id))
+    (dolist (id (plist-get result :unmarked))
+      (message "No CONFLICT on user %s" id))
+    (if (or (plist-get result :missing) (plist-get result :unmarked)) 1 0)))
+
+(defun org-canvas-batch--cmd-take (parsed)
+  "Take Canvas's grade on the CONFLICT rows PARSED names; return the status."
+  (org-canvas-batch--resolve-conflicts parsed t))
+
+(defun org-canvas-batch--cmd-keep (parsed)
+  "Keep the typed grade on the CONFLICT rows PARSED names; return the status."
+  (org-canvas-batch--resolve-conflicts parsed nil))
+
 (defun org-canvas-batch--cmd-export-comments (parsed)
   "Write the comments of the grading file PARSED names as JSON; return 0.
 The second argument names the output file; without it the JSON is
@@ -447,6 +508,34 @@ Return 1 if any check found an error."
                         (plist-get parsed :args))))
     (if (cl-every #'zerop errors) 0 1)))
 
+(defun org-canvas-batch--draft-late-notes-args (args)
+  "Read draft-late-notes ARGS into (HOLD . FILES).
+HOLD is the list after --hold, split at commas; FILES the rest."
+  (let ((hold nil) (files nil))
+    (while args
+      (let ((arg (pop args)))
+        (cond ((equal arg "--hold")
+               (setq hold (split-string (or (pop args) "") "," t "[ \t]+"))
+               (unless hold
+                 (org-canvas-batch--usage "--hold takes user ids or names, ID,ID")))
+              (t (push arg files)))))
+    (unless files
+      (org-canvas-batch--usage "draft-late-notes takes [--hold ID,ID] FILE..."))
+    (cons hold (nreverse files))))
+
+(defun org-canvas-batch--cmd-draft-late-notes (parsed)
+  "Draft the late-policy comments of each grading file PARSED names.
+A --dry-run writes nothing and shows each note.  Return 1 if a
+student was skipped or carries a late note with other numbers."
+  (let* ((args (org-canvas-batch--draft-late-notes-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (plist-get parsed :dry-run)))
+         (results (mapcar (lambda (file)
+                            (org-canvas-submissions-draft-late-notes file (car args)))
+                          (cdr args))))
+    (if (cl-some (lambda (r) (or (plist-get r :skipped) (plist-get r :changed)))
+                 results)
+        1 0)))
+
 (defun org-canvas-batch--cmd-verify (parsed)
   "Read back each column PARSED names and compare it with its grading file.
 --hidden counts a posted submission as a difference.  Return 1 if any
@@ -472,6 +561,36 @@ student was kept back."
     (if (cl-some (lambda (r) (or (plist-get r :unmatched) (plist-get r :skipped)))
                  results)
         1 0)))
+
+(defun org-canvas-batch--cmd-excuse (parsed)
+  "Excuse students of the grading file PARSED names, a dry run on --dry-run.
+Only those with no submission, unless --all; a graded student only
+with --overwrite.  Return 0."
+  (let* ((args (plist-get parsed :args))
+         (rest (cl-remove-if (lambda (a) (member a '("--all" "--overwrite"))) args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
+    (unless (and (= (length rest) 1) (not (string-prefix-p "-" (car rest))))
+      (org-canvas-batch--usage "excuse takes [--all] [--overwrite] FILE"))
+    (org-canvas-submissions-excuse (car rest)
+                                   (if (member "--all" args) 'all 'unsubmitted)
+                                   (and (member "--overwrite" args) t))
+    0))
+
+(defun org-canvas-batch--cmd-import-grades (parsed)
+  "Import the JSON grades PARSED names into its grading file.
+A dry run on --dry-run; --posted lets changes under a posted grade
+through.  Return 1 if a key matched nothing or a change was kept back."
+  (let* ((args (plist-get parsed :args))
+         (rest (remove "--posted" args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
+    (unless (= (length rest) 2)
+      (org-canvas-batch--usage "import-grades takes [--posted] FILE IN.json"))
+    (let ((result (org-canvas-submissions-import-grades
+                   (nth 0 rest) (expand-file-name (nth 1 rest))
+                   (and (member "--posted" args) t))))
+      (if (or (plist-get result :unmatched) (plist-get result :skipped)) 1 0))))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."
@@ -576,6 +695,42 @@ A --dry-run sends nothing and writes nothing."
 (defun org-canvas-batch--cmd-diff (_parsed)
   "Print the drift report; return 1 if anything drifted."
   (if (> (org-canvas-diff) 0) 1 0))
+
+(defun org-canvas-batch--adopt-args (args)
+  "Read adopt ARGS into (SELECTORS BODY OVERRIDES).
+SELECTORS is `all' for --all, else the headings the other arguments
+name; BODY and OVERRIDES are non-nil for --body and --overrides.
+--all beside a heading, or neither, is a usage error."
+  (let* ((body (and (member "--body" args) t))
+         (overrides (and (member "--overrides" args) t))
+         (all (member "--all" args))
+         (headings (cl-set-difference args '("--body" "--overrides" "--all")
+                                      :test #'equal)))
+    (when (or (and all headings) (not (or all headings)))
+      (org-canvas-batch--usage "adopt takes %s"
+                               (nth 4 (assoc "adopt" org-canvas-batch--commands))))
+    (list (if all 'all (mapcar #'org-canvas-batch-heading-entry headings))
+          body overrides)))
+
+(defun org-canvas-batch--cmd-adopt (parsed)
+  "Adopt the drift of the rows PARSED names; return 1 if any is left.
+A --dry-run writes nothing and names what would be written; nothing
+is ever sent (`org-canvas-diff-adopt-drifts')."
+  (let* ((args (org-canvas-batch--adopt-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (plist-get parsed :dry-run)))
+         (outcomes (org-canvas-diff-adopt-drifts (nth 0 args)
+                                                 :body (nth 1 args)
+                                                 :overrides (nth 2 args))))
+    (if (cl-every (lambda (o) (memq (plist-get o :outcome)
+                                    org-canvas--drift-done-outcomes))
+                  outcomes)
+        0 1)))
+
+(defun org-canvas-batch--cmd-show (parsed)
+  "Print the Canvas version of each heading PARSED names; return 0."
+  (org-canvas-show-headings (mapcar #'org-canvas-batch-heading-entry
+                                    (plist-get parsed :args)))
+  0)
 
 (defun org-canvas-batch--cmd-validate (parsed)
   "Validate the Org files, all findings under --all in PARSED.

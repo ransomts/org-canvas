@@ -1,0 +1,13 @@
+* Added
+- #495 =org-canvas-post-grades= posts a column's grades by Canvas id or
+  exact name, or a list of columns, with no grading file: the column
+  graded on Gradescope and sent to Canvas, which the queue lists as
+  =post (N)= and neither =P= nor =org-canvas-push-submission-grades=
+  could reach.  It returns one plist per column whose =:state= says
+  whether Canvas accepted the request (=posted=, =dry-run= or =failed=
+  with =:message=), sends nothing under a dry run, and refuses a
+  read-only course before reading anything.
+  =org-canvas-submissions-post-queue= posts every column the grading
+  queue marks =post=.  From the shell, =scripts/org-canvas post
+  ASSIGNMENT...= or =post --queue=, exiting 1 when a column was not
+  posted.
