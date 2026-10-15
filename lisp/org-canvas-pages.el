@@ -67,6 +67,9 @@
  :skip-reason "front page")
 (org-canvas-register-properties "pages"
   :duplicate-titles t
+  ;; The push sends the heading as the title, so the drift report
+  ;; holds it against Canvas's (issue #498).
+  :compare-title t
   :label "Pages"
   :file-var 'org-canvas-pages-file
   :query "LEVEL=1"

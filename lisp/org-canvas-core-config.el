@@ -579,7 +579,9 @@ PLIST has keys :file-var, :query, :properties, and optionally
 collide once course-copy debris is stripped, issue #164), and
 :always-on-canvas (non-nil when no push creates the file's headings —
 the course itself in settings.org — so a past timestamp on them is
-history, not a typo, issue #208).
+history, not a typo, issue #208), and :compare-title (non-nil when the
+push sends the heading as the item's title, so the drift report holds
+the heading against Canvas's title, issue #498).
 
 An enum or csv-enum property whose Canvas field can come back holding
 a value only Canvas may set declares those separately as

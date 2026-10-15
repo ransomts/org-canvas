@@ -1,0 +1,10 @@
+* Added
+- #500 =org-canvas-show-at-point= (~=~ in the transient),
+  =org-canvas-show-headings= and =scripts/org-canvas show FEATURE:TITLE...=
+  print the Canvas version of a heading without writing anything: every
+  compared property beside the Org value, the title, and the body as
+  Canvas's HTML, as the Org a pull would convert it to, and as a unified
+  diff against the heading's own body.  ~=~ on a CHANGED row of the
+  drift report shows the same from the copy the report already read, so
+  a changed description is readable in full rather than as two
+  40-character excerpts.

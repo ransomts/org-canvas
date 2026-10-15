@@ -77,6 +77,9 @@
  :skip-reason "announcement, pulled by the announcements module")
 (org-canvas-register-properties "discussions"
   :duplicate-titles t
+  ;; The push sends the heading as the title, so the drift report
+  ;; holds it against Canvas's (issue #498).
+  :compare-title t
   :label "Discussions"
   :file-var 'org-canvas-discussions-file
   :query "LEVEL=1"

@@ -108,6 +108,7 @@
 (require 'org-canvas-status)
 (require 'org-canvas-publish)
 (require 'org-canvas-adopt)
+(require 'org-canvas-drift)
 (require 'org-canvas-orphans)
 (require 'org-canvas-browse)
 (require 'org-canvas-search)

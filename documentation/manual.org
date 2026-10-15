@@ -139,6 +139,8 @@ ARGS=, which is also the line to use without it.
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
+| =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
+| =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
 | =version= (=--version=, =-V=) | the version, commit and directory loaded           |                    |
@@ -154,9 +156,16 @@ feature is a module's name, singular or plural, and ends at the first
 colon or hash sign, so a title may hold either.  =publish= and
 =unpublish= take the same names, for assignments, quizzes, discussions
 and pages (see [[*Publishing One Heading][Publishing One Heading]]).
+=adopt= takes the same names, or =--all= for every CHANGED row of the
+drift report, and writes what Canvas holds of the fields each row
+names (see [[*Adopting the Drift][Adopting the Drift]]); =--body= lets
+it replace a body, and =--overrides= appends the heading's EXTRA
+override rows to its table.  =show= takes the same names and prints
+each heading's Canvas version, writing nothing (see [[*Showing the
+Canvas Version][Showing the Canvas Version]]).
 =--dry-run= (=-n=)
 before the command makes =push=, =publish=, =unpublish=,
-=push-comments= and =sync= send nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
+=push-comments= and =sync= send nothing, and =adopt= write nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
 among its arguments) sets =org-canvas-conflict-strategy= for that run
 alone: =push= overwrites Canvas, =pull= overwrites the heading, and
 =skip= leaves the entry alone and names it, which is also what a batch
@@ -3171,7 +3180,16 @@ Per feature:
   change is in something the report does not compare (overrides, a rubric
   association).  Such a row has nothing to push or pull; =a= on it adopts
   the Canvas timestamp as the heading's baseline instead (see
-  [[*Adopting a Stamp][Adopting a Stamp]]).
+  [[*Adopting a Stamp][Adopting a Stamp]]).  For assignments, pages,
+  quizzes, discussions and announcements, whose push sends the heading
+  as the title, a title Canvas holds otherwise is a =TITLE= field of the
+  row (#498).  A heading silent on =PUBLISHED= is compared as the push
+  sends it, published, so an item unpublished on Canvas reads
+  =PUBLISHED org: (unset: true) canvas: false=; a pull leaves
+  =PUBLISHED= out exactly when Canvas holds true.  =A= on a CHANGED row
+  writes what Canvas holds of its fields into the heading, and ~=~
+  shows the Canvas version in full (see [[*Adopting the Drift][Adopting
+  the Drift]]).
 - *MISSING* -- a heading carries a Canvas id the course no longer has.
 - *EXTRA* -- an item in the course that no Org heading claims.  An extra
   assignment or assignment group carries a second line saying what it is,
@@ -3400,6 +3418,9 @@ something the keys act on:
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
 | =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming; the question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved first (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
+| =A=       | CHANGED                 | Write what Canvas holds of the fields the row names into the heading, and nothing else (=org-canvas-diff-adopt-drift=); a body only if you say so; sends nothing |
+| =A=       | EXTRA (an override)     | Append the override to the heading's overrides table, the other rows untouched; sends nothing |
+| ~=~       | CHANGED                 | Show the Canvas version in full: every compared property, the title, and the body as HTML, as Org and as a unified diff (=org-canvas-diff-show-row=); writes nothing |
 | =p=       | CHANGED, EXTRA (New Quiz items) | Pull the quiz the item sits in over its heading, items included, after confirming |
 | =p=       | EXTRA (classic and New Quizzes) | Pull the quiz, questions or items and all, into a new heading at the end of =quizzes.org= or =new-quizzes.org=, after confirming |
 | =s=       | MOVED                   | Stamp the item id on the heading the row paired (=org-canvas-diff-stamp-move=); sends nothing |
@@ -3408,7 +3429,7 @@ something the keys act on:
 | =TAB= / =S-TAB= | anywhere          | Move to the next / previous row                                     |
 
 An action rewrites its row in place (=ACK=, =DELETED=, =PULLED=, =DROPPED=,
-=ADOPTED=, =STAMPED=) rather than re-running every list request; =g= refreshes when you
+=ADOPTED=, =PARTIAL=, =STAMPED=) rather than re-running every list request; =g= refreshes when you
 want the totals recounted.  Acknowledgments are persisted through
 =org-canvas-diff-acknowledge-function=, which receives the whole new list.
 The default saves with =customize-save-variable=; a course that keeps its
@@ -3437,6 +3458,88 @@ asks (not in batch), adopts, and reports what it adopted, what it could
 not find, and how many =CHANGED= rows it left alone because a property
 differs.  A settings push that changes the post policy logs a warning
 naming this command as the follow-up.
+
+** Adopting the Drift
+
+A CHANGED row names the fields where Canvas differs, and =p= used to be
+the only way to take Canvas's side.  A pull rewrites the whole heading:
+it drops =PUBLISHED: true= (the default), drops =PAYLOAD_HASH= and the
+drawer's alignment, and converts the description from Canvas's HTML,
+which loses export attributes, table rules and line wrapping Canvas
+never held (#498).  =A= on the row writes what the row names and
+nothing else:
+
+- each differing property, in the Org spelling a pull would write,
+  written out even when it is the default -- a heading that said
+  =PUBLISHED: false= now says =PUBLISHED: true=, and a date Canvas
+  cleared is removed;
+- the heading's title, when Canvas renamed the item (a link to the old
+  title elsewhere needs updating; =org-canvas-validate= lists them);
+- the body, only if you answer yes when =A= asks.  Only the heading's
+  own text is replaced, from the end of its drawer to its first
+  sub-heading; its =overrides= and =accommodations= tables are kept as
+  they are and written first.  A quiz's description, a New Quiz item's
+  body, and a heading whose sub-headings are part of its body are held
+  back: use ~=~ to read the text and copy what you want by hand.
+
+A declared intent (=WANT_DOCUMENT_PROCESSOR=) is never adopted from
+Canvas.  When every field was written, =CANVAS_UPDATED_AT= takes
+Canvas's stamp; =PAYLOAD_HASH= is hashed again if the heading was what
+its last push sent, and otherwise kept, so local edits of its own are
+still pushed.  When a field was held back the row reads =PARTIAL= and
+the stamp stays, so the next push still stops at the conflict check
+rather than overwriting what Canvas holds.  A row with no compared
+property differing adopts only its stamp, as =a= does.
+
+On an EXTRA override row, =A= appends the override to the heading's
+=#+NAME: overrides= table as a new last row, its dates in the columns
+the header names, and leaves the other rows exactly as they are.  A
+date the table has no column for is refused (adding the column would
+rewrite every row); a heading with no table gets one under its drawer.
+The next push then keeps the override instead of deleting it.
+
+=org-canvas-diff-adopt-drifts= does the same for the rows it is given,
+without asking:
+
+#+begin_src emacs-lisp
+(org-canvas-diff-adopt-drifts '(("assignment" . "Midterm Exam")
+                                ("assignment" "2563805" canvas-id))
+                              :overrides t)   ; and their EXTRA override rows
+(org-canvas-diff-adopt-drifts 'all)           ; every CHANGED row, bodies held
+#+end_src
+
+=:body t= lets it replace bodies.  It runs the comparison itself, writes
+a report naming each row =ADOPTED=, =PARTIAL= (with what was held and
+why), =NOT FOUND= or =HELD=, and returns one plist per row.
+=M-x org-canvas-diff-adopt-all-drifts= (=Z= in the transient menu) asks
+once and adopts every CHANGED row, bodies held back.  From the shell,
+=scripts/org-canvas adopt --all=, or =adopt "assignment:Midterm Exam"=,
+with =--body= and =--overrides= as above, exits 1 when a row was left;
+=-n= names what it would write and writes nothing.  Nothing is ever
+sent to Canvas.
+
+** Showing the Canvas Version
+
+The report shows a changed body as two short excerpts around the first
+difference: enough to know the text changed, not what it says (#500).
+~=~ on a CHANGED row shows the Canvas version of its heading in full,
+from the copy the report already read: the title and every compared
+property beside the Org value, starred where they differ, then the
+body as Canvas's HTML, as the Org a pull would convert it to, and as a
+unified diff of the heading's own body against that Org.
+
+=M-x org-canvas-show-at-point= (~=~ in the transient menu) does the
+same for the heading at point, reading the item from Canvas, and
+=org-canvas-show-headings= for headings named as =org-canvas-pull-headings=
+names them.  From the shell:
+
+#+begin_src sh
+scripts/org-canvas show "assignment:Closer 07" "page#week-05-objectives"
+#+end_src
+
+None of them writes anything, locally or on Canvas, so they are the
+way to read what an instructor changed in the web UI before choosing
+between =A=, =p=, a push, or copying a paragraph by hand.
 
 ** Deleting Rows in Batch
 
@@ -3508,10 +3611,14 @@ next sync moves it into its new module, keeping its id.
 
 One list request per feature.  The report writes nothing, locally or on
 Canvas, so it is safe to run at any time.  Stamp adoption and stamping a
-moved item are the only local writes in this part of the package.  They
+moved item were the first local writes in this part of the package.  They
 happen only when you ask for them, with =a= or
 =org-canvas-diff-adopt-stamps= and with =s=, =S= or
-=org-canvas-diff-stamp-moves=, and neither sends anything.
+=org-canvas-diff-stamp-moves=, and neither sends anything.  Adopting
+the drift (=A=, =org-canvas-diff-adopt-drifts=) is a third, writing
+only the fields a row names, and it sends nothing either; showing a
+heading's Canvas version (~=~, =org-canvas-show-at-point=) writes
+nothing at all.
 Deleting is a separate verb too -- =k= or =org-canvas-diff-delete-rows= --
 and each delete reads the object and saves it before it sends the DELETE.
 
@@ -4791,6 +4898,11 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
 | =org-canvas-diff-delete-rows=     | Delete the Canvas objects of the EXTRA rows named, without asking, after safety checks and a JSON snapshot (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =org-canvas-diff-stamp-moves=     | Stamp the item id of every MOVED row on the heading it paired (local write only; see [[*Stamping a Moved Item][Stamping a Moved Item]]) |
+| =org-canvas-diff-adopt-drift= / =-show-row= | Row actions =A= and ~=~: write what a CHANGED row names into its heading, or show its Canvas version in full (see [[*Adopting the Drift][Adopting the Drift]]) |
+| =org-canvas-diff-adopt-drifts=    | Adopt the rows named, or every CHANGED row, without asking (local write only; see [[*Adopting the Drift][Adopting the Drift]]) |
+| =org-canvas-diff-adopt-all-drifts= | The same for every CHANGED row, after confirming, bodies held back |
+| =org-canvas-show-at-point=        | Show the Canvas version of the heading at point, writing nothing (see [[*Showing the Canvas Version][Showing the Canvas Version]]) |
+| =org-canvas-show-headings=        | The same for headings named by title or Canvas id |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |

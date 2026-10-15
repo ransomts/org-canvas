@@ -14,7 +14,7 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
-;; pull-all, push, publish, diff, validate, sync ...), which
+;; pull-all, push, publish, diff, adopt, show, validate, sync ...), which
 ;; `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
@@ -201,6 +201,11 @@ copy silently.  Return the credentials file loaded, or nil."
      "Unpublish named headings, sending only the flag (#466).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
+    ("adopt" org-canvas-batch--cmd-adopt 1 nil
+     "[--body] [--overrides] --all | FEATURE:TITLE..."
+     "Write what CHANGED rows name into Org, nothing sent (#498).")
+    ("show" org-canvas-batch--cmd-show 1 nil "FEATURE:TITLE..."
+     "Print Canvas's version of named headings; writes nothing (#500).")
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
      "Validate the Org files offline; exit 1 on errors.")
     ("sync" org-canvas-batch--cmd-sync 0 0 ""
@@ -576,6 +581,42 @@ A --dry-run sends nothing and writes nothing."
 (defun org-canvas-batch--cmd-diff (_parsed)
   "Print the drift report; return 1 if anything drifted."
   (if (> (org-canvas-diff) 0) 1 0))
+
+(defun org-canvas-batch--adopt-args (args)
+  "Read adopt ARGS into (SELECTORS BODY OVERRIDES).
+SELECTORS is `all' for --all, else the headings the other arguments
+name; BODY and OVERRIDES are non-nil for --body and --overrides.
+--all beside a heading, or neither, is a usage error."
+  (let* ((body (and (member "--body" args) t))
+         (overrides (and (member "--overrides" args) t))
+         (all (member "--all" args))
+         (headings (cl-set-difference args '("--body" "--overrides" "--all")
+                                      :test #'equal)))
+    (when (or (and all headings) (not (or all headings)))
+      (org-canvas-batch--usage "adopt takes %s"
+                               (nth 4 (assoc "adopt" org-canvas-batch--commands))))
+    (list (if all 'all (mapcar #'org-canvas-batch-heading-entry headings))
+          body overrides)))
+
+(defun org-canvas-batch--cmd-adopt (parsed)
+  "Adopt the drift of the rows PARSED names; return 1 if any is left.
+A --dry-run writes nothing and names what would be written; nothing
+is ever sent (`org-canvas-diff-adopt-drifts')."
+  (let* ((args (org-canvas-batch--adopt-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (plist-get parsed :dry-run)))
+         (outcomes (org-canvas-diff-adopt-drifts (nth 0 args)
+                                                 :body (nth 1 args)
+                                                 :overrides (nth 2 args))))
+    (if (cl-every (lambda (o) (memq (plist-get o :outcome)
+                                    org-canvas--drift-done-outcomes))
+                  outcomes)
+        0 1)))
+
+(defun org-canvas-batch--cmd-show (parsed)
+  "Print the Canvas version of each heading PARSED names; return 0."
+  (org-canvas-show-headings (mapcar #'org-canvas-batch-heading-entry
+                                    (plist-get parsed :args)))
+  0)
 
 (defun org-canvas-batch--cmd-validate (parsed)
   "Validate the Org files, all findings under --all in PARSED.

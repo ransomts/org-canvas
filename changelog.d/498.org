@@ -1,0 +1,25 @@
+* Added
+- #498 =A= on a drift report row, =org-canvas-diff-adopt-drifts= (and
+  =org-canvas-diff-adopt-all-drifts=, =Z= in the transient) and
+  =scripts/org-canvas adopt [--body] [--overrides] --all | FEATURE:TITLE...=
+  write what Canvas holds of the fields a CHANGED row names, and
+  nothing else: each property in its Org spelling (an explicit
+  =PUBLISHED: true= stays explicit), the title when Canvas renamed the
+  item, and the body only when asked, replacing just the heading's own
+  text and keeping its overrides table.  =CANVAS_UPDATED_AT= takes
+  Canvas's stamp once every field is written, =PAYLOAD_HASH= is hashed
+  again on a heading that was clean, and a row with nothing compared
+  differing adopts its stamp as =a= does.  On an EXTRA override row,
+  =A= (or =--overrides=) appends the override to the heading's table
+  without touching its other rows.  Nothing is sent to Canvas.
+* Changed
+- #498 The drift report holds an assignment's, page's, quiz's,
+  discussion's or announcement's heading against Canvas's title, so a
+  rename in the web UI is a =TITLE= field of its CHANGED row rather than
+  a row with nothing compared differing.
+* Fixed
+- #498 The drift report compares =PUBLISHED= on a heading that does not
+  write it against its default, true, as the push sends it: a pull
+  deletes =PUBLISHED: true= as the default, and an item unpublished on
+  Canvas afterwards was a row with nothing compared differing, which
+  stamp adoption accepted while the next push published it again.
