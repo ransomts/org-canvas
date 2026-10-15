@@ -197,8 +197,9 @@ copy silently.  Return the credentials file loaded, or nil."
      "Import the whole course; exit 1 if anything failed (#458).")
     ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
      "Pull gradebook.org; print its Sections table and the course's scores.")
-    ("verify" org-canvas-batch--cmd-verify 1 nil "[--hidden] ASSIGNMENT..."
-     "Read pushed columns back from Canvas; exit 1 on a difference (#450).")
+    ("verify" org-canvas-batch--cmd-verify 1 nil
+     "[--hidden] ASSIGNMENT... | announcements:TITLE..."
+     "Read pushed columns or announcements back; exit 1 on a difference.")
     ("apply-ruling" org-canvas-batch--cmd-apply-ruling 2 2 "FILE RULING.json"
      "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
     ("excuse" org-canvas-batch--cmd-excuse 1 3 "[--all] [--overwrite] FILE"
@@ -536,18 +537,44 @@ student was skipped or carries a late note with other numbers."
                  results)
         1 0)))
 
+(defun org-canvas-batch--announcement-arg-p (arg)
+  "Return non-nil when ARG names an announcement heading, FEATURE:TITLE."
+  (string-match-p "\\`announcements?[:#]" arg))
+
+(defun org-canvas-batch--verify-announcements (args)
+  "Verify the announcement headings ARGS name; return non-nil if all agree.
+Nil ARGS verify nothing and agree."
+  (or (null args)
+      (cl-every (lambda (r) (zerop (plist-get r :differences)))
+                (org-canvas-verify-announcements
+                 (mapcar #'org-canvas-batch-heading-entry args)))))
+
+(defun org-canvas-batch--verify-columns (targets hidden)
+  "Verify the grading files TARGETS name, HIDDEN as for --hidden.
+Return non-nil if every column agrees; nil TARGETS agree."
+  (or (null targets)
+      (cl-every (lambda (r) (zerop (plist-get r :differences)))
+                (org-canvas-submissions-verify targets hidden))))
+
 (defun org-canvas-batch--cmd-verify (parsed)
-  "Read back each column PARSED names and compare it with its grading file.
---hidden counts a posted submission as a difference.  Return 1 if any
-column differs (`org-canvas-submissions-verify')."
+  "Read back each column or announcement PARSED names and compare it.
+A column is compared with its grading file; --hidden counts a posted
+submission as a difference (`org-canvas-submissions-verify').  An
+announcements:TITLE or announcements#ID argument is compared with its
+heading (`org-canvas-verify-announcements', #502).  Return 1 if any
+differs."
   (let* ((args (plist-get parsed :args))
          (hidden (and (member "--hidden" args) t))
-         (targets (remove "--hidden" args)))
-    (unless targets
-      (org-canvas-batch--usage "verify takes [--hidden] ASSIGNMENT..."))
-    (if (cl-every (lambda (r) (zerop (plist-get r :differences)))
-                  (org-canvas-submissions-verify targets hidden))
-        0 1)))
+         (rest (remove "--hidden" args))
+         (announcements (seq-filter #'org-canvas-batch--announcement-arg-p rest))
+         (targets (seq-remove #'org-canvas-batch--announcement-arg-p rest)))
+    (unless rest
+      (org-canvas-batch--usage "verify takes %s"
+                               (nth 4 (assoc "verify" org-canvas-batch--commands))))
+    ;; Both run, so one report does not hide the other.
+    (let ((ok-columns (org-canvas-batch--verify-columns targets hidden))
+          (ok-announcements (org-canvas-batch--verify-announcements announcements)))
+      (if (and ok-columns ok-announcements) 0 1))))
 
 (defun org-canvas-batch--cmd-apply-ruling (parsed)
   "Apply the JSON rulings PARSED names to its grading file.

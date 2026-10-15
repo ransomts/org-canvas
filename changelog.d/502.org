@@ -1,0 +1,9 @@
+* Added
+- #502 =org-canvas-verify-announcements= reads pushed announcements back
+  by =CANVAS_ID= and compares each with its heading: the title,
+  =PUBLISHED=, the posting (=DELAYED_POST_AT= against Canvas's
+  =delayed_post_at= and =posted_at=, so a leftover schedule shows),
+  =ALLOW_COMMENTS= against =locked=, and the body, exported offline,
+  against =message=.  It writes nothing.  =scripts/org-canvas verify
+  announcements:TITLE...= runs it in batch, beside grading columns or
+  alone, and exits 1 on a difference.
