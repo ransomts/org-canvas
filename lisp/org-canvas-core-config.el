@@ -313,6 +313,30 @@ carries on."
 (org-canvas--require-optional 'org-canvas-credentials
                               "the credentials file")
 
+(defconst org-canvas-course-config-file "org-canvas-config.el"
+  "Name of a course directory's optional settings file (issue #499).
+It holds what a course sets that is not a secret, such as the comment
+rules `org-canvas-submissions-check-comments' applies, so they can sit
+beside the course's feedback guide and be shared, while the
+credentials file, which holds the token, is never shown to anyone.
+`org-canvas-batch-setup' and `org-canvas-activate-course' load it after
+the credentials file.")
+
+(defun org-canvas-load-course-config (directory)
+  "Load the course settings file in DIRECTORY, when it has one.
+The file is `org-canvas-course-config-file'; it is loaded after the
+credentials file, so a setting in both takes its value.  A file that
+signals while loading is named, with the error, and the run carries
+on without the rest of it.  Return the file loaded, or nil."
+  (let ((file (expand-file-name org-canvas-course-config-file directory)))
+    (when (file-exists-p file)
+      (condition-case err
+          (progn (load file nil t t) file)
+        (error
+         (org-canvas--user-message "org-canvas: %s not loaded (%s)"
+                                   file (error-message-string err))
+         nil)))))
+
 ;;;; 1b. Multi-Course Support
 
 (defcustom org-canvas-courses nil

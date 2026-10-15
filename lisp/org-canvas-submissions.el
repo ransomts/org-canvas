@@ -515,6 +515,23 @@ due date, which is not lateness of a submission."
                (numberp secs) (> secs 0))
       (ceiling secs 86400))))
 
+(defun org-canvas--submissions-due-at (submission)
+  "Return the due time SUBMISSION was late against, as an Org timestamp.
+Nil unless it arrived late (`org-canvas--submissions-days-late').  The
+time is Canvas's `cached_due_date', the student's own due date with
+any override applied; without it, `submitted_at' less `seconds_late'.
+The late-note draft names it (issue #484)."
+  (when (org-canvas--submissions-days-late submission)
+    (let ((cached (org-canvas--alist-get-non-null 'cached_due_date submission)))
+      (if (stringp cached)
+          (org-canvas--iso8601-to-org-timestamp cached)
+        (when-let* ((at (org-canvas--alist-get-non-null 'submitted_at submission))
+                    ((org-canvas--iso8601-date-p at)))
+          (format-time-string
+           "<%Y-%m-%d %a %H:%M>"
+           (time-subtract (date-to-time at) (alist-get 'seconds_late submission))
+           (org-canvas--time-zone)))))))
+
 ;;;; Links
 
 (defun org-canvas--submissions-course-url (path)
@@ -1463,9 +1480,10 @@ is the same value as pulled, the baseline a later push compares against.
 CANVAS_RUBRIC is the same baseline for the Rubric table, a digest of
 the assessment as pulled, present only when Canvas holds one.
 FINAL_SCORE appears only when Canvas's late policy made the recorded
-score differ from the one entered.  DAYS_LATE, rounded up, appears on a
-late submission.  LATE_STATUS and its baseline CANVAS_LATE_STATUS
-appear when Canvas holds a late policy status for the submission (see
+score differ from the one entered.  DAYS_LATE, rounded up, appears on
+a late submission, and DUE_AT, the due time it missed, beside it.
+LATE_STATUS and its baseline CANVAS_LATE_STATUS appear when Canvas
+holds a late policy status for the submission (see
 `org-canvas--submissions-insert-late-status').  ATTEMPT lets a push
 notice a resubmission.  CANVAS_COMMENTS holds the text digest
 of each sent comment by id, the baseline an edit to one is told by
@@ -1496,6 +1514,8 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
     (insert (format ":STATUS: %s\n" status))
     (when days-late
       (insert (format ":DAYS_LATE: %s\n" days-late)))
+    (when-let* ((due (org-canvas--submissions-due-at submission)))
+      (insert (format ":DUE_AT: %s\n" due)))
     (org-canvas--submissions-insert-late-status submission)
     (when shown
       (insert (format ":SCORE: %s\n" shown))

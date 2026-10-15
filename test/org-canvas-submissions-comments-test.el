@@ -453,6 +453,122 @@
                  (:user-id "2" :draft "Same sentence here, long enough.")))
               :to-be nil))))
 
+;;;; Warnings and length bounds (issue #499)
+
+(describe "check-comments warnings and length bounds (issue #499)"
+  (it "lists a text a reread regexp matches as a warning, not an error"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-warn-regexps '("unclear")))
+        (pcase-let ((`(,findings ,report) (test-scom--check)))
+          (let* ((warned (seq-find (lambda (f) (eq (plist-get f :kind) 'flagged)) findings))
+                 (sev (plist-get warned :severity)))
+            (expect sev :to-be 'warning)
+            (expect (plist-get warned :where) :to-equal "Thesis")
+            (expect (plist-get warned :regexp) :to-equal "unclear"))
+          (expect (org-canvas-submissions-comment-check-errors findings) :to-equal 1)
+          (expect report :to-match "^\\* Text to reread$")
+          (expect report :not :to-match "^\\* Flagged text$")
+          (expect report :to-match "^1 error(s), 1 warning(s);")
+          (expect report :to-match
+                  "^- Adams, Alice (5001), Thesis :: matches =unclear=: Thesis unclear\\.")))))
+
+  (it "keeps an error and a warning on one text apart"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-flag-regexps '("Thesis"))
+            (org-canvas-submissions-comment-warn-regexps '("unclear")))
+        (pcase-let ((`(,findings ,report) (test-scom--check)))
+          (expect (org-canvas-submissions-comment-check-errors findings) :to-equal 2)
+          (expect report :to-match "^\\* Flagged text\n\n- Adams, Alice (5001), Thesis :: matches =Thesis=")
+          (expect report :to-match "^\\* Text to reread\n\n- Adams, Alice (5001), Thesis :: matches =unclear=")))))
+
+  (it "warns of a row comment over the ceiling"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-max-length 50))
+        (pcase-let ((`(,findings ,report) (test-scom--check)))
+          (let* ((long (seq-filter (lambda (f) (eq (plist-get f :kind) 'too-long)) findings))
+                 (sev (plist-get (car long) :severity)))
+            (expect (length long) :to-equal 1)
+            (expect sev :to-be 'warning)
+            (expect (plist-get (car long) :length) :to-equal 53)
+            (expect (plist-get (car long) :limit) :to-equal 50))
+          (expect (org-canvas-submissions-comment-check-errors findings) :to-equal 1)
+          (expect report :to-match "^\\* Row comments too long$")
+          (expect report :to-match
+                  "^- Adams, Alice (5001), Thesis :: 53 characters, over 50: Thesis unclear\\.")))))
+
+  (it "warns of a deducted row's comment under the floor, and only a deducted one"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-deduction-min-length 60))
+        (pcase-let ((`(,findings ,report) (test-scom--check)))
+          (let ((short (seq-filter (lambda (f) (eq (plist-get f :kind) 'too-short)) findings)))
+            (expect (mapcar (lambda (f) (plist-get f :user-id)) short) :to-equal '("5001"))
+            (expect (plist-get (car short) :limit) :to-equal 60))
+          (expect report :to-match "^\\* Deduction comments too short$")
+          (expect report :to-match "^- Adams, Alice (5001), Thesis :: 53 characters, under 60: ")))))
+
+  (it "finds no length warning with the bounds off"
+    (let ((org-canvas-submissions-comment-max-length nil)
+          (org-canvas-submissions-comment-deduction-min-length nil))
+      (expect (org-canvas--submissions-comments-lengths
+               '(:user-id "1" :rows ((:criterion-id "_1" :max "5" :score "1" :comment "Short."))))
+              :to-be nil)))
+
+  (it "names a row without a criterion name by its id"
+    (let ((org-canvas-submissions-comment-max-length 3))
+      (expect (mapcar (lambda (f) (plist-get f :where))
+                      (org-canvas--submissions-comments-lengths
+                       '(:user-id "1" :rows ((:criterion-id "_1" :max "5" :score "5"
+                                              :comment "Short.")))))
+              :to-equal '("_1")))))
+
+;;;; The course settings file (issue #499)
+
+(describe "org-canvas-load-course-config (issue #499)"
+  (it "loads the course settings file, after the credentials, in batch"
+    (let ((dir (file-name-as-directory (make-temp-file "org-canvas-config" t))))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name "org-canvas-credentials.el" dir)
+              (insert ";;; -*- lexical-binding: t; -*-\n"
+                      "(setq org-canvas-submissions-comment-max-length 100)\n"))
+            (with-temp-file (expand-file-name org-canvas-course-config-file dir)
+              (insert ";;; -*- lexical-binding: t; -*-\n"
+                      "(setq org-canvas-submissions-comment-max-length 300)\n"))
+            (with-org-canvas-course-globals
+              (let ((org-canvas-submissions-comment-max-length nil)
+                    (find-file-visit-truename nil)
+                    (default-directory "/"))
+                (org-canvas-batch-setup dir)
+                (expect org-canvas-submissions-comment-max-length :to-equal 300))))
+        (delete-directory dir t))))
+
+  (it "returns the file loaded, or nil without one"
+    (let ((dir (file-name-as-directory (make-temp-file "org-canvas-config" t)))
+          (org-canvas-submissions-comment-shared-threshold 3))
+      (unwind-protect
+          (progn
+            (expect (org-canvas-load-course-config dir) :to-be nil)
+            (with-temp-file (expand-file-name org-canvas-course-config-file dir)
+              (insert ";;; -*- lexical-binding: t; -*-\n"
+                      "(setq org-canvas-submissions-comment-shared-threshold 5)\n"))
+            (expect (org-canvas-load-course-config dir)
+                    :to-equal (expand-file-name org-canvas-course-config-file dir))
+            (expect org-canvas-submissions-comment-shared-threshold :to-equal 5))
+        (delete-directory dir t))))
+
+  (it "names a file that signals and carries on"
+    (let ((dir (file-name-as-directory (make-temp-file "org-canvas-config" t)))
+          (said nil))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name org-canvas-course-config-file dir)
+              (insert ";;; -*- lexical-binding: t; -*-\n(error \"Broken setting\")\n"))
+            (cl-letf (((symbol-function 'org-canvas--user-message)
+                       (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+              (expect (org-canvas-load-course-config dir) :to-be nil))
+            (expect said :to-match "org-canvas-config\\.el not loaded (Broken setting)"))
+        (delete-directory dir t)))))
+
 ;;;; Shared reader
 
 (describe "org-canvas--submissions-section-normalize (issue #438)"

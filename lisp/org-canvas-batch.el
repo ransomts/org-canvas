@@ -128,7 +128,8 @@ for (issue #424)."
 DIRECTORY defaults to `default-directory'.  Load the credentials
 file found there, if any, without printing its name or contents,
 after setting `org-canvas-directory' to DIRECTORY, which the file may
-override.
+override; then the course settings file there, if any
+\(`org-canvas-load-course-config', issue #499).
 Set `find-file-visit-truename', so a script that opens a course file
 itself gets the buffer org-canvas uses (issue #97).  The
 changed-on-disk question is not answered here: org-canvas opens
@@ -146,6 +147,7 @@ copy silently.  Return the credentials file loaded, or nil."
     (setq org-canvas-directory dir)
     (when (file-exists-p credentials)
       (load credentials nil t t))
+    (org-canvas-load-course-config dir)
     (org-canvas--api-token-forget)
     (org-canvas--time-zone-reset)
     (and (file-exists-p credentials) credentials)))
@@ -182,6 +184,9 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
     ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
+    ("draft-late-notes" org-canvas-batch--cmd-draft-late-notes 1 nil
+     "[--hold ID,ID] FILE..."
+     "Draft late rows' late-policy comments; exit 1 on a skip (#484).")
     ("pull-all" org-canvas-batch--cmd-pull-all 0 0 ""
      "Import the whole course; exit 1 if anything failed (#458).")
     ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
@@ -446,6 +451,34 @@ Return 1 if any check found an error."
                            (org-canvas-submissions-check-comments file)))
                         (plist-get parsed :args))))
     (if (cl-every #'zerop errors) 0 1)))
+
+(defun org-canvas-batch--draft-late-notes-args (args)
+  "Read draft-late-notes ARGS into (HOLD . FILES).
+HOLD is the list after --hold, split at commas; FILES the rest."
+  (let ((hold nil) (files nil))
+    (while args
+      (let ((arg (pop args)))
+        (cond ((equal arg "--hold")
+               (setq hold (split-string (or (pop args) "") "," t "[ \t]+"))
+               (unless hold
+                 (org-canvas-batch--usage "--hold takes user ids or names, ID,ID")))
+              (t (push arg files)))))
+    (unless files
+      (org-canvas-batch--usage "draft-late-notes takes [--hold ID,ID] FILE..."))
+    (cons hold (nreverse files))))
+
+(defun org-canvas-batch--cmd-draft-late-notes (parsed)
+  "Draft the late-policy comments of each grading file PARSED names.
+A --dry-run writes nothing and shows each note.  Return 1 if a
+student was skipped or carries a late note with other numbers."
+  (let* ((args (org-canvas-batch--draft-late-notes-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (plist-get parsed :dry-run)))
+         (results (mapcar (lambda (file)
+                            (org-canvas-submissions-draft-late-notes file (car args)))
+                          (cdr args))))
+    (if (cl-some (lambda (r) (or (plist-get r :skipped) (plist-get r :changed)))
+                 results)
+        1 0)))
 
 (defun org-canvas-batch--cmd-verify (parsed)
   "Read back each column PARSED names and compare it with its grading file.

@@ -20,8 +20,10 @@
 ;;     (user id, criterion id), user id, and (user id, comment id), and
 ;;     nothing else, reporting what changed and what matched nothing;
 ;;   - `org-canvas-submissions-check-comments' lists every deducted row
-;;     without a comment, every text a course's own regexps flag, and
-;;     every sentence many students were given word for word.
+;;     without a comment, every text a course's own regexps flag (an
+;;     error) or ask to be reread (a warning, #499), every row comment
+;;     outside the course's length bounds, and every sentence many
+;;     students were given word for word.
 ;;
 ;; Everything is local: nothing is read from Canvas and nothing is sent.
 ;; An imported sent comment is an edit the comment push (C) sends, as a
@@ -44,6 +46,32 @@ check.  Matching follows `case-fold-search', so it ignores case unless
 that is nil.  A course's feedback guide goes here: a dash it bans, a
 word it does not want a student to read."
   :type '(repeat regexp)
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-comment-warn-regexps nil
+  "Regexps a comment is reread for, by `org-canvas-submissions-check-comments'.
+Matched as `org-canvas-submissions-comment-flag-regexps' is, against
+the same texts, but a match is a warning, which the batch check lets
+through: a word that is fine describing the work and wrong as an
+instruction (\"rewrite\"), or a topic the instructor rereads (issue
+#499)."
+  :type '(repeat regexp)
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-comment-max-length nil
+  "Longest a Rubric row comment may be, in characters, or nil for no ceiling.
+A longer row comment is a warning of `org-canvas-submissions-check-comments'
+\(issue #499)."
+  :type '(choice (integer :tag "Characters") (const :tag "Off" nil))
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-comment-deduction-min-length nil
+  "Shortest a deducted row's comment may be, in characters, or nil for none.
+A Rubric row scored below its max whose comment is shorter is a
+warning of `org-canvas-submissions-check-comments', so \"See rubric.\"
+does not pass as the explanation of a deduction (issue #499).  A row
+with no comment at all is the error it always was."
+  :type '(choice (integer :tag "Characters") (const :tag "Off" nil))
   :group 'org-canvas)
 
 (defcustom org-canvas-submissions-comment-shared-threshold 3
@@ -518,17 +546,52 @@ the keys that matched nothing (\"user 5001 criterion _812\");
                                      (plist-get c :text)))
                    (plist-get student :sent)))))
 
-(defun org-canvas--submissions-comments-flagged (student)
-  "Return an error for each of STUDENT's texts a flag regexp matches."
+(defun org-canvas--submissions-comments-flagged (student &optional regexps severity)
+  "Return a finding for each of STUDENT's texts one of REGEXPS matches.
+REGEXPS default to `org-canvas-submissions-comment-flag-regexps' and
+SEVERITY, the findings' :severity, to `error'."
   (let ((found nil))
     (dolist (text (org-canvas--submissions-comments-texts student))
-      (dolist (re org-canvas-submissions-comment-flag-regexps)
+      (dolist (re (if severity regexps org-canvas-submissions-comment-flag-regexps))
         (when (string-match-p re (cdr text))
           (push (org-canvas--submissions-comments-finding
-                 student :severity 'error :kind 'flagged
+                 student :severity (or severity 'error) :kind 'flagged
                  :where (car text) :regexp re :text (cdr text))
                 found))))
     (nreverse found)))
+
+(defun org-canvas--submissions-comments-warned (student)
+  "Return a warning for each of STUDENT's texts a reread regexp matches.
+The regexps are `org-canvas-submissions-comment-warn-regexps' (issue
+#499)."
+  (org-canvas--submissions-comments-flagged
+   student org-canvas-submissions-comment-warn-regexps 'warning))
+
+(defun org-canvas--submissions-comments-row-length (student row)
+  "Return the length warning on STUDENT's ROW, an exported row, or nil.
+A comment over `org-canvas-submissions-comment-max-length' is `too-long';
+a deducted row's comment under
+`org-canvas-submissions-comment-deduction-min-length' is `too-short'."
+  (let* ((text (plist-get row :comment))
+         (n (length text))
+         (max org-canvas-submissions-comment-max-length)
+         (min org-canvas-submissions-comment-deduction-min-length)
+         (kind (cond ((null text) nil)
+                     ((and max (> n max)) 'too-long)
+                     ((and min (< n min)
+                           (org-canvas--submissions-comments-deducted-p row))
+                      'too-short))))
+    (when kind
+      (org-canvas--submissions-comments-finding
+       student :severity 'warning :kind kind
+       :where (or (plist-get row :criterion) (plist-get row :criterion-id))
+       :length n :limit (if (eq kind 'too-long) max min) :text text))))
+
+(defun org-canvas--submissions-comments-lengths (student)
+  "Return the length warnings on STUDENT's Rubric row comments (issue #499)."
+  (delq nil (mapcar (lambda (row)
+                      (org-canvas--submissions-comments-row-length student row))
+                    (plist-get student :rows))))
 
 (defun org-canvas--submissions-comments-sentences (text)
   "Return TEXT's sentences long enough for the shared count, trimmed."
@@ -578,7 +641,9 @@ is nil."
   (append (apply #'append
                  (mapcar (lambda (s)
                            (append (org-canvas--submissions-comments-missing s)
-                                   (org-canvas--submissions-comments-flagged s)))
+                                   (org-canvas--submissions-comments-flagged s)
+                                   (org-canvas--submissions-comments-warned s)
+                                   (org-canvas--submissions-comments-lengths s)))
                          students))
           (org-canvas--submissions-comments-shared students)))
 
@@ -600,6 +665,12 @@ is nil."
                         who (plist-get finding :where) (plist-get finding :regexp)
                         (org-canvas--submissions-comments-one-line
                          (plist-get finding :text))))
+      ((or 'too-long 'too-short)
+       (format "- %s, %s :: %d characters, %s %d: %s"
+               who (plist-get finding :where) (plist-get finding :length)
+               (if (eq (plist-get finding :kind) 'too-long) "over" "under")
+               (plist-get finding :limit)
+               (org-canvas--submissions-comments-one-line (plist-get finding :text))))
       (_ (format "- %d students :: %s (%s)"
                  (plist-get finding :count) (plist-get finding :text)
                  (string-join (plist-get finding :user-ids) ", "))))))
@@ -614,12 +685,18 @@ is nil."
   "Insert the check's report on NAME's FINDINGS, under SUMMARY, here."
   (insert (format "#+TITLE: Comment check: %s\n\n%s\n" name summary))
   (dolist (group `(("Deducted rows without a comment" missing)
-                   ("Flagged text" flagged)
+                   ("Flagged text" flagged error)
+                   ("Text to reread" flagged warning)
+                   ("Row comments too long" too-long)
+                   ("Deduction comments too short" too-short)
                    (,(format "Sentences given to more than %s students"
                              org-canvas-submissions-comment-shared-threshold)
                     shared)))
-    (when-let* ((these (seq-filter (lambda (f) (eq (plist-get f :kind) (nth 1 group)))
-                                   findings)))
+    (when-let* ((these (seq-filter
+                        (lambda (f) (and (eq (plist-get f :kind) (nth 1 group))
+                                         (memq (nth 2 group)
+                                               (list nil (plist-get f :severity)))))
+                        findings)))
       (insert "\n* " (nth 0 group) "\n\n")
       (dolist (f these)
         (insert (org-canvas--submissions-comments-finding-line f) "\n")))))
@@ -635,6 +712,12 @@ checked.  The findings are errors and warnings, each a plist with
   - error `missing': a Rubric row scored below its max with no comment;
   - error `flagged': a row comment, draft or sent comment matching one
     of `org-canvas-submissions-comment-flag-regexps' (:regexp);
+  - warning `flagged': the same, for one of
+    `org-canvas-submissions-comment-warn-regexps', a text to reread;
+  - warning `too-long': a row comment longer than
+    `org-canvas-submissions-comment-max-length' (:length and :limit);
+  - warning `too-short': a deducted row's comment shorter than
+    `org-canvas-submissions-comment-deduction-min-length';
   - warning `shared': a sentence given word for word to more students
     than `org-canvas-submissions-comment-shared-threshold' (:count and
     :user-ids in place of a student).

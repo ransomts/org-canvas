@@ -136,6 +136,7 @@ ARGS=, which is also the line to use without it.
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
 | =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
+| =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
@@ -255,6 +256,7 @@ silently.
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; API credentials (gitignored)
+├── org-canvas-config.el       ; Optional course settings, no secrets (comment rules)
 ├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
@@ -3679,9 +3681,24 @@ Nothing else in the file moves, and a text equal to the file's is no change, so 
 =M-x org-canvas-submissions-check-comments= (=K=) checks the students not yet posted (and not departed) before a push, and lists:
 
 - *errors*: a =Rubric= row scored below its =Max= with no comment; a row comment, draft or sent comment matching one of =org-canvas-submissions-comment-flag-regexps= (empty by default — a course puts the dashes or words its feedback guide bans there);
-- *warnings*: a sentence of =org-canvas-submissions-comment-sentence-min-length= (25) characters or more given word for word to more than =org-canvas-submissions-comment-shared-threshold= (3) students in the column; nil turns the count off.
+- *warnings*: a sentence of =org-canvas-submissions-comment-sentence-min-length= (25) characters or more given word for word to more than =org-canvas-submissions-comment-shared-threshold= (3) students in the column; nil turns the count off.  Also, each off by default (#499):
+  - a text matching one of =org-canvas-submissions-comment-warn-regexps=, matched as the error list is and listed under /Text to reread/: a word that is fine describing the work but not as an instruction ("rewrite"), or a topic the instructor wants to see (a mention of AI);
+  - a =Rubric= row comment longer than =org-canvas-submissions-comment-max-length= characters;
+  - a deducted row's comment shorter than =org-canvas-submissions-comment-deduction-min-length= characters, so "See rubric." does not pass as the explanation of a deduction (a row with no comment at all stays an error).
 
-The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence is only a warning: a stock line can be meant.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
+The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence, a reread word and a length are only warnings: a stock line can be meant, and a word or a length needs a person's eyes, not a failed check.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=; a length finding adds =:length= and =:limit=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
+
+These are a course's own rules, so they belong with the course, not in your init file and not in =org-canvas-credentials.el=, the file that holds the token.  Put them in =org-canvas-config.el= beside it in the course directory:
+
+#+begin_src emacs-lisp
+;;; org-canvas-config.el --- Course settings, no secrets  -*- lexical-binding: t; -*-
+(setq org-canvas-submissions-comment-flag-regexps '("—")
+      org-canvas-submissions-comment-warn-regexps '("\\badd\\b" "\\brewrite\\b" "\\bAI\\b")
+      org-canvas-submissions-comment-max-length 300
+      org-canvas-submissions-comment-deduction-min-length 100)
+#+end_src
+
+=scripts/org-canvas= (=org-canvas-batch-setup=) and =M-x org-canvas-activate-course= load it after the credentials file, so a setting in both takes its value there; a file that signals while loading is named in the echo area and the run carries on.  It holds nothing secret, so it can be committed beside the course's feedback guide.
 
 A course-wide pass from the shell:
 
@@ -3692,6 +3709,42 @@ scripts/org-canvas -n import-comments Essay_1 essay1.json   # counts, nothing wr
 scripts/org-canvas import-comments Essay_1 essay1.json
 scripts/org-canvas check-comments Essay_1
 #+end_src
+
+** Drafting Late-Policy Comments
+
+A course whose feedback rules ask for a comment on every late upload — when it came in, the due time it missed, how late Canvas counts it, the percent the late policy takes, and what the score shows as — has every number it needs in the grading file and the settings.  =org-canvas-submissions-draft-late-notes= writes that comment for every student with =STATUS: late= and a score (#484).  It is local: nothing is read from Canvas and nothing is sent; the drafts go out with the next =S=.  It takes its grading file as =org-canvas-submissions-export-comments= does.
+
+The numbers come from:
+
+- =SUBMITTED_AT=, and =DUE_AT=, the due time the submission missed — the student's own, an override's when there is one — which the pull writes beside =DAYS_LATE= (a file pulled before =DUE_AT= existed needs a re-pull; its late rows are skipped and named);
+- =DAYS_LATE= for a daily policy, or the hours between the two times for an hourly one;
+- the course late policy, the =LATE_SUBMISSION_*= properties =org-canvas-pull-settings= writes on the heading of =settings.org= (a course with no enabled deduction is refused);
+- =SCORE= and the file's =POINTS_POSSIBLE=.
+
+The deduction is Canvas's arithmetic: the policy's percent per interval, of the points possible, never taking the score below the floor percent (when the floor is on) and never raising a score already under it, rounded to two places.  The note is =org-canvas-submissions-late-note-format=, a =format-spec= string:
+
+| Spec | Fills in                                                              |
+|------+-----------------------------------------------------------------------|
+| =%s= | the submitted time                                                    |
+| =%d= | the due time it missed                                                |
+| =%l= | the lateness in the policy's unit, "2 days" or "35 hours"             |
+| =%n= | the same as a bare number                                             |
+| =%p= | the percent the policy takes                                          |
+| =%r= | the score as entered                                                  |
+| =%f= | the score after the deduction                                         |
+| =%m= | the points possible                                                   |
+| =%%= | a percent sign                                                        |
+
+The default reads "This came in Fri Oct 9 at 10:00, after the due time of Wed Oct 7 at 23:59: 2 days late.  The course's late policy takes 20% for that, so your 8 shows as 6 of 10."; the times follow =org-canvas-submissions-late-note-time-format=.  The note is written under =** Comment to post=, below the template and after any draft already there; a student with no such heading gets one.
+
+A student whose draft or sent comments already carry the same note is left alone, so the command can be run again after more grading.  One carrying a note of the same shape with other numbers — a regrade since the note was drafted or sent — is named and not rewritten: fix or delete the old note, then run it again.  =HOLD= lists students to skip, by user id or heading name, such as one awaiting an extension ruling; interactively a prefix argument asks for them, and the report names them.  Under a dry run nothing is written and each note is shown.  From Lisp:
+
+#+begin_src emacs-lisp
+(org-canvas-submissions-draft-late-notes "Essay 1" '("5003"))      ; hold 5003
+(org-canvas-submissions-draft-late-notes "Essay 1" nil t)          ; dry run
+#+end_src
+
+returns =:drafted= (=(NAME USER-ID NOTE)= each), =:same=, =:changed=, =:held=, =:skipped= (with why) and =:dry-run=.  From the shell, =scripts/org-canvas [-n] draft-late-notes [--hold ID,ID] FILE...= exits 1 when a student was skipped or carries a note with other numbers.
 
 ** Applying a Ruling to Listed Students
 
@@ -4743,6 +4796,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-export-comments= | A grading file's row comments, drafts, sent comments and notes as data, or JSON (=H=) |
 | =org-canvas-submissions-import-comments= | Write new comment text back by user, criterion and comment id, nothing else (=I=) |
 | =org-canvas-submissions-check-comments= | Deducted rows without a comment, flagged text, sentences many students share (=K=) |
+| =org-canvas-submissions-draft-late-notes= | Draft each late row's late-policy comment from its times, score and the course late policy (Lisp and batch; see [[*Drafting Late-Policy Comments][Drafting Late-Policy Comments]]) |
 | =org-canvas-submissions-apply-ruling= | Apply a ruling to listed students: rows, row comments, SCORE and draft replaced, the old kept in Notes (Lisp and batch) |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
