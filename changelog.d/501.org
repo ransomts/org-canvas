@@ -1,0 +1,11 @@
+* Added
+- #501 =org-canvas-submissions-excuse= excuses students in a grading file
+  by writing =SCORE: EX=, which the grade push sends as =excused=: every
+  student with no submission (the default), every student, or the
+  student at point or those in the region.  A graded student is kept
+  back unless asked (a prefix argument, =--overwrite=), and one who left
+  always is.  =scripts/org-canvas excuse [--all] [--overwrite] FILE=
+  runs it in batch; =-n= is a dry run.
+- #501 A ruling's score may be ="EX"= (=:score "EX"= from Lisp,
+  ="score": "EX"= in =apply-ruling='s JSON) to excuse a listed set of
+  students; an excusal is never kept back for the rubric total.

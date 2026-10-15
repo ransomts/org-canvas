@@ -141,6 +141,8 @@ ARGS=, which is also the line to use without it.
 | =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
+| =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
+| =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
@@ -3884,7 +3886,54 @@ From the shell, =scripts/org-canvas apply-ruling FILE RULING.json= applies one r
   "comment": "Submitted after the extra-credit window, so 20% of the column comes off."}]
 #+end_src
 
-=rows= is a number or ="empty"=; =score= is a number, or ={"deduct_percent": P}= for the rows' total less P% of the column's points.
+=rows= is a number or ="empty"=; =score= is a number, ="EX"= to excuse the listed students, or ={"deduct_percent": P}= for the rows' total less P% of the column's points.  An excusal stands beside any rows, as the push lets it, so =:score "EX"= is never kept back for the rubric total.
+
+** Excusing Students
+
+A column called off after it opened — a cancelled session, a closer the clock ran out on — leaves every student who did not submit marked Missing on Canvas, even after =OMIT_FROM_GRADES= takes the column out of the grade.  The fix is to excuse them.  =M-x org-canvas-submissions-excuse= does it in the grading file: it writes =EX= as each student's =SCORE=, and the grade push (=S=) sends it as =excused=, as it does a hand-typed one.  Nothing is read from Canvas and nothing is sent.
+
+Which students it takes:
+
+- every student with no submission (no =SUBMITTED_AT=), the default;
+- every student (=all=);
+- the student at point, or every student heading in the active region (=point=).
+
+Interactively an active region means the students in it; otherwise the command asks.  A student already graded, by a =SCORE= or a =CANVAS_SCORE= behind an empty one, is kept back and named, unless you give a prefix argument; a student who left the course (=STATUS: left=) is always kept back, since no push sends anything for one; one already excused is counted and left.  From Lisp, =(org-canvas-submissions-excuse FILE SCOPE OVERWRITE)= takes the file as the comment export does and SCOPE as =unsubmitted=, =all= or =point=, and returns =:excused= (=:user-id=, =:name=, =:old-score= each), =:already=, =:skipped= (=(USER-ID . WHY)=) and =:dry-run=.  From the shell:
+
+#+begin_src sh
+scripts/org-canvas -n excuse Closer_07        # who would be excused
+scripts/org-canvas excuse Closer_07           # the students with no submission
+scripts/org-canvas excuse --all Closer_07     # every student not graded
+scripts/org-canvas push-grades Closer_07
+#+end_src
+
+To excuse a listed set of students instead, give a ruling a score of ="EX"= (see [[*Applying a Ruling to Listed Students][Applying a Ruling to Listed Students]]).
+
+** Importing a Drafted Grade Set
+
+A column graded outside the buffer — by a second grader, or a drafting pass writing JSON per student — comes back as scores, notes and comments.  =M-x org-canvas-submissions-import-grades= writes all of them into the grading file from one JSON file of the export's shape (see [[*Exporting, Importing and Checking Comments][Exporting, Importing and Checking Comments]]), through the writers the buffer uses, so the Rubric table is read and written as a table and a criterion id padded to the column's width (=| _409  |= beside =| _5390 |=) is found like any other:
+
+#+begin_src js
+[{"user_id": 5001,
+  "rows": [{"criterion_id": "_409", "score": 3, "comment": "Say what the claim is early."},
+           {"criterion_id": "_5390", "score": 5}],
+  "notes": "Drafted by the TA, 2026-10-08."},
+ {"user_id": 5002, "score": "", "notes": "Held: waiting on the extension ruling."}]
+#+end_src
+
+- a row's =score= goes into its Score cell, a number from 0 to the row's =Max=; a row without one, or with an empty one, is left;
+- =score= sets =SCORE=, a number or ="EX"=.  Without the key, when every row is scored and the import scored any, =SCORE= is the rows' sum, which is what the push sends for a rubric used for grading;
+- =notes= is added at the end of =** Notes=, never over them; a text the Notes already hold is no change;
+- an empty =score= beside =notes= holds the student: the notes go in, and no row score or =SCORE=;
+- then the comment keys (a row's =comment=, =draft=, a sent comment's =text=) are imported as =org-canvas-submissions-import-comments= imports them.
+
+Importing an unchanged export changes nothing.  A student is kept back whole, every grade change named, when one of its values is refused — a score off its row's range, a =SCORE= that is no number or =EX=, one the rows' total contradicts on a column graded by its rubric, notes with a line starting with =*= or =#= — since half a grade is worse than none; so is a student who left, and one whose grade is posted unless =--posted= (from Lisp, a third argument).  The echo area (stderr in batch) names every key that matched nothing, every change kept back and every student held.  Under a dry run nothing is written and the counts are the same.  From Lisp, =(org-canvas-submissions-import-grades FILE DATA ALLOW-POSTED)= returns =:scores=, =:score= and =:notes= (the cells, =SCORE= values and notes changed), =:held=, the comment import's =:rows=, =:drafts= and =:sent=, =:unmatched=, =:skipped= and =:dry-run=.
+
+#+begin_src sh
+scripts/org-canvas -n import-grades Exam_2 drafts.json    # counts, nothing written
+scripts/org-canvas import-grades Exam_2 drafts.json
+scripts/org-canvas check-comments Exam_2                  # a deducted row with no comment
+#+end_src
 
 ** Scoring by Section Window
 
@@ -4924,6 +4973,8 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-import-comments= | Write new comment text back by user, criterion and comment id, nothing else (=I=) |
 | =org-canvas-submissions-check-comments= | Deducted rows without a comment, flagged text, sentences many students share (=K=) |
 | =org-canvas-submissions-apply-ruling= | Apply a ruling to listed students: rows, row comments, SCORE and draft replaced, the old kept in Notes (Lisp and batch) |
+| =org-canvas-submissions-excuse= | Excuse the students with no submission, every student, or those at point or in the region: =SCORE= =EX= for the push |
+| =org-canvas-submissions-import-grades= | Write a drafted grade set from JSON: row scores, =SCORE=, Notes, then the comments |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |
