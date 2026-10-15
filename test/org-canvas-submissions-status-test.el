@@ -830,5 +830,132 @@ its message; any other is a first pull of two rows."
         (expect test-sstatus--pulled :to-be nil)
         (expect (car printed) :to-match "Nothing to pull")))))
 
+;;;; Posting columns (issue #495)
+
+(defvar test-spost--mutations nil
+  "Variables of the GraphQL mutations the fake sent, newest first.")
+
+(defun test-spost--resolve (assignment)
+  "Resolve ASSIGNMENT as a course of two exam columns would.
+Any other id or name is unknown."
+  (pcase assignment
+    ((or "2499696" 2499696) '((id . 2499696) (name . "Exam, part 1")))
+    ("Exam, part 2" '((id . 2499697) (name . "Exam, part 2")))
+    (_ (user-error "No assignment with id %s in this course" assignment))))
+
+(defmacro test-spost--with-fakes (&rest body)
+  "Run BODY with the assignment lookup and the GraphQL transport faked."
+  (declare (indent 0))
+  `(let ((test-spost--mutations nil))
+     (cl-letf (((symbol-function 'org-canvas--submissions-resolve-assignment)
+                #'test-spost--resolve)
+               ((symbol-function 'org-canvas--graphql-send)
+                (lambda (document variables)
+                  (push (list document variables) test-spost--mutations)
+                  '((postAssignmentGrades . ((progress . ((_id . "1") (state . "queued"))))))))
+               ((symbol-function 'message) #'ignore))
+       ,@body)))
+
+(describe "org-canvas-post-grades"
+  (it "is an interactive command"
+    (expect (commandp 'org-canvas-post-grades) :to-be-truthy))
+
+  (it "posts each column by id or name, no grading file needed, and says Canvas accepted"
+    (test-spost--with-fakes
+      (let* ((org-canvas--dry-run nil)
+             (org-canvas-read-only nil)
+             (outcomes (org-canvas-post-grades '("2499696" "Exam, part 2"))))
+        (expect (mapcar (lambda (o) (plist-get o :id)) outcomes)
+                :to-equal '("2499696" "2499697"))
+        (expect (mapcar (lambda (o) (plist-get o :state)) outcomes)
+                :to-equal '(posted posted))
+        (expect (plist-get (car outcomes) :name) :to-equal "Exam, part 1")
+        (expect (mapcar (lambda (m) (alist-get 'assignmentId (cadr m)))
+                        (reverse test-spost--mutations))
+                :to-equal '("2499696" "2499697"))
+        (expect (car (car test-spost--mutations))
+                :to-be org-canvas--submissions-post-grades-mutation))))
+
+  (it "takes one column alone, an integer id included"
+    (test-spost--with-fakes
+      (let ((org-canvas--dry-run nil) (org-canvas-read-only nil))
+        (expect (plist-get (car (org-canvas-post-grades 2499696)) :state)
+                :to-be 'posted))))
+
+  (it "reads the name when called with none"
+    (test-spost--with-fakes
+      (let ((org-canvas--dry-run nil) (org-canvas-read-only nil) (asked nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-resolve-assignment)
+                   (lambda (a) (setq asked (list a)) (test-spost--resolve "2499696"))))
+          (call-interactively #'org-canvas-post-grades))
+        (expect asked :to-equal '(nil))
+        (expect (length test-spost--mutations) :to-equal 1))))
+
+  (it "names a column that fails, redacted, and posts the rest"
+    (test-spost--with-fakes
+      (let* ((org-canvas--dry-run nil) (org-canvas-read-only nil)
+             (said nil)
+             (outcomes (cl-letf (((symbol-function 'org-canvas--user-message)
+                                  (lambda (fmt &rest args)
+                                    (push (org-canvas--log-redact (apply #'format fmt args))
+                                          said))))
+                         (org-canvas-post-grades '("77" "2499696")))))
+        (expect (plist-get (car outcomes) :state) :to-be 'failed)
+        (expect (plist-get (car outcomes) :id) :to-equal "77")
+        (expect (plist-get (car outcomes) :message) :to-match "No assignment with id 77")
+        (expect (plist-get (cadr outcomes) :state) :to-be 'posted)
+        (expect (car said) :to-match "Grades of 77 not posted"))))
+
+  (it "redacts a failure's reason"
+    (test-spost--with-fakes
+      (let ((org-canvas--dry-run nil) (org-canvas-read-only nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-post-assignment)
+                   (lambda (_id) (error "401: Bearer sekrit-token"))))
+          (let ((outcome (car (org-canvas-post-grades "2499696"))))
+            (expect (plist-get outcome :state) :to-be 'failed)
+            (expect (plist-get outcome :message) :not :to-match "sekrit"))))))
+
+  (it "sends nothing under a dry run, a read-only course included"
+    (test-spost--with-fakes
+      (let ((org-canvas--dry-run t) (org-canvas-read-only t))
+        (expect (mapcar (lambda (o) (plist-get o :state))
+                        (org-canvas-post-grades '("2499696" "Exam, part 2")))
+                :to-equal '(dry-run dry-run))
+        (expect test-spost--mutations :to-be nil))))
+
+  (it "refuses a read-only course before reading anything"
+    (test-spost--with-fakes
+      (let ((org-canvas--dry-run nil) (org-canvas-read-only t) (read nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-resolve-assignment)
+                   (lambda (_a) (setq read t))))
+          (expect (org-canvas-post-grades "2499696") :to-throw 'org-canvas-read-only-error))
+        (expect read :to-be nil)
+        (expect test-spost--mutations :to-be nil)))))
+
+(describe "org-canvas-submissions-post-queue"
+  (it "posts only the rows whose Next is post, by id"
+    (let ((posted nil))
+      (cl-letf (((symbol-function 'org-canvas-post-grades)
+                 (lambda (ids) (setq posted ids) '((:id "3" :state posted)))))
+        (expect (org-canvas-submissions-post-queue
+                 (list (list :name "Pull" :id 5 :next '("pull"))
+                       (list :name "Post" :id 3 :next '("post" 4))
+                       (list :name "Grade" :id 2 :next '("grade" 1))
+                       (list :name "Post too" :id 8 :next '("post" 1))))
+                :to-equal '((:id "3" :state posted)))
+        (expect posted :to-equal '(3 8)))))
+
+  (it "reads the queue's counts when given no rows, and posts nothing when none is due"
+    (let ((posted nil) (counts-only nil))
+      (cl-letf (((symbol-function 'org-canvas-submissions-status-rows)
+                 (lambda (&optional c) (setq counts-only c)
+                   (list (list :name "Done" :id 1 :next '("-")))))
+                ((symbol-function 'org-canvas-post-grades)
+                 (lambda (ids) (setq posted ids)))
+                ((symbol-function 'message) #'ignore))
+        (expect (org-canvas-submissions-post-queue) :to-be nil)
+        (expect counts-only :to-be t)
+        (expect posted :to-be nil)))))
+
 (provide 'org-canvas-submissions-status-test)
 ;;; org-canvas-submissions-status-test.el ends here

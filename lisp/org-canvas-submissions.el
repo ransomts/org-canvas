@@ -3762,11 +3762,16 @@ The rows are written over the freshly pulled table.  When Canvas's
 assessment moved since they were typed — the new CANVAS_RUBRIC is not
 the baseline they were typed against — the heading is marked
 CONFLICT, since the rows shown are the grader's and not what Canvas
-holds."
-  (dolist (row (plist-get carry :rows))
-    (org-canvas--submissions-rubric-set-row (nth 0 row) (nth 1 row) (nth 2 row)))
-  (unless (equal (org-entry-get (point) "CANVAS_RUBRIC") (plist-get carry :baseline))
-    (org-entry-put (point) "CONFLICT" "rubric: assessed on Canvas since these rows were typed")))
+holds.  Nothing is written when Canvas now holds the typed rows, as
+when a push stored them but its job was never confirmed: the fresh
+CANVAS_RUBRIC is their baseline then, as a typed score Canvas agrees
+with is (issue #496)."
+  (unless (equal (org-entry-get (point) "CANVAS_RUBRIC")
+                 (org-canvas--submissions-rubric-digest (plist-get carry :rows)))
+    (dolist (row (plist-get carry :rows))
+      (org-canvas--submissions-rubric-set-row (nth 0 row) (nth 1 row) (nth 2 row)))
+    (unless (equal (org-entry-get (point) "CANVAS_RUBRIC") (plist-get carry :baseline))
+      (org-entry-put (point) "CONFLICT" "rubric: assessed on Canvas since these rows were typed"))))
 
 ;;;; View Toggle
 
@@ -4687,6 +4692,24 @@ nil."
                         (org-canvas--submissions-late-status sub))))
           (org-canvas--submissions-fetch-for-assignment assignment-id)))
 
+(defun org-canvas--submissions-live-holds-change-p (change live)
+  "Return non-nil when CHANGE would send nothing new to LIVE.
+LIVE is (score attempt rubric late) for the student, as
+`org-canvas--submissions-live-baselines' reads it.  The score, the
+attempt, and the rubric and late status when CHANGE sends them, all
+agree: a push whose job was never confirmed stored them, and only its
+baselines were left behind (issue #496).  Such a change is sent again
+rather than held as a conflict, and its baselines are then recorded."
+  (and live
+       (equal (org-canvas--submissions-parse-score (nth 0 live))
+              (org-canvas--submissions-parse-score (plist-get change :new-score)))
+       (let ((attempt (plist-get change :attempt)))
+         (or (null attempt) (not (numberp (nth 1 live))) (= attempt (nth 1 live))))
+       (or (null (plist-get change :triples))
+           (equal (nth 2 live) (plist-get change :new-rubric)))
+       (or (null (plist-get change :late-status))
+           (equal (nth 3 live) (plist-get change :late-status)))))
+
 (defun org-canvas--submissions-conflict-p (change live)
   "Return why CHANGE conflicts with LIVE Canvas state, or nil.
 LIVE is (score attempt rubric late) for the same student, or nil if
@@ -4696,12 +4719,14 @@ what moved and what Canvas holds — `score: Canvas has 93' — and is
 the CONFLICT value; a property is a slot for a short value, and the
 way out (`org-canvas-submissions-take-canvas' or
 `org-canvas-submissions-keep-mine', issue #440) is the push's message
-and the manual's (issue #264)."
+and the manual's (issue #264).  A CHANGE whose values LIVE already
+holds is no conflict (`org-canvas--submissions-live-holds-change-p')."
   (let ((live-score (nth 0 live))
         (live-attempt (nth 1 live))
         (live-rubric (nth 2 live))
         (attempt (plist-get change :attempt)))
-    (cond ((not (equal live-score (plist-get change :old-score)))
+    (cond ((org-canvas--submissions-live-holds-change-p change live) nil)
+          ((not (equal live-score (plist-get change :old-score)))
            (format "score: Canvas has %s" (or live-score "no grade")))
           ((and attempt (numberp live-attempt) (/= attempt live-attempt))
            (format "attempt: Canvas has %s" live-attempt))
@@ -4948,6 +4973,46 @@ the next push sends them over Canvas's grade (issue #440).  Return the
 student's name."
   (interactive)
   (org-canvas--submissions-resolve-conflict nil))
+
+;; t and k work on the heading at point; a script resolving a column's
+;; conflicts after a push names the students instead (issue #496).
+
+(defun org-canvas--submissions-resolve-one (user-id take)
+  "Resolve USER-ID's CONFLICT in the current grading file; TAKE picks the side.
+Return the student's name, `missing' when no heading carries USER-ID,
+or `unmarked' when its heading has no CONFLICT."
+  (cond ((not (org-canvas--submissions-goto-user user-id)) 'missing)
+        ((not (org-entry-get (point) "CONFLICT")) 'unmarked)
+        (t (org-canvas--submissions-resolve-conflict take))))
+
+;;;###autoload
+(defun org-canvas-submissions-resolve-conflicts (file user-ids take)
+  "Resolve the CONFLICT of each of USER-IDS in the grading FILE.
+FILE is what `org-canvas-push-submission-grades' takes: a Canvas
+assignment id, a path or a name.  USER-IDS are Canvas user ids,
+integers or strings of digits.  TAKE non-nil takes Canvas's grade, as
+`org-canvas-submissions-take-canvas' does at point; nil keeps the
+typed one, as `org-canvas-submissions-keep-mine' does (issue #496).
+Each student's submission is read and the file is saved.  Return a
+plist: :resolved, the names resolved; :missing, the ids with no
+heading in the file; :unmarked, the ids whose heading carries no
+CONFLICT."
+  (let ((ids (org-canvas--submissions-user-ids user-ids))
+        (buf (org-canvas--submissions-visit-grading-file
+              (org-canvas--submissions-grading-file-path file)))
+        (resolved nil) (missing nil) (unmarked nil))
+    (with-current-buffer buf
+      (setq org-canvas-submissions--current-view 'detail)
+      (save-excursion
+        (dolist (id ids)
+          (let ((outcome (org-canvas--submissions-resolve-one id take)))
+            (pcase outcome
+              ('missing (push id missing))
+              ('unmarked (push id unmarked))
+              (_ (push outcome resolved)))))))
+    (list :resolved (nreverse resolved)
+          :missing (nreverse missing)
+          :unmarked (nreverse unmarked))))
 
 (defun org-canvas--submissions-describe-rubric (change)
   "Return the note CHANGE's rubric rows add to its line, or an empty string."

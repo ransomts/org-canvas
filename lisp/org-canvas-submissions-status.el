@@ -643,5 +643,77 @@ standard output.  Return the outcomes, plists of :name, :next,
     (message "Pull queue: %s" (org-canvas--submissions-pull-queue-tally outcomes))
     outcomes))
 
+;;;; Posting Columns (issue #495)
+
+;; A column graded outside Org (a paper exam scored on Gradescope and
+;; sent to Canvas, a journal synced in) has no grading file, so neither
+;; P nor `org-canvas-push-submission-grades' can post it; the queue
+;; still lists it as post (N).  The command below posts columns by id
+;; or name, no grading file needed, through the same GraphQL mutation
+;; as P (`org-canvas--submissions-post-assignment').  Posting is what
+;; students see, so nothing here posts a column it was not given: the
+;; queue form posts the rows whose Next is post, and only when asked.
+
+(defun org-canvas--submissions-post-one (assignment)
+  "Post the grades of the column ASSIGNMENT names; return its outcome.
+ASSIGNMENT is an id or an exact name, as
+`org-canvas--submissions-resolve-assignment' takes it, nil asking for
+the name.  The outcome is a plist of :id, :name and :state: `posted'
+when Canvas accepted the request, `dry-run' under
+`org-canvas--dry-run', or `failed', with :message saying why
+\(redacted).  A failure is reported and leaves the next column alone."
+  (condition-case err
+      (let* ((selected (org-canvas--submissions-resolve-assignment assignment))
+             (id (format "%s" (alist-get 'id selected))))
+        (list :id id :name (alist-get 'name selected)
+              :state (if (org-canvas--submissions-post-assignment id) 'posted 'dry-run)))
+    (error
+     (let ((reason (org-canvas--log-redact (error-message-string err))))
+       (org-canvas--user-message "Grades of %s not posted: %s" assignment reason)
+       (list :id (and assignment (format "%s" assignment)) :state 'failed
+             :message reason)))))
+
+;;;###autoload
+(defun org-canvas-post-grades (&optional assignments)
+  "Post the grades of ASSIGNMENTS, so their students can see them.
+ASSIGNMENTS is a Canvas assignment id (an integer or a string of
+digits), an assignment's exact name, or a list of them; nil, and an
+interactive call, read one name in the minibuffer.  No grading file is
+needed: this is the gradebook's Post Grades, the GraphQL mutation P
+sends, for a column graded anywhere (issue #495).  Under
+`org-canvas--dry-run' nothing is sent; a course marked read-only is
+refused before anything is read.  Return one plist per column, in
+order, of :id, :name and :state, `posted' when Canvas accepted the
+request, `dry-run', or `failed' with :message; so a script posts the
+two halves of an exam with
+
+  (org-canvas-post-grades \\='(\"2499696\" \"2499697\"))"
+  (interactive)
+  (unless org-canvas--dry-run
+    (org-canvas--check-writable 'POST "posting grades"))
+  (mapcar #'org-canvas--submissions-post-one
+          (if (and assignments (listp assignments)) assignments (list assignments))))
+
+(defun org-canvas--submissions-post-queue-p (row)
+  "Return non-nil when ROW, a queue row, has grades to post."
+  (equal (car (plist-get row :next)) "post"))
+
+;;;###autoload
+(defun org-canvas-submissions-post-queue (&optional rows)
+  "Post, by id, every column whose Next in the grading queue is post.
+ROWS are queue rows as `org-canvas-submissions-status-rows' returns
+them; nil reads them, counts only.  Each column whose Next is post,
+scored and not posted, is posted as `org-canvas-post-grades' posts it
+\(issue #495).  Return the outcomes, as that command does; nil when no
+column has grades to post."
+  (interactive)
+  (let ((ids (mapcar (lambda (row) (plist-get row :id))
+                     (seq-filter #'org-canvas--submissions-post-queue-p
+                                 (or rows (org-canvas-submissions-status-rows t))))))
+    (if ids
+        (org-canvas-post-grades ids)
+      (message "Post queue: no column has grades to post")
+      nil)))
+
 (provide 'org-canvas-submissions-status)
 ;;; org-canvas-submissions-status.el ends here
