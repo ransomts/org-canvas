@@ -268,7 +268,7 @@ jobs:
             --json mutation-result.json
 
       - name: Upload mutation results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: mutation-result
