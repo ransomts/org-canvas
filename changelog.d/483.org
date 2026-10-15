@@ -1,0 +1,13 @@
+* Added
+- #483 =org-canvas-submissions-import-grades= writes a drafted grade set
+  into a grading file from the comment export's JSON shape: each row's
+  =score= into its Rubric cell (checked against the row's Max, padded
+  criterion ids found through the table), =score= as =SCORE= (a number
+  or EX, or the rows' sum when absent and every row is scored), =notes=
+  appended to =** Notes=, then the comments as =import-comments= writes
+  them.  A posted student is kept back unless =--posted=, a student with
+  a refused value keeps every grade change back, an empty =score= beside
+  =notes= holds the student (notes only), keys that match nothing are
+  named, and an unchanged export changes nothing.
+  =scripts/org-canvas import-grades [--posted] FILE IN.json= runs it in
+  batch and exits 1 on a miss; =-n= is a dry run.

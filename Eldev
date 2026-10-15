@@ -64,6 +64,7 @@
                                   "lisp/org-canvas-submissions-comments.el"
                                   "lisp/org-canvas-submissions-verify.el"
                                   "lisp/org-canvas-submissions-ruling.el"
+                                  "lisp/org-canvas-submissions-grades.el"
                                   "lisp/org-canvas-submissions-reports.el"
                                   "lisp/org-canvas-submissions-uploads.el"
                                   "lisp/org-canvas-messages.el"

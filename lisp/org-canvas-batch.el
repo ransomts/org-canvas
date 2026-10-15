@@ -190,6 +190,11 @@ copy silently.  Return the credentials file loaded, or nil."
      "Read pushed columns back from Canvas; exit 1 on a difference (#450).")
     ("apply-ruling" org-canvas-batch--cmd-apply-ruling 2 2 "FILE RULING.json"
      "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
+    ("excuse" org-canvas-batch--cmd-excuse 1 3 "[--all] [--overwrite] FILE"
+     "Excuse the students with no submission, or --all of them (#501).")
+    ("import-grades" org-canvas-batch--cmd-import-grades 2 3
+     "[--posted] FILE IN.json"
+     "Write IN.json's scores, notes and comments; exit 1 on a miss (#483).")
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
      "Replace named headings with Canvas's versions.")
     ("push" org-canvas-batch--cmd-push 1 nil
@@ -472,6 +477,36 @@ student was kept back."
     (if (cl-some (lambda (r) (or (plist-get r :unmatched) (plist-get r :skipped)))
                  results)
         1 0)))
+
+(defun org-canvas-batch--cmd-excuse (parsed)
+  "Excuse students of the grading file PARSED names, a dry run on --dry-run.
+Only those with no submission, unless --all; a graded student only
+with --overwrite.  Return 0."
+  (let* ((args (plist-get parsed :args))
+         (rest (cl-remove-if (lambda (a) (member a '("--all" "--overwrite"))) args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
+    (unless (and (= (length rest) 1) (not (string-prefix-p "-" (car rest))))
+      (org-canvas-batch--usage "excuse takes [--all] [--overwrite] FILE"))
+    (org-canvas-submissions-excuse (car rest)
+                                   (if (member "--all" args) 'all 'unsubmitted)
+                                   (and (member "--overwrite" args) t))
+    0))
+
+(defun org-canvas-batch--cmd-import-grades (parsed)
+  "Import the JSON grades PARSED names into its grading file.
+A dry run on --dry-run; --posted lets changes under a posted grade
+through.  Return 1 if a key matched nothing or a change was kept back."
+  (let* ((args (plist-get parsed :args))
+         (rest (remove "--posted" args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run))))
+    (unless (= (length rest) 2)
+      (org-canvas-batch--usage "import-grades takes [--posted] FILE IN.json"))
+    (let ((result (org-canvas-submissions-import-grades
+                   (nth 0 rest) (expand-file-name (nth 1 rest))
+                   (and (member "--posted" args) t))))
+      (if (or (plist-get result :unmatched) (plist-get result :skipped)) 1 0))))
 
 (defun org-canvas-batch--cmd-pull (parsed)
   "Pull the headings PARSED names; return 1 if any failed."
