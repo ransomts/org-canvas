@@ -307,7 +307,17 @@ writes."
     (with-temp-buffer
       (org-mode)
       (org-canvas--submissions-render-detail-entry
-       (test-org-canvas-make-submission '((late . t) (seconds_late . 400000))))
+       (test-org-canvas-make-response
+        '((id . 50001) (user_id . 5001) (assignment_id . 1001)
+          (workflow_state . "submitted")
+          (submitted_at . "2026-02-15T23:45:00Z")
+          (late . t) (seconds_late . 400000) (missing . :json-false)
+          (score . 92) (body . "Here is my solution.")
+          (user . ((id . 5001) (name . "Alice Adams")
+                   (sortable_name . "Adams, Alice")))
+          (assignment . ((points_possible . 100)))
+          (submission_comments . []) (rubric_assessment . nil)
+          (attachments . []))))
       (expect (buffer-string) :to-match ":DAYS_LATE: 5\n:DUE_AT: <[-0-9]+ [A-Za-z]+ [0-9:]+>\n"))))
 
 ;;;; Batch
