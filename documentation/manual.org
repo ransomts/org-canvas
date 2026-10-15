@@ -141,6 +141,7 @@ ARGS=, which is also the line to use without it.
 | =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
 | =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
+| =verify announcements:TITLE...= | =org-canvas-verify-announcements=, writing nothing (may share a line with columns) | an announcement differs from its heading |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
@@ -3592,6 +3593,41 @@ None of them writes anything, locally or on Canvas, so they are the
 way to read what an instructor changed in the web UI before choosing
 between =A=, =p=, a push, or copying a paragraph by hand.
 
+** Verifying an Announcement
+
+An announcement reaches students the moment it lands, and a push reports
+only what Canvas answered.  =M-x org-canvas-verify-announcements= reads
+each named announcement back by its =CANVAS_ID=, one request per heading,
+and compares it with the heading (#502):
+
+| Row       | Org                                | Canvas                         |
+|-----------+------------------------------------+--------------------------------|
+| title     | the heading                        | =title=                        |
+| published | =PUBLISHED= (true when absent)     | =published=                    |
+| posting   | =DELAYED_POST_AT=                  | =delayed_post_at=, =posted_at= |
+| comments  | =ALLOW_COMMENTS= (off unless true) | =locked=                       |
+| body      | the body, exported offline         | =message=, as text             |
+
+A =DELAYED_POST_AT= still ahead wants the announcement scheduled for
+that minute; none, or one already past, wants it posted (unless the
+heading is unpublished) with no posting time still ahead, so a leftover
+schedule on Canvas is a difference.  A heading with no =CANVAS_ID=, one
+Canvas no longer holds, and a title that names no heading are each
+reported as a difference, and the next heading is still read.  The
+drift report's exclusion (=org-canvas-diff-excluded-features=) does not
+apply.  Nothing is written, locally or on Canvas: the body is exported
+without resolving links or uploading images, as the drift report
+exports it.  From the shell, alone or beside grading columns:
+
+#+begin_src sh
+scripts/org-canvas push "announcements:Exam 2 reminder"
+scripts/org-canvas verify "announcements:Exam 2 reminder"   # exit 1 on a difference
+#+end_src
+
+Interactively it asks for a title; from Lisp it takes headings as
+=org-canvas-show-headings= does, =(("announcements" . "Exam 2 reminder"))=,
+and returns one plist per heading with =:rows= and =:differences=.
+
 ** Deleting Rows in Batch
 
 Cleaning up after a reshuffle -- a week of sessions dropped, their module
@@ -5081,6 +5117,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-diff-adopt-all-drifts= | The same for every CHANGED row, after confirming, bodies held back |
 | =org-canvas-show-at-point=        | Show the Canvas version of the heading at point, writing nothing (see [[*Showing the Canvas Version][Showing the Canvas Version]]) |
 | =org-canvas-show-headings=        | The same for headings named by title or Canvas id |
+| =org-canvas-verify-announcements= | Read pushed announcements back and compare them with their headings, writing nothing (see [[*Verifying an Announcement][Verifying an Announcement]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
