@@ -422,6 +422,7 @@ These files have no outgoing links to other course files:
 | =gradebook.org=         | Gradebook          | Pull-only: every student's scores, missing work and custom columns, by student and by section |
 | =rubric-results.org=    | Rubric Results     | Pull-only: how the class scored on each rubric criterion, per assignment |
 | =quiz-results.org=      | Quiz Results       | Pull-only: each classic quiz's item analysis, question by question |
+| =question-banks.org=    | Question Banks     | Pull-only: each classic question bank and its questions, answer keys included |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
@@ -1039,19 +1040,26 @@ taken, each worth =QUESTION_POINTS=.  It appears as a level 2 heading with
   writes each group Canvas holds this way, with its questions beneath it
   in Canvas's order (see [[*Pulling Groups][Pulling Groups]]);
 - *an external question bank*, named by =QUESTION_BANK_ID=, whose questions
-  never appear in the file (see the workflow below).
+  never appear in =quizzes.org=; =org-canvas-pull-question-banks= reads
+  them into =question-banks.org= (see [[*question-banks.org][question-banks.org]]
+  and the workflow below).
 
 Level 3 questions count toward the quiz total through the group
 (=PICK_COUNT= times =QUESTION_POINTS=), not one by one.
 
 **** Pulling Groups
 
-Canvas has no request that lists a quiz's groups, so =org-canvas-pull-quizzes=
-reads the group id each question names and fetches every distinct group
-once.  The group heading is rewritten in place on a re-pull, whole, so a
+=org-canvas-pull-quizzes= lists each quiz's groups once (a request
+Canvas answers though its published API leaves it out) and writes every
+group it holds: a group with questions of its own where its first
+question falls, and a group drawing only from a bank after the quiz's
+questions, with its =QUESTION_BANK_ID= and no level 3 headings (#492).
+The group heading is rewritten in place on a re-pull, whole, so a
 question that left the group on Canvas is gone from under it; a question
 that joined a group loses its level 2 heading and reappears at level 3.
-When Canvas refuses a group (a permission the token lacks), one warning
+Should Canvas refuse the list, the pull falls back to fetching each
+group a question names, and a bank-only group is then left out.  When
+Canvas refuses a group (a permission the token lacks), one warning
 names it and its questions are written at level 2, ungrouped.
 
 **** Bank-Backed Groups
@@ -1060,7 +1068,7 @@ names it and its questions are written at level 2, ungrouped.
 
 1. Create a question bank externally (e.g., using [[https://github.com/gpoore/text2qti][text2qti]] to convert Markdown to QTI)
 2. Import the QTI file into Canvas via Settings > Import Course Content
-3. After import, find the bank ID in the Canvas UI URL (e.g., =courses/123/question_banks/42= means bank ID is 42)
+3. After import, run =org-canvas-pull-question-banks=: each bank's heading in =question-banks.org= carries its id as =BANK_ID= (the Canvas UI URL says the same, e.g. =courses/123/question_banks/42= means bank ID is 42)
 4. Add a level 2 heading under your quiz with the properties below
 
 **** Question Group Properties
@@ -1075,10 +1083,10 @@ names it and its questions are written at level 2, ungrouped.
 **** Limitations and Caveats
 
 - *Bank ID is create-only*: ~assessment_question_bank_id~ is accepted on POST but ignored on PUT.  To change the bank, delete the group from Canvas and remove ~CANVAS_ID~ from the heading, then re-sync.
-- *Bank ID must be obtained manually*: Canvas has no public API for listing question banks.  Get the ID from the Canvas UI URL after QTI import.
+- *Banks are read, never written*: Canvas lists a course's banks and a bank's questions (=org-canvas-pull-question-banks=, #492), but has no API to create or edit one.  A bank is made in the web UI or by a QTI import, and its id is read from =question-banks.org= or the web UI's URL.
 - *Invalid bank IDs are silently accepted*: Canvas creates the group without linking to a bank.  Verify the bank exists in Canvas before syncing.
-- *A bank-only group is pulled without its questions*: a pull lists each quiz's groups, so a group drawing every question from a bank is written as a =TYPE: group= heading with its =QUESTION_BANK_ID= and no level-3 questions; the bank's own questions are not pulled (#492).  Should Canvas refuse the groups list, the pull falls back to fetching each group a question names, and a bank-only group is then left out.
-- *Bank questions are invisible via API*: Questions from banks are resolved at quiz delivery time and do not appear in the Quiz Questions API response.
+- *A bank-only group is pulled without its questions*: a group drawing every question from a bank is written as a =TYPE: group= heading with its =QUESTION_BANK_ID= and no level-3 questions; the bank's questions are in =question-banks.org=, under the bank's heading, which links back to the quizzes whose groups draw from it (#492).  Should Canvas refuse the groups list, the pull falls back to fetching each group a question names, and a bank-only group is then left out.
+- *A bank's questions are not the quiz's*: Canvas picks from a bank when a student takes the quiz, so bank questions never appear among a quiz's own questions.  They are pulled from the bank instead, read-only.
 - *Classic Quizzes only*: This feature is for Classic Quizzes.  New Quizzes uses a separate "item banks" system with a different API.
 
 *** Accommodations for One Student
@@ -2680,6 +2688,56 @@ small class a question everyone else got right can still identify
 someone, so treat =quiz-results.org= as you treat
 =rubric-results.org=: keep it out of a course repository (add it to
 =.gitignore=) and out of anything you share.
+
+** question-banks.org
+
+Pull-only.  =org-canvas-pull-question-banks= writes every classic
+question bank the course holds, with its questions and their answer
+keys, in the format =quizzes.org= uses, so a bank reads as a quiz
+does.  A question group that draws from a bank names none of the
+bank's questions in =quizzes.org=; this file is where they are seen
+(#492).  Nothing in it is pushed: Canvas has no API to create or edit
+a bank.  The file is derived, and every pull rewrites it whole, so
+anything you write in it is gone at the next pull.  A full pull runs
+it after the quizzes, so the groups it names are current.
+
+New Quizzes item banks are a separate system with no public API, and
+are not listed.
+
+*** Structure
+
+- Level 1 headings = Banks, the course's own in Canvas's order, then
+  any bank a group in =quizzes.org= names that the course does not
+  own (an account bank, another course's), read by its id and marked
+  with =CONTEXT_CODE=
+- Under each heading: a =Drawn from by:= list of the =quizzes.org=
+  groups whose =QUESTION_BANK_ID= is the bank's, each linked to its
+  quiz and with its =PICK_COUNT=, read from the file as the last quiz
+  pull left it
+- Level 2 headings = The bank's questions, with =TYPE=, =POINTS=, the
+  question text and the answers marked as in =quizzes.org=.  A
+  question with no name, or one another question of the bank shares,
+  is named by its place (=Question 4=)
+
+A bank whose questions Canvas will not list keeps its heading with the
+line =Canvas did not list this bank's questions.=, rather than reading
+as an empty bank.  The closing message counts the banks and questions
+written, the banks whose questions were not listed, and the banks a
+group names that Canvas would not read.  =QUESTION_COUNT= is Canvas's
+count when it gives one, else the number of questions read.
+
+*** Properties (set by pull)
+
+| Property         | Type   | Description                                              |
+|------------------+--------+----------------------------------------------------------|
+| =BANK_ID=        | number | Canvas id of the bank, as a group's =QUESTION_BANK_ID=   |
+| =QUESTION_COUNT= | number | How many questions the bank holds                        |
+| =CONTEXT_CODE=   | string | Owner of a bank outside this course, as =account_1=      |
+
+*** Answer Keys
+
+The file holds every bank's correct answers.  Keep it out of anything
+students can reach, as you would the quiz itself.
 
 ** messages.org
 
@@ -4396,6 +4454,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
 | =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
 | =org-canvas-pull-quiz-results=         | Pull each quiz's item analysis (read-only) |
+| =org-canvas-pull-question-banks=       | Pull the classic question banks and their questions (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -4920,6 +4979,7 @@ skipped, for a script that wants the data rather than the report.
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
 | =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
 | =org-canvas-pull-quiz-results=         | Pull each quiz's item analysis (read-only) |
+| =org-canvas-pull-question-banks=       | Pull the classic question banks and their questions (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -5817,6 +5877,14 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =LAST_ACTIVITY= | timestamp | set by Canvas (read-only) |  | When Canvas last saw the person in the course |
 | =SIS_USER_ID= | string | set by Canvas (read-only) |  | SIS id, only with org-canvas-people-include-identifiers |
 | =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers |
+
+** Question Banks
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =BANK_ID= | number | set by Canvas (read-only) |  | Canvas id of the question bank, as a group's QUESTION_BANK_ID |
+| =QUESTION_COUNT= | number | set by Canvas (read-only) |  | How many questions the bank holds |
+| =CONTEXT_CODE= | string | set by Canvas (read-only) |  | Owner of a bank outside this course, as account_1 |
 
 ** Quiz Questions
 

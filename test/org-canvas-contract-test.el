@@ -417,6 +417,20 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
     (org-canvas-contract--check-read-params "gradebook" 'item org-canvas--gradebook-course-params)
     (expect (assoc "student_ids[]" org-canvas--gradebook-self-params) :to-be nil))
 
+  (it "the question banks pull sends only documented parameters on its three reads (issue #492)"
+    ;; The vendored spec lacks the bank reads; the fixture carries them
+    ;; as a pull-only supplement from Canvas's published API docs.
+    (let ((entry (alist-get "question-banks" org-canvas-contract--data
+                            nil nil #'string=)))
+      (expect (alist-get "supplement" entry nil nil #'string=) :to-be t)
+      (expect (alist-get "pull_only" entry nil nil #'string=) :to-be t))
+    (with-org-canvas-test-config
+      (org-canvas-contract--check-read-params
+       "question-banks" 'list (org-canvas--question-banks-list-params)))
+    (org-canvas-contract--check-read-params
+     "question-banks" 'item org-canvas--question-banks-item-params)
+    (org-canvas-contract--check-read-params "question-banks" 'questions nil))
+
   (it "assignments ask for their own dates on both the index and the show"
     (let ((feature (org-canvas--registry-find-feature "assignments"))
           (param '("override_assignment_dates" . "false")))

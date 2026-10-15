@@ -121,6 +121,34 @@ SUPPLEMENT_OPS = {
     },
 }
 
+# Pull-only reads org-canvas sends that the vendored spec lacks, transcribed
+# from Canvas's published API documentation, which is generated from the
+# canvas-lms source.  They are written into the fixture as they stand here,
+# marked "pull_only" and "supplement", and the generator refuses to run once
+# the spec gains one of their paths, so a supplement never shadows the real
+# thing.  question-banks: the course's classic question banks, one bank, and
+# a bank's questions (issue #492); the course-scoped /courses/:id/question_banks
+# is a 404, so the context goes in the query.
+SUPPLEMENT_READ_OPS = {
+    "question-banks": {
+        "source": "developerdocs.instructure.com/services/canvas/resources/"
+                  "assessment_question_banks (AssessmentQuestionBanksController), "
+                  "read 2026-10-15",
+        "reads": {
+            "list": {"operationId": "list_question_banks",
+                     "path": "/v1/question_banks",
+                     "params": ["context_id", "context_type",
+                                "include_question_count"]},
+            "item": {"operationId": "get_single_question_bank",
+                     "path": "/v1/question_banks/{id}",
+                     "params": ["include_question_count"]},
+            "questions": {"operationId": "list_assessment_questions_for_question_bank",
+                          "path": "/v1/question_banks/{id}/questions",
+                          "params": []},
+        },
+    },
+}
+
 BRACKET = re.compile(r"^([^\[]+)\[([^\]]+)\]")
 
 
@@ -252,6 +280,15 @@ def main():
             sys.exit(f"supplement now in the spec, extract it instead: "
                      f"{contract['operationId']}")
         out[module] = dict(contract, supplement=True)
+
+    for module, contract in SUPPLEMENT_READ_OPS.items():
+        if module in out:
+            sys.exit(f"supplement shadows a spec module: {module}")
+        for read in contract["reads"].values():
+            if read["path"] in spec["paths"]:
+                sys.exit(f"supplement now in the spec, extract it instead: "
+                         f"{read['path']}")
+        out[module] = dict(contract, pull_only=True, supplement=True)
 
     with open(OUT, "w") as fh:
         json.dump(out, fh, indent=2, sort_keys=True)

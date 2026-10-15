@@ -695,6 +695,34 @@
     "response_only": true,
     "response_schema": "Progress"
   },
+  "question-banks": {
+    "pull_only": true,
+    "reads": {
+      "item": {
+        "operationId": "get_single_question_bank",
+        "params": [
+          "include_question_count"
+        ],
+        "path": "/v1/question_banks/{id}"
+      },
+      "list": {
+        "operationId": "list_question_banks",
+        "params": [
+          "context_id",
+          "context_type",
+          "include_question_count"
+        ],
+        "path": "/v1/question_banks"
+      },
+      "questions": {
+        "operationId": "list_assessment_questions_for_question_bank",
+        "params": [],
+        "path": "/v1/question_banks/{id}/questions"
+      }
+    },
+    "source": "developerdocs.instructure.com/services/canvas/resources/assessment_question_banks (AssessmentQuestionBanksController), read 2026-10-15",
+    "supplement": true
+  },
   "quizzes": {
     "fields": {
       "access_code": {

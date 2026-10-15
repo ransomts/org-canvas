@@ -86,6 +86,7 @@
 (require 'org-canvas-gradebook)
 (require 'org-canvas-rubric-results)
 (require 'org-canvas-quiz-results)
+(require 'org-canvas-question-banks)
 (require 'org-canvas-calendar)
 (require 'org-canvas-diff)
 (require 'org-canvas-validate)
@@ -587,6 +588,7 @@ from those whose tab the course has disabled (issue #486)."
      (org-canvas-pull-calendar-events "Calendar Events"))
     ((org-canvas-pull-assignments "Assignments")
      (org-canvas-pull-quizzes "Quizzes")
+     (org-canvas-pull-question-banks "Question Banks")
      (org-canvas-pull-new-quizzes "New Quizzes"))
     ((org-canvas-pull-modules "Modules")))
   "Pull tiers in dependency order.  Each tier is a list of (FN LABEL) pairs.
