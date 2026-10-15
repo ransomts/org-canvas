@@ -290,6 +290,32 @@ never resets what Canvas holds (issue #321)."
      :remote-fn org-canvas--new-quiz-item-remote-hotspots
      :compare-p ,(org-canvas--new-quiz-item-carries 'scoring_data)
      :doc "Hot-spot regions, SHAPE X,Y X,Y; ...; written by pull, never pushed")
+    ;; A bank draw or a stimulus, made in the web interface and
+    ;; mirrored read-only: a heading carrying ITEM_KIND is never
+    ;; pushed (#508).
+    (:org-prop "ITEM_KIND" :data-key :item_kind :type enum :pull-only t
+     :values ,org-canvas--new-quiz-item-kinds
+     :remote-fn org-canvas--new-quiz-item-remote-kind
+     :compare-p org-canvas--new-quiz-item-carries-kind-p
+     :doc "bank, bank-entry or stimulus: an item made in Canvas, never pushed")
+    (:org-prop "BANK_ID" :data-key :bank_id :type string :pull-only t
+     :remote-fn org-canvas--new-quiz-item-remote-bank-id
+     :doc "Id of the item bank a bank draw or bank entry comes from")
+    (:org-prop "BANK_ENTRY_COUNT" :data-key :bank_entry_count :type number
+     :pull-only t
+     :remote-fn ,(org-canvas--new-quiz-item-remote-bank-field 'entry_count)
+     :doc "How many entries the drawn bank holds, stimuli included")
+    (:org-prop "BANK_ITEM_COUNT" :data-key :bank_item_count :type number
+     :pull-only t
+     :remote-fn ,(org-canvas--new-quiz-item-remote-bank-field 'item_entry_count)
+     :doc "How many questions the drawn bank holds, stimuli left out")
+    (:org-prop "BANK_ARCHIVED" :data-key :bank_archived :type boolean
+     :pull-only t
+     :remote-fn org-canvas--new-quiz-item-remote-archived
+     :doc "Whether the bank, or the banked item, is archived")
+    (:org-prop "PICK_COUNT" :data-key :pick_count :type string :pull-only t
+     :remote-fn org-canvas--new-quiz-item-remote-pick-count
+     :doc "How many items a bank draw picks, or all")
     (:org-prop "OUTCOME" :data-key :outcome :type link
      :target-file org-canvas-outcomes-file :link-id-property "CANVAS_ID"
      :doc "Link to outcome in outcomes.org (local-only)")))
@@ -600,41 +626,81 @@ is absent in RESPONSE."
 A level-2 heading under the quiz."
   (= (org-outline-level) 2))
 
+(defun org-canvas--new-quiz-item-skip-read-only ()
+  "Log that the read-only item heading at point is not pushed; return its title.
+A heading carrying ITEM_KIND is a bank draw or a stimulus made in the
+web interface (issue #508): it is never sent, never deleted and never
+counted as missing, whether or not it carries a CANVAS_ITEM_ID."
+  (let ((title (org-get-heading t t t t))
+        (kind (org-canvas--new-quiz-item-heading-kind)))
+    (org-canvas--log-info org-canvas--logger
+      "[New Quiz Item] '%s' is not pushed: ITEM_KIND %s is made in the Canvas web interface and mirrored read-only"
+      title kind)
+    title))
+
+(defun org-canvas--new-quiz-sync-question (quiz-assignment-id remote claimed label)
+  "Push the question heading at point, an item of QUIZ-ASSIGNMENT-ID.
+REMOTE is the quiz's item list, CLAIMED the ids sibling headings hold
+and LABEL the log tag, all as `org-canvas--adopt-child-twin' takes
+them.  Returns (RESULT . ADOPTED): RESULT is `skip' for a type the
+debug filter leaves out, and ADOPTED the id of an adopted twin or nil."
+  (let* ((data (org-canvas--new-quiz-item-parse-entry quiz-assignment-id))
+         (q-type (plist-get data :type)))
+    (if (and org-canvas--new-quiz-debug-types
+             (not (member q-type org-canvas--new-quiz-debug-types)))
+        (progn
+          (org-canvas--log-info org-canvas--logger
+            "[DEBUG SKIP] Skipping type '%s' for '%s'"
+            q-type (plist-get data :title))
+          (cons 'skip nil))
+      (let* ((adopted (org-canvas--adopt-child-twin
+                       data remote
+                       (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
+                       claimed label))
+             (payload (org-canvas--new-quiz-item-build-payload data))
+             (response (org-canvas--new-quiz-item-push-to-api data payload)))
+        (cons (org-canvas--new-quiz-item-finalize data response) adopted)))))
+
+(defun org-canvas--new-quiz-items-log-skips (counts read-only)
+  "Log the skips in COUNTS, naming the READ-ONLY item headings.
+READ-ONLY lists the titles of the bank draws and stimuli left alone
+\(issue #508); the other skips are the debug filter's."
+  (let ((filtered (- (plist-get counts :skip) (length read-only))))
+    (when read-only
+      (org-canvas--log-info org-canvas--logger
+        "[New Quiz Items] %d not pushed, made in Canvas and mirrored read-only: %s"
+        (length read-only)
+        (mapconcat (lambda (title) (format "'%s'" title)) read-only ", ")))
+    (when (> filtered 0)
+      (org-canvas--log-info org-canvas--logger
+        "[New Quiz Items] %d skipped (debug filter)" filtered))))
+
 (defun org-canvas--sync-new-quiz-items (quiz-marker quiz-assignment-id)
   "Sync all items under the New Quiz at QUIZ-MARKER.
 QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz.  An item
 heading without a CANVAS_ITEM_ID adopts the item of its title the quiz
 already holds, when one is unclaimed, instead of creating a second
-\(issue #179)."
+\(issue #179).  A heading carrying ITEM_KIND, a bank draw or a stimulus,
+is skipped and named in the log (issue #508)."
   (let* ((label "[New Quiz Item]")
          (item-markers (org-canvas--collect-subtree-markers
                         quiz-marker #'org-canvas--new-quiz-item-heading-p))
          (claimed (delq nil (mapcar (lambda (m) (org-entry-get m "CANVAS_ITEM_ID"))
                                      item-markers)))
          (remote (org-canvas--new-quiz-remote-items quiz-assignment-id item-markers))
+         (read-only nil)
          (counts (org-canvas--sync-children
                   item-markers label
                   (lambda ()
-                    (let* ((data (org-canvas--new-quiz-item-parse-entry quiz-assignment-id))
-                           (q-type (plist-get data :type)))
-                      (if (and org-canvas--new-quiz-debug-types
-                               (not (member q-type org-canvas--new-quiz-debug-types)))
-                          (progn
-                            (org-canvas--log-info org-canvas--logger
-                                "[DEBUG SKIP] Skipping type '%s' for '%s'"
-                                q-type (plist-get data :title))
-                            'skip)
-                        (let* ((adopted (org-canvas--adopt-child-twin
-                                          data remote
-                                          (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
-                                          claimed label))
-                               (payload (org-canvas--new-quiz-item-build-payload data))
-                               (response (org-canvas--new-quiz-item-push-to-api data payload)))
-                          (when adopted (push adopted claimed))
-                          (org-canvas--new-quiz-item-finalize data response))))))))
-    (when (> (plist-get counts :skip) 0)
-      (org-canvas--log-info org-canvas--logger "[New Quiz Items] %d skipped (debug filter)"
-        (plist-get counts :skip)))
+                    (if (org-canvas--new-quiz-item-heading-kind)
+                        (progn (push (org-canvas--new-quiz-item-skip-read-only)
+                                     read-only)
+                               'skip)
+                      (let ((result (org-canvas--new-quiz-sync-question
+                                     quiz-assignment-id remote claimed label)))
+                        (when (cdr result) (push (cdr result) claimed))
+                        (car result)))))))
+    (org-canvas--new-quiz-items-log-skips counts (nreverse read-only))
     (org-canvas--log-info org-canvas--logger "[New Quiz Items] %d/%d synced"
       (plist-get counts :success)
       (- (plist-get counts :total) (plist-get counts :skip)))

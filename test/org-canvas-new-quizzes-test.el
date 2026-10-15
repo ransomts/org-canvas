@@ -4508,4 +4508,343 @@ COUNT is its `hotspots_count', the number of REGIONS by default."
       (expect (nth 1 texts) :to-equal (car texts))
       (expect (nth 2 texts) :to-equal (car texts)))))
 
+;;;; Bank draws and stimuli (issue #508)
+;;
+;; The fixtures are transcribed from the documented QuizItem, BankItem,
+;; BankEntryItem and StimulusItem objects of the New Quizzes Items API
+;; (developerdocs.instructure.com/services/new-quizzes/public/
+;; api-endpoints/quiz_items, whose objects
+;; canvas.instructure.com/doc/api/new_quiz_items.html spells out), as
+;; `json-read' decodes them: null is nil, false is `:json-false'.  No
+;; live reply was available.  The stimulus body is not the docs' <img>
+;; example: it holds a heading, to test Hard Rule 22.
+
+(defconst test-nq-508--bank
+  '((id . "35") (position . 2) (points_possible . 10.0) (entry_type . "Bank")
+    (entry_editable . t) (stimulus_quiz_entry_id) (status . "mutable")
+    (properties (sample_num . 5))
+    (entry (id . "123") (title . "Linear Algebra 1-1") (archived . :json-false)
+           (entry_count . 20) (item_entry_count . 18)))
+  "A QuizItem drawing five items from bank 123, as the docs show one.")
+
+(defconst test-nq-508--bank-entry
+  '((id . "36") (position . 3) (points_possible . 1.0) (entry_type . "BankEntry")
+    (entry_editable . t) (stimulus_quiz_entry_id) (status . "mutable")
+    (properties)
+    (entry (id . "789") (entry_type . "Item") (archived . :json-false)
+           (bank_id . "555")
+           (entry (id . "123") (title . "Linear Algebra 1-104")
+                  (item_body . "<p>What is 3 + 6?</p>")
+                  (interaction_type_slug . "essay"))
+           (created_at . "2013-01-15T15:00:00Z")
+           (updated_at . "2013-01-15T15:04:00Z")))
+  "A QuizItem holding one question taken from bank 555.")
+
+(defconst test-nq-508--stimulus
+  '((id . "37") (position . 1) (points_possible . 0) (entry_type . "Stimulus")
+    (entry_editable . t) (stimulus_quiz_entry_id) (status . "mutable")
+    (properties)
+    (entry (id . "456") (title . "Consider the following image")
+           (body . "<h2>The passage</h2><p>Read this first.</p>")
+           (instructions . "Some instructions...")
+           (source_url . "https://example.com") (orientation . "left")
+           (passage . :json-false)))
+  "A QuizItem holding a stimulus whose body opens with a heading.")
+
+(defconst test-nq-508--quiz "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+  "A New Quiz heading with no items.")
+
+(defun test-nq-508--pull (items &optional initial)
+  "Pull ITEMS under the quiz of INITIAL, by default `test-nq-508--quiz'.
+Return the buffer's text."
+  (with-org-canvas-test-config
+    (with-temp-org-buffer (or initial test-nq-508--quiz)
+      (dolist (item items)
+        (goto-char (point-min))
+        (org-canvas--new-quiz-pull-insert-item item))
+      (buffer-string))))
+
+(describe "the pull of a bank draw or a stimulus (issue #508)"
+  (it "writes a bank draw as a heading named after its bank, with the draw's properties"
+    (let ((text (test-nq-508--pull (list test-nq-508--bank))))
+      (expect text :to-match "^\\*\\* Linear Algebra 1-1$")
+      (expect text :to-match ":CANVAS_ITEM_ID: +35\n")
+      (expect text :to-match ":ITEM_KIND: +bank\n")
+      (expect text :to-match ":BANK_ID: +123\n")
+      (expect text :to-match ":BANK_ENTRY_COUNT: +20\n")
+      (expect text :to-match ":BANK_ITEM_COUNT: +18\n")
+      (expect text :to-match ":BANK_ARCHIVED: +false\n")
+      (expect text :to-match ":PICK_COUNT: +5\n")
+      (expect text :to-match ":POINTS: +10.0\n")
+      (expect text :not :to-match ":TYPE:")))
+
+  (it "writes a null sample_num as all, and an archived bank as true"
+    (let ((text (test-nq-508--pull
+                 (list '((id . "35") (entry_type . "Bank") (properties (sample_num))
+                         (entry (id . "123") (title . "Pool") (archived . t)))))))
+      (expect text :to-match ":PICK_COUNT: +all\n")
+      (expect text :to-match ":BANK_ARCHIVED: +true\n")))
+
+  (it "writes nothing a reply does not carry, and names an untitled bank"
+    (let ((text (test-nq-508--pull (list '((id . "35") (entry_type . "Bank"))))))
+      (expect text :to-match "^\\*\\* Item bank draw (untitled bank)$")
+      (expect text :to-match ":ITEM_KIND: +bank\n")
+      (dolist (prop '("BANK_ID" "BANK_ENTRY_COUNT" "BANK_ITEM_COUNT"
+                      "BANK_ARCHIVED" "PICK_COUNT" "POINTS"))
+        (expect text :not :to-match (concat ":" prop ":")))))
+
+  (it "writes a bank entry under the title and the body of the item it holds"
+    (let ((text (test-nq-508--pull (list test-nq-508--bank-entry))))
+      (expect text :to-match "^\\*\\* Linear Algebra 1-104$")
+      (expect text :to-match ":ITEM_KIND: +bank-entry\n")
+      (expect text :to-match ":BANK_ID: +555\n")
+      (expect text :to-match ":BANK_ARCHIVED: +false\n")
+      (expect text :to-match "\n\nWhat is 3 \\+ 6\\?\n")
+      (expect text :not :to-match ":PICK_COUNT:")
+      (expect text :not :to-match ":TYPE:")))
+
+  (it "names a bank entry and a stimulus with no title by their kind"
+    (let ((text (test-nq-508--pull
+                 (list '((id . "36") (entry_type . "BankEntry"))
+                       '((id . "37") (entry_type . "Stimulus") (entry (body . "")))))))
+      (expect text :to-match "^\\*\\* Item from an item bank (untitled)$")
+      (expect text :to-match "^\\*\\* Stimulus (untitled)$")))
+
+  (it "writes a stimulus's passage and instructions, a heading in it as a block"
+    (let ((text (test-nq-508--pull (list test-nq-508--stimulus))))
+      (expect text :to-match "^\\*\\* Consider the following image$")
+      (expect text :to-match ":ITEM_KIND: +stimulus\n")
+      (expect text :to-match ":POINTS: +0\n")
+      (expect text :to-match "Read this first\\.")
+      (expect text :to-match "Some instructions\\.\\.\\.")
+      (expect text :to-match "The passage")
+      (expect (test-org-canvas-count-matches "^\\*" text) :to-equal 2)))
+
+  (it "reads the documented entry names as entry types too"
+    (let ((text (test-nq-508--pull
+                 (list '((id . "35") (entry_type . "BankItem")
+                         (entry (title . "Pool")))))))
+      (expect text :to-match ":ITEM_KIND: +bank\n")))
+
+  (it "never writes an unknown entry type as a question"
+    (let ((text (test-nq-508--pull (list '((id . "38") (entry_type . "Widget"))))))
+      (expect text :to-match "^\\*\\* Read-only widget item$")
+      (expect text :to-match ":ITEM_KIND: +widget\n")))
+
+  (it "rewrites a nameless question heading of an earlier pull, and a re-pull changes nothing"
+    (let* ((initial (concat test-nq-508--quiz
+                            "** Question\n:PROPERTIES:\n:CANVAS_ITEM_ID: 35\n"
+                            ":TYPE: choice\n:POINTS: 10.0\n:END:\n"))
+           (once (test-nq-508--pull (list test-nq-508--stimulus test-nq-508--bank)
+                                    initial))
+           (twice (test-nq-508--pull (list test-nq-508--stimulus test-nq-508--bank)
+                                     once)))
+      (expect once :to-match "^\\*\\* Linear Algebra 1-1$")
+      (expect once :not :to-match "^\\*\\* Question$")
+      (expect once :not :to-match ":TYPE:")
+      (expect (test-org-canvas-count-matches "^\\*\\* " once) :to-equal 2)
+      (expect twice :to-equal once)))
+
+  (it "still writes a question with entry_type Item as a question"
+    (let ((text (test-nq-508--pull
+                 (list '((id . "7") (entry_type . "Item")
+                         (entry (item_body . "<p>Why?</p>")
+                                (interaction_type_slug . "essay")))))))
+      (expect text :to-match "^\\*\\* Why\\?$")
+      (expect text :to-match ":TYPE: +essay\n")
+      (expect text :not :to-match ":ITEM_KIND:"))))
+
+(describe "the readers of a bank draw's fields (issue #508)"
+  (it "read nothing of a question"
+    (let ((question '((id . "7") (entry_type . "Item") (properties (sample_num . 2))
+                      (entry (id . "9") (bank_id . "1") (archived . t)))))
+      (expect (org-canvas--new-quiz-item-kind question) :to-be nil)
+      (expect (org-canvas--new-quiz-item-remote-kind question) :to-be nil)
+      (expect (org-canvas--new-quiz-item-remote-bank-id question) :to-be nil)
+      (expect (org-canvas--new-quiz-item-remote-archived question) :to-be nil)
+      (expect (org-canvas--new-quiz-item-remote-pick-count question) :to-be nil)))
+
+  (it "take an item with no entry_type for a question"
+    (expect (org-canvas--new-quiz-item-kind '((id . "7"))) :to-be nil)
+    (expect (org-canvas--new-quiz-item-carries-kind-p nil '((id . "7"))) :to-be nil)
+    (expect (org-canvas--new-quiz-item-carries-kind-p nil test-nq-508--bank)
+            :to-be-truthy))
+
+  (it "read a bank draw's archived flag as a JSON boolean"
+    (expect (org-canvas--new-quiz-item-remote-archived test-nq-508--bank)
+            :to-be :json-false)))
+
+(defconst test-nq-508--file
+  (concat "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+          "** Consider the following image\n:PROPERTIES:\n:CANVAS_ITEM_ID: 37\n"
+          ":ITEM_KIND: stimulus\n:END:\n\nRead this first.\n\n"
+          "** Linear Algebra 1-1\n:PROPERTIES:\n:CANVAS_ITEM_ID: 35\n"
+          ":ITEM_KIND: bank\n:PICK_COUNT: 5\n:POINTS: 10.0\n:END:\n"
+          "** Hand-copied pool\n:PROPERTIES:\n:ITEM_KIND: bank\n:END:\n"
+          "** What is DNA?\n:PROPERTIES:\n:TYPE: choice\n:END:\n"
+          "- [X] A molecule\n- [ ] A rock\n")
+  "A quiz holding a stimulus, a bank draw, an unstamped bank heading and a question.")
+
+(defun test-nq-508--sync (remote)
+  "Sync the items of `test-nq-508--file' against REMOTE, the quiz's items.
+Return (RESULT REQUESTS LOGS TEXT): the sync's counts, every request as
+\(METHOD URL), the info lines logged, and the file afterwards."
+  (let ((requests nil) (logs nil) result text)
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _)
+                   (push (list method url) requests)
+                   (if (eq method 'GET) remote '((id . "900")))))
+                ((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logs))))
+        (with-temp-org-buffer test-nq-508--file
+          (goto-char (point-min))
+          (setq result (org-canvas--sync-new-quiz-items (point-marker) "42"))
+          (setq text (buffer-string)))))
+    (list result (nreverse requests) (nreverse logs) text)))
+
+(describe "the push of a bank draw or a stimulus heading (issue #508)"
+  (it "sends only the question, and names the headings it left alone"
+    (let* ((out (test-nq-508--sync
+                 (vector test-nq-508--stimulus test-nq-508--bank)))
+           (writes (cl-remove-if (lambda (r) (eq (car r) 'GET)) (nth 1 out)))
+           (logs (nth 2 out)))
+      (expect (nth 0 out) :to-equal '(1 . 0))
+      (expect (length writes) :to-equal 1)
+      (expect (car (car writes)) :to-be 'POST)
+      (expect (cadr (car writes)) :to-match "quizzes/42/items$")
+      (expect (cl-some (lambda (l)
+                         (string-match-p
+                          (concat "3 not pushed, made in Canvas and mirrored read-only: "
+                                  "'Consider the following image', 'Linear Algebra 1-1', "
+                                  "'Hand-copied pool'")
+                          l))
+                       logs)
+              :to-be-truthy)
+      (expect (cl-some (lambda (l) (string-match-p "1/1 synced" l)) logs)
+              :to-be-truthy)
+      (expect (cl-some (lambda (l) (string-match-p "debug filter" l)) logs)
+              :to-be nil)
+      (expect (nth 3 out) :to-match ":CANVAS_ITEM_ID: +37\n")
+      (expect (nth 3 out) :to-match ":CANVAS_ITEM_ID: +35\n")))
+
+  (it "never adopts a stimulus into a question heading of its text"
+    (let* ((out (test-nq-508--sync
+                 (vector '((id . "37") (entry_type . "Stimulus")
+                           (entry (item_body . "<p>What is DNA?</p>"))))))
+           (writes (cl-remove-if (lambda (r) (eq (car r) 'GET)) (nth 1 out))))
+      (expect (mapcar #'car writes) :to-equal '(POST))
+      (expect (nth 3 out) :to-match ":CANVAS_ITEM_ID: +900\n")))
+
+  (it "is not a question's twin, while the same item without the kind is"
+    (let ((data (list :title "What is DNA?")))
+      (expect (org-canvas--new-quiz-item-twin-p
+               data '((entry_type . "BankEntry")
+                      (entry (item_body . "<p>What is DNA?</p>"))))
+              :to-be nil)
+      (expect (org-canvas--new-quiz-item-twin-p
+               data '((entry_type . "Item")
+                      (entry (item_body . "<p>What is DNA?</p>"))))
+              :to-be-truthy))))
+
+(defconst test-nq-508--diff-file
+  (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+          "** Consider the following image\n:PROPERTIES:\n:CANVAS_ITEM_ID: 37\n"
+          ":ITEM_KIND: stimulus\n:POINTS: 0\n:END:\n\nThe passage\n\nRead this first.\n\n"
+          "** Linear Algebra 1-1\n:PROPERTIES:\n:CANVAS_ITEM_ID: 35\n"
+          ":ITEM_KIND: bank\n:BANK_ID: 123\n:BANK_ENTRY_COUNT: 20\n"
+          ":BANK_ITEM_COUNT: 18\n:BANK_ARCHIVED: false\n:PICK_COUNT: 5\n"
+          ":POINTS: 10.0\n:END:\n"
+          "** Hand-copied pool\n:PROPERTIES:\n:ITEM_KIND: bank\n:END:\n")
+  "A quiz mirroring a stimulus and a bank draw as a pull writes them.")
+
+(defun test-nq-508--diff (items)
+  "Return the New Quiz Items result of `test-nq-508--diff-file' against ITEMS."
+  (let ((file (make-temp-file "diff-nq-508-" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert test-nq-508--diff-file))
+          (let ((org-canvas-new-quizzes-file file)
+                (org-canvas-diff-known-extras nil)
+                (org-canvas-diff-excluded-features nil))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &rest _)
+                           (if (string-match-p "quizzes/41/items" url)
+                               items
+                             '(((id . "41") (assignment_id . "41")
+                                (title . "Midterm"))))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _) (error "The report must not write"))))
+                (plist-get (org-canvas--diff-feature
+                            (org-canvas--diff-find-feature "New Quizzes"))
+                           :children)))))
+      (let ((buf (find-buffer-visiting file)))
+        (when buf
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf)))
+      (delete-file file))))
+
+(describe "a bank draw or a stimulus in the drift report (issue #508)"
+  (it "reads the mirrored headings as present, with nothing pending"
+    (let ((child (test-nq-508--diff
+                  (vector test-nq-508--stimulus test-nq-508--bank))))
+      (expect (plist-get child :error) :to-be nil)
+      (expect (plist-get child :divergences) :to-be nil)
+      (expect (plist-get child :extra) :to-be nil)
+      (expect (plist-get child :pending) :to-be nil)))
+
+  (it "reports a draw changed in the web interface by its pull-only field"
+    (let* ((changed (copy-tree test-nq-508--bank))
+           (_ (setf (alist-get 'sample_num (alist-get 'properties changed)) 6))
+           (child (test-nq-508--diff (vector test-nq-508--stimulus changed)))
+           (row (car (plist-get child :divergences)))
+           (row-kind (plist-get row :kind)))
+      (expect row-kind :to-be 'modified)
+      (expect (plist-get row :fields) :to-equal '(("PICK_COUNT" "5" "6")))))
+
+  (it "names a bank entry no heading mirrors after the item it holds"
+    (let* ((child (test-nq-508--diff
+                   (vector test-nq-508--stimulus test-nq-508--bank
+                           test-nq-508--bank-entry)))
+           (extra (plist-get child :extra)))
+      (expect (mapcar (lambda (e) (plist-get e :title)) extra)
+              :to-equal '("Linear Algebra 1-104"))))
+
+  (it "names an extra question as before"
+    (let ((child (test-nq-508--diff
+                  (vector test-nq-508--stimulus test-nq-508--bank
+                          '((id . "50") (entry (item_body . "")))))))
+      (expect (mapcar (lambda (e) (plist-get e :title)) (plist-get child :extra))
+              :to-equal '("?")))))
+
+(defun test-nq-508--validate (content)
+  "Return the issues validation finds in a new-quizzes.org holding CONTENT."
+  (let* ((temp-dir (make-temp-file "nq-508-validate" t))
+         (test-file (expand-file-name "new-quizzes.org" temp-dir)))
+    (unwind-protect
+        (with-nonexistent-canvas-files
+          (let ((org-canvas-new-quizzes-file test-file))
+            (with-temp-file test-file (insert content))
+            (plist-get (org-canvas--validate-run-all-specs) :issues)))
+      (let ((buf (find-buffer-visiting test-file)))
+        (when buf (kill-buffer buf)))
+      (delete-directory temp-dir t))))
+
+(describe "validation of a bank draw or a stimulus heading (issue #508)"
+  (it "finds nothing in the headings a pull writes"
+    (expect (test-nq-508--validate
+             (test-nq-508--pull (list test-nq-508--stimulus test-nq-508--bank
+                                      test-nq-508--bank-entry)))
+            :to-be nil))
+
+  (it "flags an ITEM_KIND no pull writes"
+    (let ((issues (test-nq-508--validate
+                   (concat test-nq-508--quiz
+                           "** Pool\n:PROPERTIES:\n:ITEM_KIND: bnak\n:END:\n"))))
+      (expect (cl-some (lambda (i) (equal (plist-get i :property) "ITEM_KIND"))
+                       issues)
+              :to-be-truthy))))
+
 ;;; org-canvas-new-quizzes-test.el ends here
