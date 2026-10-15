@@ -59,6 +59,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("b" "Gradebook (overview)" org-canvas-pull-gradebook)
    ("R" "Rubric results" org-canvas-pull-rubric-results)
    ("t" "Quiz results (statistics)" org-canvas-pull-quiz-results)
+   ("B" "Question banks" org-canvas-pull-question-banks)
    ("y" "Grading periods" org-canvas-pull-grading-periods)
    ("k" "Grading schemes" org-canvas-pull-grading-schemes)
    ("s" "Settings" org-canvas-pull-settings)

@@ -376,6 +376,7 @@ specs hand-wrote were this macro, verbatim, eight times over (#433)."
     (calendar-events . org-canvas-pull-calendar-events)
     (assignments . org-canvas-pull-assignments)
     (quizzes . org-canvas-pull-quizzes)
+    (question-banks . org-canvas-pull-question-banks)
     (new-quizzes . org-canvas-pull-new-quizzes)
     (modules . org-canvas-pull-modules))
   "The pull functions `org-canvas-pull-all' drives, one (LABEL . FN) each.
@@ -504,6 +505,7 @@ it differently and a spec comparing them would flake."
          (org-canvas-gradebook-file "/tmp/nonexistent/gradebook.org")
          (org-canvas-rubric-results-file "/tmp/nonexistent/rubric-results.org")
          (org-canvas-quiz-results-file "/tmp/nonexistent/quiz-results.org")
+         (org-canvas-question-banks-file "/tmp/nonexistent/question-banks.org")
          (org-canvas-messages-file "/tmp/nonexistent/messages.org")
          (org-canvas-sections-file "/tmp/nonexistent/sections.org")
          (org-canvas-grading-periods-file "/tmp/nonexistent/grading-periods.org")

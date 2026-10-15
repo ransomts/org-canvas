@@ -46,6 +46,7 @@ pull-at-point and prune.
 | Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, and each assignment's score spread, in gradebook.org |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, and a published survey's answers by text (#347), in quiz-results.org |
+| Question banks    | no   | no       | yes  | no     | no       | pull-only: each classic bank's id and count, the quiz groups drawing from it, and its questions with answer keys, in question-banks.org; a bank a group names that the course does not own is read by id (#492) |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Grading schemes   | yes  | yes      | yes  | at point | yes    | created and deleted, never edited in place (Canvas has no update); account schemes listed, not pushed; validate checks the table and every GRADING_STANDARD_ID |
 | Overrides         | yes  | no       | yes  | no     | no       | dates for a section, a group or some students, reconciled from a table under each assignment |
@@ -76,7 +77,7 @@ settings file.
 | Feature                        | What org-canvas does                                   | What it does not do                          |
 |--------------------------------+--------------------------------------------------------+----------------------------------------------|
 | Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled; an assignment override can name a group | name groups or manage members from Org |
-| Quiz question banks            | a classic quiz group may name a bank on create (PUT ignores it) | create, list or edit a bank: there is no API, see "No API" below |
+| Quiz question banks            | a classic quiz group may name a bank on create (PUT ignores it); a pull writes a bank-only group with its bank id, and the banks and their questions are pulled read-only (see the covered table, #492) | create or edit a bank: Canvas's bank API is read-only |
 | Rubric assessments             | read and pushed per student from the grading file's Rubric section (scores in a table, comments as items under it), the total setting the grade when the rubric is used for grading; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file; clear an assessment (SpeedGrader's) |
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property, read by GraphQL (#350); compare a wanted one (#293); each student's similarity and AI writing reports read into the grading file and counted in the grading queue (#351), current attempt only, with error codes and missing reports (#436), and side by side across every column in one read-only report (#437) | set it; deliberately, see decisions.org      |
@@ -114,13 +115,18 @@ disturbs them.
 Probed read-only on 2026-09-11 against clemson.instructure.com, so
 nobody has to probe again:
 
-- *Classic question banks.*  =GET /api/v1/courses/:id/question_banks=
-  is a 404.  The web UI's =/courses/:id/question_banks= answers a token
-  with the HTML page, and its =.json= form with a 401: it wants a
-  browser session, not an API token.  A bank is created in the web UI
-  or by a QTI import, and a classic quiz group names it by the id in
-  the UI's URL, on create only (Canvas ignores
-  =assessment_question_bank_id= on update).
+- *Writing classic question banks.*  The 2026-09-11 probe tried
+  =GET /api/v1/courses/:id/question_banks=, a 404, and the web UI's
+  =.json= form, a 401, and concluded there was no API.  The banks are
+  in fact read at the global =/api/v1/question_banks= with the course
+  in the query (=context_type=Course&context_id==), one bank at
+  =question_banks/:id= and its questions at =question_banks/:id/questions=
+  (probed 2026-10-09, #492; documented by Instructure, though not in
+  the vendored spec), and are pulled.  Nothing creates or edits a
+  bank: that is the web UI or a QTI import, and a classic quiz group
+  names a bank by its id on create only (Canvas ignores
+  =assessment_question_bank_id= on update).  GraphQL has no bank, quiz
+  group or QTI type.
 - *New Quiz item banks.*  The New Quizzes API (=/api/quiz/v1/=, which
   answers the course's quiz list) has no bank route:
   =courses/:id/item_banks=, =courses/:id/banks= and =/banks= are all
@@ -179,12 +185,10 @@ an item because it is on the list.
 
 ** Closed by Canvas, Not by Us
 
-- Question banks and New Quiz item banks: no API (see "No API").
+- Creating or editing a classic question bank, and New Quiz item
+  banks at all: no API (see "No API").
 - New Quiz attempts and reports: no submissions or statistics endpoint
   in the public API.
-- A bank-backed quiz group: the pull learns of a group only through
-  the questions that name it, so a group drawing solely from a bank is
-  invisible to the pull.
 - Discussion checkpoints are built but the account flag is off at
   clemson.instructure.com, so the push has only been exercised by
   mocks.

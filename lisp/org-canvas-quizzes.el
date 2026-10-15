@@ -49,7 +49,8 @@
 ;; is fetched once.
 ;;
 ;; The bank must be created externally (e.g., via text2qti QTI import).
-;; The bank ID is obtained from the Canvas UI URL after import.
+;; The bank ID is the BANK_ID `org-canvas-pull-question-banks' writes
+;; in question-banks.org, with the bank's questions (issue #492).
 ;; Note: assessment_question_bank_id is accepted on POST but ignored on PUT.
 ;;
 ;; API NOTES

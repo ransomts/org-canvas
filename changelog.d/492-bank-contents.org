@@ -1,0 +1,13 @@
+* Added
+- #492 =org-canvas-pull-question-banks= (=B= in the pull menu, and part
+  of a full pull, after the quizzes) writes the course's classic
+  question banks to =question-banks.org=, read-only: one heading per
+  bank with its =BANK_ID= and =QUESTION_COUNT=, the =quizzes.org=
+  groups that draw from it, each linked to its quiz, and its questions
+  with their answer keys in the format =quizzes.org= uses.  A bank a
+  group names that the course does not own is read by id.  Canvas has
+  no API to create or edit a bank, so nothing is pushed.
+* Changed
+- #492 The manual no longer says Canvas has no API for listing
+  question banks; it names the pull, and its account of pulling
+  question groups describes the groups list #493 introduced.

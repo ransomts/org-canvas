@@ -42,6 +42,7 @@
 2.6 test/org-canvas-peer-reviews-test.el
 2.6 test/org-canvas-people-test.el
 2.0 test/org-canvas-property-registry-test.el
+2.0 test/org-canvas-question-banks-test.el
 3.0 test/org-canvas-quiz-accommodations-test.el
 2.3 test/org-canvas-quiz-results-test.el
 2.1 test/org-canvas-quiz-submissions-test.el
