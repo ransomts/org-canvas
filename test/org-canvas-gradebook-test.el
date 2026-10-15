@@ -40,14 +40,24 @@ Each column may carry a `data' entry: the rows its data endpoint answers.")
 (defvar test-gradebook--standard nil
   "The grading standard the fake single request answers, or `refuse'.")
 
-(defun test-gradebook--request (_method url &rest _args)
-  "Answer a single request for URL: the course or its grading standard."
+(defvar test-gradebook--course-reads nil
+  "The parameters of each course read, latest first.")
+(defvar test-gradebook--submissions-params nil
+  "The parameters the last request for the submissions carried.")
+
+(defun test-gradebook--request (_method url &rest args)
+  "Answer a single request for URL: the course or its grading standard.
+ARGS are the keyword arguments; a course read's :params are recorded."
   (cond
    ((string-match "/grading_standards/" url)
     (if (eq test-gradebook--standard 'refuse)
         (signal 'org-canvas-permission-error (list "403 Forbidden"))
       test-gradebook--standard))
-   ((string-match "/courses/[0-9]+/\\'" url) test-gradebook--course)
+   ((string-match "/courses/[0-9]+/\\'" url)
+    (push (plist-get args :params) test-gradebook--course-reads)
+    (if (eq test-gradebook--course 'refuse)
+        (signal 'org-canvas-permission-error (list "403 Forbidden"))
+      test-gradebook--course))
    (t (error "Unexpected request: %s" url))))
 
 (defun test-gradebook--api (_method url &optional _params)
@@ -69,6 +79,7 @@ Each column may carry a `data' entry: the rows its data endpoint answers.")
                                    test-gradebook--columns))))
    ((string-match "/assignment_groups" url) test-gradebook--groups)
    ((string-match "/students/submissions" url)
+    (setq test-gradebook--submissions-params _params)
     (if (eq test-gradebook--submissions 'refuse)
         (signal 'org-canvas-permission-error (list "403 Forbidden"))
       test-gradebook--submissions))
@@ -137,10 +148,14 @@ The gradebook and roster files live in a temp directory."
           (test-gradebook--summaries ,summaries)
           (test-gradebook--columns nil)
           (test-gradebook--columns-params nil)
-          (test-gradebook--assignments nil))
+          (test-gradebook--assignments nil)
+          (test-gradebook--course nil)
+          (test-gradebook--course-reads nil)
+          (test-gradebook--submissions-params nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-gradebook--api)
+                     ((symbol-function 'org-canvas-api-request) #'test-gradebook--request)
                      ((symbol-function 'message) #'ignore))
              ,@body))
        (dolist (f (list org-canvas-gradebook-file org-canvas-people-file
@@ -460,6 +475,185 @@ The gradebook and roster files live in a temp directory."
 
 ;;;; Per-group scores and the what-if (#452)
 
+;;;; My grades: a student's enrolment (issue #488)
+
+(defun test-gradebook--self-course (&rest enrollments)
+  "A course whose caller holds ENROLLMENTS, as Canvas answers a vector."
+  `((id . 1) (apply_assignment_group_weights . :json-false)
+    (enrollments . ,(vconcat enrollments))))
+
+(defun test-gradebook--student-enrollment ()
+  "The caller's student enrolment, as total_scores adds its totals."
+  '((type . "student") (role . "StudentEnrollment") (user_id . 7)
+    (enrollment_state . "active")
+    (computed_current_score . 87.5) (computed_current_grade . "B+")
+    (computed_final_score . 60.25) (computed_final_grade . :null)))
+
+(defun test-gradebook--self-sub (aid name due points &rest extra)
+  "The caller's submission to assignment AID, NAME, due DUE, out of POINTS.
+EXTRA pairs come first, so an explicit value shadows the default."
+  (append extra
+          `((id . ,(+ 500 aid)) (assignment_id . ,aid) (user_id . 7)
+            (score . :null) (grade . :null) (workflow_state . "unsubmitted")
+            (late . :json-false) (missing . :json-false) (excused . :json-false)
+            (submission_comments . [])
+            (assignment . ((id . ,aid) (name . ,name) (due_at . ,due)
+                           (points_possible . ,points))))))
+
+(defun test-gradebook--self-subs ()
+  "Three submissions, out of due order, one undated, one with comments."
+  (vector
+   (test-gradebook--self-sub 3 "Reading log" :null 5)
+   (test-gradebook--self-sub 2 "Homework 2" "2026-09-20T03:59:00Z" 10
+                             '(missing . t) '(late . t))
+   (test-gradebook--self-sub
+    1 "Homework 1" "2026-09-06T03:59:00Z" 10
+    '(score . 8.5) '(grade . "8.5") '(workflow_state . "graded")
+    '(submission_comments
+      . [((id . 1) (author_name . "Pat Teacher") (created_at . "2026-09-08T14:00:00Z")
+          (comment . "Good work.\nShow the units | next time."))]))))
+
+(defun test-gradebook--self-row (name)
+  "Return the My grades table row of the assignment NAME, cells trimmed."
+  (let ((text (test-gradebook--file)))
+    (when (string-match (format "^| *%s *|\\(.*\\)$" (regexp-quote name)) text)
+      (mapcar #'string-trim (split-string (match-string 1 text) "|" t)))))
+
+(describe "org-canvas--gradebook-student-enrollment"
+  (it "finds the caller's student enrolment"
+    (let ((e (test-gradebook--student-enrollment)))
+      (expect (org-canvas--gradebook-student-enrollment (test-gradebook--self-course e))
+              :to-equal e)))
+
+  (it "answers nil for a teacher, a TA, a designer or a teacher who is also a student"
+    (dolist (type '("teacher" "ta" "designer"))
+      (expect (org-canvas--gradebook-student-enrollment
+               (test-gradebook--self-course `((type . ,type))))
+              :to-be nil))
+    (expect (org-canvas--gradebook-student-enrollment
+             (test-gradebook--self-course (test-gradebook--student-enrollment)
+                                          '((type . "teacher"))))
+            :to-be nil))
+
+  (it "answers nil without a course, or with enrolments null"
+    (expect (org-canvas--gradebook-student-enrollment nil) :to-be nil)
+    (expect (org-canvas--gradebook-student-enrollment '((enrollments . :null))) :to-be nil)
+    (expect (org-canvas--gradebook-student-enrollment
+             (test-gradebook--self-course '((type . "observer"))))
+            :to-be nil)))
+
+(describe "org-canvas-pull-gradebook for a student (issue #488)"
+  (it "writes My grades by due date, the totals and the comments, and no roster"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0))
+        '(((id . 10) (name . "Lecture")))
+        'refuse
+      (with-temp-file org-canvas-gradebook-file
+        (insert "* Students\n| Beta, Bob |\n* Sections\n* Assignments\n"
+                "Canvas refused the assignment analytics for this token.\n"))
+      (let* ((test-gradebook--course (test-gradebook--self-course
+                                      (test-gradebook--student-enrollment)))
+             (test-gradebook--submissions (test-gradebook--self-subs))
+             (urls nil)
+             (api (symbol-function 'org-canvas-api-request-all-pages))
+             (rows (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                              (lambda (method url &optional params)
+                                (push url urls)
+                                (funcall api method url params))))
+                     (org-canvas-pull-gradebook)))
+             (text (test-gradebook--file))
+             (row (car rows)))
+        (expect (length urls) :to-equal 1)
+        (expect (car urls) :to-match "/students/submissions\\'")
+        (expect test-gradebook--submissions-params :to-equal
+                '(("include[]" . "assignment") ("include[]" . "submission_comments")))
+        (expect test-gradebook--course-reads :to-equal '((("include[]" . "total_scores"))))
+        (expect text :not :to-match "^\\* \\(Students\\|Sections\\|Assignments\\|Groups\\)")
+        (expect text :not :to-match "Beta, Bob\\|refused")
+        (expect text :to-match "^\\* My grades\n")
+        (expect text :to-match
+                "^| Assignment +| Due +| Points +| Score +| Grade +| Status +| Late +| Missing +|$")
+        (expect (< (string-match "Homework 1" text) (string-match "Homework 2" text)) :to-be t)
+        (expect (< (string-match "| Homework 2" text) (string-match "| Reading log" text)) :to-be t)
+        (expect (test-gradebook--self-row "Homework 1")
+                :to-equal (list (org-canvas--iso8601-to-org-timestamp "2026-09-06T03:59:00Z")
+                                "10" "8.5" "8.5" "graded" "no" "no"))
+        (expect (nthcdr 2 (test-gradebook--self-row "Homework 2"))
+                :to-equal '("-" "-" "unsubmitted" "yes" "yes"))
+        (expect (test-gradebook--self-row "Reading log")
+                :to-equal '("-" "5" "-" "-" "unsubmitted" "no" "no"))
+        (expect text :to-match "^Current: 87.5 (B\\+); final: 60.2$")
+        (expect text :to-match
+                "^Comments:\n- Homework 1, Pat Teacher <2026-09-0[89] [A-Za-z]+ [0-9:]+>: Good work. Show the units next time.$")
+        (expect text :to-match "^#\\+LAST_SYNCED:")
+        (expect (plist-get row :self) :to-be t)
+        (expect (plist-get row :user-id) :to-equal 7)
+        (expect (plist-get row :current) :to-equal 87.5)
+        (expect (plist-get row :final) :to-equal 60.25)
+        (expect (plist-get row :assignments) :to-equal 3)
+        (expect (plist-get row :missing) :to-equal 1)
+        (let ((summary (org-canvas-gradebook-summary-text rows)))
+          (expect summary :to-match "\\`| Assignment +| Due")
+          (expect summary :to-match "^Current: 87.5 (B\\+); final: 60.2\n")
+          (expect summary :to-match
+                  "\n\nMe: 3 assignments, 1 missing; current 87.5; final 60.2\n\\'")))))
+
+  (it "marks an excused submission and writes No assignments for none"
+    (test-gradebook--with-course nil nil nil
+      (let ((test-gradebook--course (test-gradebook--self-course
+                                     '((type . "student") (user_id . 7))))
+            (test-gradebook--submissions
+             (vector (test-gradebook--self-sub 2 "Survey" :null 0)
+                     (test-gradebook--self-sub 1 "Quiz" :null 1 '(excused . t)))))
+        (org-canvas-pull-gradebook)
+        ;; Both undated: by name.
+        (expect (< (string-match "| Quiz" (test-gradebook--file))
+                   (string-match "| Survey" (test-gradebook--file)))
+                :to-be t)
+        (expect (nthcdr 4 (test-gradebook--self-row "Quiz")) :to-equal '("excused" "no" "no"))
+        (expect (test-gradebook--file) :to-match "^Current: -; final: -$")
+        (expect (test-gradebook--file) :not :to-match "Comments:"))
+      (let* ((test-gradebook--course (test-gradebook--self-course
+                                      '((type . "student") (user_id . 7))))
+             (test-gradebook--submissions [])
+             (rows (org-canvas-pull-gradebook)))
+        (expect (test-gradebook--file) :to-match "^\\* My grades\n+No assignments\n")
+        (expect (org-canvas-gradebook-summary-text rows) :to-match
+                "Me: 0 assignments, 0 missing; current -; final -\n\\'"))))
+
+  (it "prints the student's standing from the shell's gradebook command"
+    (require 'org-canvas-batch)
+    (test-gradebook--with-course nil nil nil
+      (let ((test-gradebook--course (test-gradebook--self-course
+                                     (test-gradebook--student-enrollment)))
+            (test-gradebook--submissions (test-gradebook--self-subs))
+            (status nil))
+        (let ((out (with-output-to-string
+                     (setq status (org-canvas-batch--cmd-gradebook nil)))))
+          (expect status :to-equal 0)
+          (expect out :to-match "| Homework 1 ")
+          (expect out :to-match "Me: 3 assignments, 1 missing; current 87.5; final 60.2\n\\'")))))
+
+  (it "writes the teacher's tables, without My grades, when the course read is refused"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (with-temp-file org-canvas-gradebook-file
+        (insert "* My grades\n| Homework 1 |\n"))
+      (let ((test-gradebook--course 'refuse)
+            (warned nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned))))
+          (org-canvas-pull-gradebook))
+        (expect (cl-some (lambda (w) (string-match-p
+                                      "Could not read the course (.*403 Forbidden.*); writing the teacher's tables"
+                                      w))
+                         warned)
+                :to-be-truthy)
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
+        (expect (test-gradebook--file) :not :to-match "My grades\\|Homework 1")))))
+
 (defun test-gradebook--ids (items)
   "Return the assignment ids of ITEMS, sorted."
   (sort (mapcar #'car items) #'<))
@@ -686,6 +880,19 @@ The gradebook and roster files live in a temp directory."
           (mapcar #'string-trim (split-string (match-string 1 groups) "|" t)))))))
 
 (describe "org-canvas-pull-gradebook with org-canvas-gradebook-groups"
+  (it "reads the course once, for the role and the group weights (issue #488)"
+    (test-gradebook--with-scores 40.0
+      (org-canvas-pull-gradebook)
+      (expect test-gradebook--course-reads :to-equal '((("include[]" . "total_scores"))))
+      (expect (test-gradebook--groups-row "Adams, Alice") :to-be-truthy)))
+
+  (it "reads the course itself when it was not handed one"
+    (test-gradebook--with-scores 40.0
+      (let ((scores (org-canvas--gradebook-fetch-scores
+                     (list (list :user-id 1 :name "Adams, Alice" :current 86.67)) nil)))
+        (expect (plist-get scores :weighted) :to-be t)
+        (expect (length test-gradebook--course-reads) :to-equal 1))))
+
   (it "writes each group's percentage after the drop rules and checks Canvas's total"
     (test-gradebook--with-scores 40.0
       (spy-on 'org-canvas--log-warning)
