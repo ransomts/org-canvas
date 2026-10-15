@@ -36,7 +36,7 @@ pull-at-point and prune.
 | Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups                                   |
 | Groups            | no   | no       | yes  | no     | no       | pull-only: each category's groups and member names, in groups.org |
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements; an item moved between modules keeps its id, by GraphQL |
-| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; settings under =quiz_settings= (#321); the feature list keys on the assignment; pull-at-point, adopt and the drift report through a pull-only entry (#297, #313, #322); hot-spot items pull-only, their regions read as =HOTSPOTS= (#340, #365) |
+| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; settings under =quiz_settings= (#321); the feature list keys on the assignment; pull-at-point, adopt and the drift report through a pull-only entry (#297, #313, #322); hot-spot items pull-only, their regions read as =HOTSPOTS= (#340, #365); bank draws, bank entries and stimuli mirrored read-only by =ITEM_KIND=, never pushed (#508) |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
 | Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date; scheduled publish (#379)      |
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
@@ -131,7 +131,9 @@ nobody has to probe again:
   answers the course's quiz list) has no bank route:
   =courses/:id/item_banks=, =courses/:id/banks= and =/banks= are all
   404.  Items live inline under the quiz in new-quizzes.org, which is
-  the whole of what the API offers.
+  the whole of what the API offers.  A quiz's draw from a bank, an
+  item taken from one and a stimulus are readable as items only, and
+  are mirrored read-only (#508).
 
 * Deliberately Excluded
 

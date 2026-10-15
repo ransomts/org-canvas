@@ -1345,6 +1345,51 @@ A =TYPE= that is not in the table, such as a typo like
 refuses that question instead of pushing it as a =choice= question
 with no answers.  A question with no =TYPE= is a =choice= question.
 
+*** Bank Draws and Stimuli
+
+A New Quiz can hold items that are not questions: a draw of some
+items at random from an item bank, a single item taken from a bank,
+and a stimulus, a passage several questions refer to.  The New
+Quizzes API can only read these; they are made and changed in the
+Canvas web interface.  A pull mirrors each one read-only, as a
+level-2 heading carrying =ITEM_KIND= (=bank=, =bank-entry= or
+=stimulus=) and no =TYPE=:
+
+#+begin_src org
+,** Linear Algebra 1-1
+:PROPERTIES:
+:CANVAS_ITEM_ID: 35
+:POINTS: 10.0
+:ITEM_KIND: bank
+:BANK_ID: 123
+:BANK_ENTRY_COUNT: 20
+:BANK_ITEM_COUNT: 18
+:BANK_ARCHIVED: false
+:PICK_COUNT: 5
+:END:
+#+end_src
+
+A bank draw is named after its bank.  =PICK_COUNT= is how many items it
+draws, or =all=; =BANK_ENTRY_COUNT= counts the bank's entries, stimuli
+included, and =BANK_ITEM_COUNT= its questions alone.  An item taken
+from a bank carries its =BANK_ID= and, as text, the item it holds.  A
+stimulus is named by its title, and its passage and instructions are
+the text under the heading.  A field Canvas does not send is not
+written, and a heading Canvas sends no title for is named after its
+kind, such as =Item bank draw (untitled bank)=.
+
+A sync never sends such a heading, never deletes it and never takes it
+for a missing question: it is left alone and named in the log
+(=not pushed, made in Canvas and mirrored read-only=).  An unstamped
+question heading is never paired with one either.  =org-canvas-diff=
+compares only what the pull wrote, so a draw count changed in the web
+interface shows as a CHANGED row; pull the quiz to take it in.
+Validation accepts these headings, asking for no =TYPE= or body, and
+reports an =ITEM_KIND= no pull writes.  The bank's own questions are
+not pulled: the New Quizzes API has no item bank route.  These item
+kinds follow the API's documentation and have not yet been read from a
+live course.
+
 *** Outcome Alignment
 
 Questions can be linked to learning outcomes in =outcomes.org= via the =OUTCOME= property:
@@ -5831,6 +5876,12 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =TYPE= | enum | choice, true-false, multi-answer, short-answer, essay, file-upload, numerical, matching, ordering, categorization (set by Canvas: hot-spot) |  | Question type (see below) |
 | =HOTSPOTS_COUNT= | number | set by Canvas (read-only) |  | Hot-spot region count; written by pull, never pushed |
 | =HOTSPOTS= | string | set by Canvas (read-only) |  | Hot-spot regions, SHAPE X,Y X,Y; ...; written by pull, never pushed |
+| =ITEM_KIND= | enum | set by Canvas (read-only) |  | bank, bank-entry or stimulus: an item made in Canvas, never pushed |
+| =BANK_ID= | string | set by Canvas (read-only) |  | Id of the item bank a bank draw or bank entry comes from |
+| =BANK_ENTRY_COUNT= | number | set by Canvas (read-only) |  | How many entries the drawn bank holds, stimuli included |
+| =BANK_ITEM_COUNT= | number | set by Canvas (read-only) |  | How many questions the drawn bank holds, stimuli left out |
+| =BANK_ARCHIVED= | boolean | set by Canvas (read-only) |  | Whether the bank, or the banked item, is archived |
+| =PICK_COUNT= | string | set by Canvas (read-only) |  | How many items a bank draw picks, or all |
 | =OUTCOME= | link | org link |  | Link to outcome in outcomes.org (local-only) |
 
 ** New Quizzes

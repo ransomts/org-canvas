@@ -1,0 +1,13 @@
+* Fixed
+- #508 A New Quiz pull writes a draw from an item bank, an item taken
+  from a bank and a stimulus as read-only headings carrying
+  =ITEM_KIND= (=bank=, =bank-entry=, =stimulus=), named after the bank
+  or the stimulus, with =BANK_ID=, =BANK_ENTRY_COUNT=,
+  =BANK_ITEM_COUNT=, =BANK_ARCHIVED= and =PICK_COUNT= where Canvas
+  sends them and a stimulus's passage as text.  They were pulled as
+  nameless questions.  A sync never sends, deletes or adopts such a
+  heading and names it in the log; the drift report and validation
+  treat it as present and Canvas's to set.  The item shapes are
+  transcribed from the New Quizzes Items API documentation
+  (https://developerdocs.instructure.com/services/new-quizzes/public/api-endpoints/quiz_items),
+  not from a live reply.

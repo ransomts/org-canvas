@@ -197,6 +197,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a live search greps every text-bearing object Canvas holds, date fields as Org timestamps, and the date flavour lists every date a student can see; the audit after a date move the drift report cannot make (#406)
 - a module item moved between modules keeps its id: GraphQL's `reorderModuleItems`, one item per call, from whichever module syncs first, falling back to recreate-and-delete on any failure (#352)
 - a MOVED row stamps the item id on the heading it paired (`s`, `org-canvas-diff-stamp-moves`), and a stamped move is an uncounted RELOCATE row saying the sync moves the item there, keeping its id (#342, #343, #352)
+- a New Quiz's bank draws, bank entries and stimuli are mirrored read-only by `ITEM_KIND` (fixtures from the documented shapes), never pushed, deleted, adopted or pending (#508)
 - a New Quiz item is pushed only as a type it can build: fill-in-the-blank invalid, hot-spot pull-only, an unknown TYPE a failed item (#337, #340)
 - a New Quiz pull writes its instructions where the push reads them, and adoption stamps `assignment_id` first (#309)
 - a New Quiz pulls whole through a pull-only entry (`org-canvas-register-pull-feature`) kept out of the feature registry (#297)

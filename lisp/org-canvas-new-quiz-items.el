@@ -744,6 +744,169 @@ unread field is unknown, not empty."
       (when value
         (org-canvas-org-set-property pom (car spec) (format "%s" value))))))
 
+;;;; Bank Draws and Stimuli (issue #508)
+;;
+;; A New Quiz's item list holds more than questions.  Each item's
+;; `entry_type' says what its `entry' is: `Item' a question, `Bank' a
+;; draw from an item bank (the entry is the bank: id, title, archived,
+;; entry_count, item_entry_count; the item's `properties' carry
+;; `sample_num', how many are drawn, null for all), `BankEntry' one
+;; item taken from a bank (bank_id, and under its own `entry' the
+;; question or stimulus), and `Stimulus' a passage questions refer to
+;; (title, body, instructions).  The Items API documents the last three
+;; as retrievable only: they are made and changed in the web interface.
+;; So a pull writes each as a heading carrying ITEM_KIND, and a push
+;; never sends one.  The shapes are transcribed from the API docs, not
+;; from a live reply, so every field is read defensively: one a reply
+;; does not carry writes nothing.
+
+(defconst org-canvas--new-quiz-entry-kinds
+  '(("Item") ("Bank" . "bank") ("BankItem" . "bank")
+    ("BankEntry" . "bank-entry") ("BankEntryItem" . "bank-entry")
+    ("Stimulus" . "stimulus") ("StimulusItem" . "stimulus"))
+  "Each `entry_type' a New Quiz item can carry, and the ITEM_KIND it pulls as.
+The docs spell the values Item, Bank, BankEntry and Stimulus, and name
+the entries BankItem, BankEntryItem and StimulusItem; both are read.
+An `Item', a question, has no kind.")
+
+(defconst org-canvas--new-quiz-item-kinds '("bank" "bank-entry" "stimulus")
+  "ITEM_KIND values a pull writes; a heading carrying one is never pushed.")
+
+(defun org-canvas--new-quiz-item-kind (item)
+  "Return the ITEM_KIND of remote ITEM, or nil when it is a question.
+An item with no `entry_type', as older replies are, is a question.  An
+`entry_type' outside `org-canvas--new-quiz-entry-kinds' is not one
+either, and is returned downcased, so it is never pushed over."
+  (let ((type (alist-get 'entry_type item)))
+    (when (stringp type)
+      (let ((known (assoc type org-canvas--new-quiz-entry-kinds)))
+        (if known (cdr known) (downcase type))))))
+
+(defun org-canvas--new-quiz-item-entry (item)
+  "Return the `entry' object of remote ITEM, or nil."
+  (let ((entry (alist-get 'entry item)))
+    (and (consp entry) entry)))
+
+(defun org-canvas--new-quiz-item-kind-is (item kind)
+  "Return ITEM's entry when remote ITEM is of KIND, else nil."
+  (and (equal (org-canvas--new-quiz-item-kind item) kind)
+       (org-canvas--new-quiz-item-entry item)))
+
+(defun org-canvas--new-quiz-item-remote-kind (item)
+  "Return remote ITEM's ITEM_KIND, the `:remote-fn' of that property."
+  (org-canvas--new-quiz-item-kind item))
+
+(defun org-canvas--new-quiz-item-carries-kind-p (_pom item)
+  "Return non-nil when remote ITEM carries an `entry_type'."
+  (stringp (alist-get 'entry_type item)))
+
+(defun org-canvas--new-quiz-item-remote-bank-id (item)
+  "Return the id of the bank remote ITEM draws from, or nil.
+A bank draw's entry is the bank, so its `id'; a bank entry names its
+bank by `bank_id'."
+  (let ((bank (org-canvas--new-quiz-item-kind-is item "bank"))
+        (taken (org-canvas--new-quiz-item-kind-is item "bank-entry")))
+    (cond (bank (alist-get 'id bank))
+          (taken (alist-get 'bank_id taken)))))
+
+(defun org-canvas--new-quiz-item-remote-bank-field (field)
+  "Return a `:remote-fn' reading FIELD of a bank draw's bank, or nil."
+  (lambda (item)
+    (alist-get field (org-canvas--new-quiz-item-kind-is item "bank"))))
+
+(defun org-canvas--new-quiz-item-remote-archived (item)
+  "Return whether remote ITEM's bank is archived: t, `:json-false' or nil.
+Nil when the reply does not say."
+  (let* ((entry (or (org-canvas--new-quiz-item-kind-is item "bank")
+                    (org-canvas--new-quiz-item-kind-is item "bank-entry")))
+         (cell (assq 'archived entry)))
+    (when cell
+      (if (eq (cdr cell) t) t :json-false))))
+
+(defun org-canvas--new-quiz-item-remote-pick-count (item)
+  "Return how many items remote bank draw ITEM picks, \"all\", or nil.
+The count is `sample_num' in the item's `properties'; the docs read a
+null there as every item of the bank.  Nil when ITEM is no bank draw
+or carries no `sample_num'."
+  (let* ((props (alist-get 'properties item))
+         (cell (and (consp props) (assq 'sample_num props))))
+    (when (and cell (org-canvas--new-quiz-item-kind-is item "bank"))
+      (if (cdr cell) (format "%s" (cdr cell)) "all"))))
+
+(defconst org-canvas--new-quiz-read-only-properties
+  `(("BANK_ID" . org-canvas--new-quiz-item-remote-bank-id)
+    ("BANK_ENTRY_COUNT"
+     . ,(org-canvas--new-quiz-item-remote-bank-field 'entry_count))
+    ("BANK_ITEM_COUNT"
+     . ,(org-canvas--new-quiz-item-remote-bank-field 'item_entry_count))
+    ("BANK_ARCHIVED" . org-canvas--new-quiz-item-remote-archived)
+    ("PICK_COUNT" . org-canvas--new-quiz-item-remote-pick-count))
+  "Properties a pull writes on a bank draw or a bank entry, each with its reader.
+The same readers are the registry's `:remote-fn's, so the drift report
+compares what the pull wrote.")
+
+(defun org-canvas--new-quiz-item-inner-entry (item)
+  "Return the question or stimulus inside the bank entry ITEM, or nil."
+  (let ((inner (alist-get 'entry (org-canvas--new-quiz-item-kind-is
+                                  item "bank-entry"))))
+    (and (consp inner) inner)))
+
+(defun org-canvas--new-quiz-item-read-only-title (item kind)
+  "Return the heading a pull writes for remote ITEM of KIND.
+A bank draw is named after its bank, a stimulus by its title, a bank
+entry by the title of the item it holds; a reply without one names
+the kind."
+  (let* ((source (if (equal kind "bank-entry")
+                     (org-canvas--new-quiz-item-inner-entry item)
+                   (org-canvas--new-quiz-item-entry item)))
+         (title (alist-get 'title source)))
+    (if (and (stringp title) (not (string-blank-p title)))
+        (org-canvas--html-to-org-inline title)
+      (pcase kind
+        ("bank" "Item bank draw (untitled bank)")
+        ("bank-entry" "Item from an item bank (untitled)")
+        ("stimulus" "Stimulus (untitled)")
+        (_ (format "Read-only %s item" kind))))))
+
+(defun org-canvas--new-quiz-item-read-only-text (item kind)
+  "Return the Org text a pull writes under remote ITEM of KIND, or \"\".
+A stimulus's body and instructions, or what a bank entry holds, each
+through `org-canvas--html-to-org-with-rewrite', so a heading in it
+becomes a block, never a headline (Hard Rule 22).  A bank draw has no
+text."
+  (let ((source (pcase kind
+                  ("stimulus" (org-canvas--new-quiz-item-entry item))
+                  ("bank-entry" (org-canvas--new-quiz-item-inner-entry item)))))
+    (string-join
+     (delq nil
+           (mapcar (lambda (field)
+                     (let ((html (alist-get field source)))
+                       (when (and (stringp html) (not (string-blank-p html)))
+                         (string-trim
+                          (org-canvas--html-to-org-with-rewrite html)))))
+                   '(item_body body instructions)))
+     "\n\n")))
+
+(defun org-canvas--new-quiz-pull-read-only-properties (pom item kind)
+  "Write the ITEM_KIND KIND and the bank properties of remote ITEM at POM.
+TYPE is deleted, since the heading is no question; a field ITEM does
+not carry leaves its property as it is."
+  (org-canvas-org-set-property pom "ITEM_KIND" kind)
+  (org-entry-delete pom "TYPE")
+  (dolist (spec org-canvas--new-quiz-read-only-properties)
+    (let ((value (funcall (cdr spec) item)))
+      (when value
+        (org-canvas-org-set-property
+         pom (car spec)
+         (pcase value ('t "true") (:json-false "false") (_ (format "%s" value))))))))
+
+(defun org-canvas--new-quiz-item-heading-kind (&optional pom)
+  "Return the ITEM_KIND of the item heading at POM or point, or nil.
+Nil, or a blank value, is a question; anything else is mirrored
+read-only and never pushed (issue #508)."
+  (let ((kind (org-entry-get (or pom (point)) "ITEM_KIND")))
+    (and kind (not (string-blank-p kind)) (string-trim kind))))
+
 (defun org-canvas--new-quiz-item-split-body (html)
   "Return (FIRST . REST) of item body HTML, split after its first paragraph.
 FIRST is the text inside the <p> the body opens with and REST what
@@ -770,9 +933,13 @@ paragraph is taken whole, as the pull titles it."
       (replace-regexp-in-string "<[^>]+>" "" first)))))
 
 (defun org-canvas--new-quiz-item-twin-p (data item)
-  "Return non-nil when remote ITEM's first paragraph is DATA's title."
+  "Return non-nil when remote ITEM's first paragraph is DATA's title.
+Only a question is a twin: a bank draw or a stimulus is made in the web
+interface, and adopting one would PATCH a question over it (issue
+#508)."
   (let ((title (string-trim (or (plist-get data :title) ""))))
     (and (not (string-empty-p title))
+         (not (org-canvas--new-quiz-item-kind item))
          (string= (org-canvas--new-quiz-item-remote-title item) title))))
 
 (defun org-canvas--new-quiz-item-recover-404 (data wrapped)
@@ -926,8 +1093,33 @@ pulls as it always did and a re-pull changes nothing."
         (unless (string-empty-p text)
           (insert "\n" text "\n\n"))))))
 
+(defun org-canvas--new-quiz-pull-insert-read-only (item kind)
+  "Write remote ITEM of ITEM_KIND KIND as an L2 heading under the quiz at point.
+A bank draw, a bank entry or a stimulus (issue #508): the heading
+names it (`org-canvas--new-quiz-item-read-only-title'), carries
+CANVAS_ITEM_ID, POINTS, ITEM_KIND and what the reply says of the
+bank, and holds a stimulus's text.  A push never sends it.  Point must
+be at the parent quiz heading and is left there."
+  (let* ((quiz-pos (point))
+         (item-id (alist-get 'id item))
+         (points (alist-get 'points_possible item))
+         (qpos (org-canvas--new-quiz-pull-item-heading
+                item-id (org-canvas--new-quiz-item-read-only-title item kind))))
+    (when item-id
+      (org-canvas-org-save-sync-state qpos (format "%s" item-id) "CANVAS_ITEM_ID"))
+    (when points
+      (org-canvas-org-set-property qpos "POINTS" (format "%s" points)))
+    (org-canvas--new-quiz-pull-read-only-properties qpos item kind)
+    (goto-char qpos)
+    ;; A prompt-only type, so the whole text under the heading is replaced.
+    (org-canvas--new-quiz-pull-write-prompt
+     (org-canvas--new-quiz-item-read-only-text item kind) "essay")
+    (goto-char quiz-pos)))
+
 (defun org-canvas--new-quiz-pull-insert-item (item)
   "Write New Quiz ITEM as an L2 heading under the quiz at point.
+An item that is no question, a bank draw or a stimulus, is written by
+`org-canvas--new-quiz-pull-insert-read-only' (issue #508).
 Point must be at the parent quiz heading and is left there.  The
 body's first paragraph is the heading and the rest the prompt under
 it (issue #333), the layout the item parse reads back.  A heading the
@@ -935,6 +1127,14 @@ quiz already holds for the item, by CANVAS_ITEM_ID or, unstamped, by
 that title, is rewritten in place; otherwise the item is appended
 \(issue #239).  The Items API nests the body and the type under
 `entry'; older replies carry them at the top level, so both are read."
+  (let ((kind (org-canvas--new-quiz-item-kind item)))
+    (if kind
+        (org-canvas--new-quiz-pull-insert-read-only item kind)
+      (org-canvas--new-quiz-pull-insert-question item))))
+
+(defun org-canvas--new-quiz-pull-insert-question (item)
+  "Write the question ITEM as an L2 heading under the quiz at point.
+See `org-canvas--new-quiz-pull-insert-item'."
   (let* ((quiz-pos (point))
          (entry (let ((e (alist-get 'entry item))) (and (listp e) e)))
          (slug (or (alist-get 'interaction_type_slug entry)

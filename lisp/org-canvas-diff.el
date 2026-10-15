@@ -119,6 +119,12 @@
                   (data item))
 (declare-function org-canvas--new-quiz-item-remote-title "org-canvas-new-quiz-items"
                   (item))
+(declare-function org-canvas--new-quiz-item-kind "org-canvas-new-quiz-items"
+                  (item))
+(declare-function org-canvas--new-quiz-item-read-only-title
+                  "org-canvas-new-quiz-items" (item kind))
+(declare-function org-canvas--new-quiz-item-heading-kind
+                  "org-canvas-new-quiz-items" (&optional pom))
 ;; A delete names the object that owns an assignment the way prune and
 ;; the orphan scan find it owned (issue #366); `org-canvas' loads the
 ;; assignments module.
@@ -1467,6 +1473,14 @@ Canvas holds in another module is :relocate (issue #343)."
 ;; the quiz's page (an item has none), and `p' pulls the quiz, which
 ;; writes its items whole.  Acknowledgments are filed under
 ;; "new-quiz-items".  Read-only, as the rest of the report.
+;;
+;; A bank draw or a stimulus (issue #508) is mirrored by a heading
+;; carrying ITEM_KIND.  Stamped, it is compared like any item, but only
+;; its pull-only fields (ITEM_KIND, the bank's id and counts, POINTS)
+;; take part: such an item has no `item_body' or question type to
+;; compare.  Unstamped, it is never paired or pending, since the sync
+;; never creates one; and an item of that kind is never a question
+;; heading's twin.
 
 (defconst org-canvas--diff-new-quiz-items-name "New Quiz Items"
   "The section New Quiz item rows report in (issue #322).")
@@ -1513,6 +1527,7 @@ caller releases."
                                (org-get-heading t t t t))))))
            (append (org-canvas--diff-local-entry "CANVAS_ITEM_ID")
                    (list :quiz-id (car quiz) :where (cdr quiz)
+                         :item-kind (org-canvas--new-quiz-item-heading-kind)
                          :container "quiz" :pom (point-marker)))))
        "LEVEL=2" 'file))))
 
@@ -1547,9 +1562,14 @@ nil when they agree."
                   base))))))
 
 (defun org-canvas--diff-new-quiz-item-title (item)
-  "Return the report's name for remote ITEM: its first paragraph, or ?."
-  (let ((title (org-canvas--new-quiz-item-remote-title item)))
-    (if (string-empty-p title) "?" title)))
+  "Return the report's name for remote ITEM: its first paragraph, or ?.
+A bank draw or a stimulus is named as a pull would title its heading
+\(issue #508)."
+  (let ((kind (org-canvas--new-quiz-item-kind item))
+        (title (org-canvas--new-quiz-item-remote-title item)))
+    (cond (kind (org-canvas--new-quiz-item-read-only-title item kind))
+          ((string-empty-p title) "?")
+          (t title))))
 
 (defun org-canvas--diff-new-quiz-item-extras (lists claimed)
   "Return the items in LISTS no heading of their quiz CLAIMED, as extras.
@@ -1588,7 +1608,9 @@ headings nothing paired, the pending creates.  Headings are taken in
 file order, each pairing at most once, as the sync adopts them."
   (let (pairs left)
     (dolist (h headings)
-      (unless (plist-get h :id)
+      ;; A heading of a bank draw or a stimulus is never created, so an
+      ;; unstamped one is neither paired nor pending (issue #508).
+      (unless (or (plist-get h :id) (plist-get h :item-kind))
         (let ((twin (org-canvas--diff-new-quiz-item-twin
                      h extra (mapcar #'car pairs))))
           (if twin (push (cons twin h) pairs) (push h left)))))
