@@ -43,8 +43,10 @@
 ;;   QUESTION_BANK_ID   - Canvas assessment question bank ID (create-only)
 ;;
 ;; A pull writes each group Canvas holds with its questions at level 3
-;; (issue #243); the questions API has no list of groups, so each group
-;; a question names is fetched once.
+;; (issue #243).  Groups come from the quiz's groups list, which also
+;; holds a group drawing only from a bank and so naming no question
+;; (issue #492); when the list is refused, each group a question names
+;; is fetched once.
 ;;
 ;; The bank must be created externally (e.g., via text2qti QTI import).
 ;; The bank ID is obtained from the Canvas UI URL after import.
@@ -1302,11 +1304,36 @@ and the type goes to TYPE, the property the sync reads."
   "Return the question group id of question Q, or nil when it is ungrouped."
   (org-canvas--alist-get-non-null 'quiz_group_id q))
 
+(defun org-canvas--quiz-pull-fetch-groups (quiz-id)
+  "Return the question groups of QUIZ-ID as a list of alists, or `unknown'.
+The groups list is not in Canvas's published API but answers
+`{\"quiz_groups\": [...]}'.  It is the only way to see a group that
+draws all its questions from a bank: such a group names no question
+of the quiz (issue #492).  A refused list is `unknown', never empty,
+and the pull falls back to fetching each group a question names."
+  (condition-case err
+      (append (alist-get 'quiz_groups
+                         (org-canvas-api-request
+                          'GET (org-canvas-api-course-endpoint
+                                "quizzes/%s/groups" quiz-id)))
+              nil)
+    (org-canvas-api-error
+     (org-canvas--log-debug org-canvas--logger
+       "[Quizzes] Could not list question groups of quiz %s (%s); fetching each named group"
+       quiz-id (error-message-string err))
+     'unknown)))
+
+(defun org-canvas--quiz-pull-listed-group (groups group-id)
+  "Return the group GROUP-ID from GROUPS, or nil when GROUPS is `unknown'."
+  (and (listp groups)
+       (cl-find group-id groups
+                :key (lambda (g) (alist-get 'id g)) :test #'equal)))
+
 (defun org-canvas--quiz-pull-fetch-group (quiz-id group-id)
   "Return question group GROUP-ID of QUIZ-ID as an alist, or nil when refused.
-Canvas lists no groups, so the pull fetches each group the questions
-name, once.  A refused request logs one warning and answers nil; the
-group's questions are then written ungrouped (issue #243)."
+Used when the groups list was refused or lacks a group a question
+names, once per group.  A refused request logs one warning and answers
+nil; the group's questions are then written ungrouped (issue #243)."
   (condition-case err
       (org-canvas-api-request
        'GET (org-canvas-api-course-endpoint "quizzes/%s/groups/%s" quiz-id group-id))
@@ -1365,15 +1392,18 @@ the quiz heading."
       (org-canvas--pull-remove-child stray))
     (goto-char quiz-pos)))
 
-(defun org-canvas--quiz-pull-emit-group (quiz-id group-id questions)
+(defun org-canvas--quiz-pull-emit-group (quiz-id group-id questions groups)
   "Write group GROUP-ID of QUIZ-ID with its members among QUESTIONS.
-Point must be at the quiz heading and is left there.  When Canvas
-refuses the group, its members are written ungrouped."
+The group is taken from GROUPS, the quiz's listed groups, or fetched
+when the list lacks it.  Point must be at the quiz heading and is left
+there.  When Canvas refuses the group, its members are written
+ungrouped."
   (let* ((quiz-pos (point))
          (members (cl-remove-if-not
                    (lambda (q) (equal (org-canvas--quiz-pull-group-of q) group-id))
                    questions))
-         (group (org-canvas--quiz-pull-fetch-group quiz-id group-id)))
+         (group (or (org-canvas--quiz-pull-listed-group groups group-id)
+                    (org-canvas--quiz-pull-fetch-group quiz-id group-id))))
     (if (null group)
         (dolist (q members)
           (goto-char quiz-pos)
@@ -1418,6 +1448,7 @@ of their own are named by `org-canvas--quiz-pull-name-questions'.
 Point is left at the quiz heading."
   (let ((quiz-pos (point))
         (questions (org-canvas--quiz-pull-name-questions (append questions nil)))
+        (groups (org-canvas--quiz-pull-fetch-groups quiz-id))
         (written nil))
     (dolist (q questions)
       (goto-char quiz-pos)
@@ -1426,7 +1457,22 @@ Point is left at the quiz heading."
          ((null gid) (org-canvas--quiz-pull-insert-question q))
          ((member gid written) nil)
          (t (push gid written)
-            (org-canvas--quiz-pull-emit-group quiz-id gid questions)))))
+            (org-canvas--quiz-pull-emit-group quiz-id gid questions groups)))))
+    (goto-char quiz-pos)
+    (org-canvas--quiz-pull-emit-bank-groups groups written)))
+
+(defun org-canvas--quiz-pull-emit-bank-groups (groups written)
+  "Write each of GROUPS whose id is not in WRITTEN under the quiz at point.
+These are the groups no question names, ones that draw every question
+from a bank (issue #492); each is a group heading with no questions,
+after the quiz's questions.  Nothing is written when GROUPS is
+`unknown'.  Point must be at the quiz heading and is left there."
+  (let ((quiz-pos (point)))
+    (when (listp groups)
+      (dolist (g groups)
+        (unless (member (alist-get 'id g) written)
+          (goto-char quiz-pos)
+          (org-canvas--quiz-pull-insert-group g nil))))
     (goto-char quiz-pos)))
 
 (defun org-canvas--quiz-pull-fetch-questions (quiz-id)
