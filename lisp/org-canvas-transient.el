@@ -102,6 +102,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("p" "Pull all from Canvas" org-canvas-pull-all)
    ("P" "Pull single..." org-canvas-dispatch-pull-single)
    ("u" "Pull heading at point" org-canvas-pull-at-point)
+   ("=" "Show Canvas version of heading at point (read-only)" org-canvas-show-at-point)
    ("A" "Adopt Canvas item for heading at point" org-canvas-adopt-at-point)]
   ["Delete"
    :inapt-if-not org-canvas--transient-writable-p
@@ -151,6 +152,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("r" "Drift report (compare with Canvas)" org-canvas-diff)
    ("j" "Adopt stamps of CHANGED rows with nothing to compare" org-canvas-diff-adopt-stamps)
    ("J" "Stamp MOVED module items on their paired headings" org-canvas-diff-stamp-moves)
+   ("Z" "Adopt every CHANGED row's drift into Org (bodies held)" org-canvas-diff-adopt-all-drifts)
    ("x" "List external tools (LTI)" org-canvas-list-external-tools)
    ("/" "Search the live course's text for a regexp" org-canvas-search-live)
    ("%" "List every date the live course says" org-canvas-search-live-dates)]

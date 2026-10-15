@@ -101,6 +101,9 @@
                :edit "quizzes/%s/edit")))
 (org-canvas-register-properties "quizzes"
   :duplicate-titles t
+  ;; The push sends the heading as the title, so the drift report
+  ;; holds it against Canvas's (issue #498).
+  :compare-title t
   :label "Quizzes"
   :file-var 'org-canvas-quizzes-file
   :query "LEVEL=1"

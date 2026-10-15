@@ -70,6 +70,9 @@ payload builder), which Canvas reports back as `locked'."
 
 (org-canvas-register-properties "announcements"
   :duplicate-titles t
+  ;; The push sends the heading as the title, so the drift report
+  ;; holds it against Canvas's (issue #498).
+  :compare-title t
   :label "Announcements"
   :file-var 'org-canvas-announcements-file
   :query "LEVEL=1"

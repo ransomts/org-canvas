@@ -196,6 +196,9 @@ the conflict stands."
  :delete-skip-reason org-canvas--assignment-owned-reason)
 (org-canvas-register-properties "assignments"
   :duplicate-titles t
+  ;; The push sends the heading as the title, so the drift report
+  ;; holds it against Canvas's (issue #498).
+  :compare-title t
   :label "Assignments"
   :file-var 'org-canvas-assignments-file
   :query "LEVEL=1"
