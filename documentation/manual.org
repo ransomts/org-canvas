@@ -124,7 +124,7 @@ ARGS=, which is also the line to use without it.
 | =overview=                    | =org-canvas-status= (local, no API call)           |                    |
 | =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
-| =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores | |
+| =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
@@ -2400,6 +2400,33 @@ lacks (which keeps Canvas's weight and rules), is listed above the
 tables.  Nothing is sent, and the what-if makes no request at all;
 pull the gradebook again for newer scores.
 
+*** A Student's Own Grades
+
+Every gradebook pull first reads the course once with its totals
+(=GET /courses/:id?include[]=total_scores=), which also names the
+token's own enrolments in it.  When the token holds a student
+enrolment and no teacher, TA or designer one, the class tables would
+be a roster of classmates with no scores and notes on refused
+analytics, so the pull writes the student's own standing instead and
+removes the Students, Sections, Assignments and Groups headings:
+
+- =* My grades=: one table, by due date with undated work last, with
+  Assignment, Due, Points, Score, Grade, Status (Canvas's
+  =workflow_state=, or =excused=), Late and Missing (=yes= or =no=),
+  from the student's own submissions
+  (=students/submissions?include[]=assignment&include[]=submission_comments=).
+  The Assignment cell links to =assignments.org= as in the teacher's
+  table.  Under it, one line with the current and final totals Canvas
+  computes for the enrolment, the letter beside each when the course
+  shows one, =-= when the course hides totals; then, under
+  =Comments:=, one item per submission comment with its assignment,
+  author and time
+
+A score the instructor has not posted is =-=, as Canvas shows it to the
+student.  A teacher's pull is unchanged, and removes a =* My grades=
+heading a student pull left.  The Groups table reuses the same course
+read, so a teacher's pull costs no extra request with it on.
+
 *** Personal Data
 
 Scores are more sensitive than names.  Only the name, the numbers and
@@ -2419,7 +2446,9 @@ logs a warning instead; remove it from the index yourself
 
 From the shell, =scripts/org-canvas gradebook= pulls the file and
 prints the Sections table and the course's mean and median scores
-(see [[*Running from the Shell][Running from the Shell]]).
+(see [[*Running from the Shell][Running from the Shell]]); for a student token, the My grades
+heading and a line with the assignment and missing counts and the
+two totals.
 
 ** grading-schemes.org
 

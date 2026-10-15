@@ -1,0 +1,9 @@
+* Fixed
+- #488 The gradebook pull on a course where the token holds a student
+  enrolment writes the student's own grades under =* My grades= (each
+  assignment by due date with its points, score, grade, status, late
+  and missing flags, then the current and final totals and the
+  submission comments) instead of an unscored class roster and the
+  notes on refused analytics, so ~scripts/org-canvas gradebook~ works
+  for a student too.  A teacher's tables are unchanged; the course
+  read that tells the two apart is reused by the Groups table.

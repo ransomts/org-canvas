@@ -410,6 +410,13 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
      "people" 'list (append org-canvas--people-departure-params '(("user_id" . "1"))))
     (expect org-canvas--people-departure-params :to-contain '("state[]" . "deleted")))
 
+  (it "a student's gradebook pull sends only documented parameters (issue #488)"
+    ;; The submissions read and the course read are the module's own
+    ;; constants: the gradebook is pull-only, with no registry entry.
+    (org-canvas-contract--check-read-params "gradebook" 'list org-canvas--gradebook-self-params)
+    (org-canvas-contract--check-read-params "gradebook" 'item org-canvas--gradebook-course-params)
+    (expect (assoc "student_ids[]" org-canvas--gradebook-self-params) :to-be nil))
+
   (it "assignments ask for their own dates on both the index and the show"
     (let ((feature (org-canvas--registry-find-feature "assignments"))
           (param '("override_assignment_dates" . "false")))

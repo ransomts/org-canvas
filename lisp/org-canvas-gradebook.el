@@ -27,6 +27,11 @@
 ;;                column per assignment group (its percentage after the
 ;;                drop rules), Computed, Canvas, and a line naming the
 ;;                students whose two totals differ by more than 0.1
+;;   * My grades  instead of all the above, when the caller's enrolment in
+;;                the course is a student's (issue #488): one table,
+;;                by due date: Assignment, Due, Points, Score, Grade,
+;;                Status, Late, Missing; then the enrolment's current
+;;                and final totals, then the submission comments
 ;;
 ;; A student is one row however many sections they sit in.  The Student
 ;; cell links to the roster heading in people.org when that file holds
@@ -95,6 +100,17 @@
 ;;   GET /courses/:id/grading_standards/:id
 ;;       the letter cutoffs, as fractions; a refusal leaves the letters
 ;;       out of the what-if.
+
+;;   For a student (issue #488), two reads in place of all the above:
+;;   GET /courses/:id?include[]=total_scores
+;;       read first on every pull: enrollments[] names the caller's own
+;;       roles (type student, teacher, ta, designer, observer); a
+;;       student one carries computed_{current,final}_{score,grade}.
+;;       A caller holding a student enrolment and no teacher, TA or
+;;       designer one gets My grades.  Groups reuses this object.
+;;   GET /courses/:id/students/submissions
+;;       ?include[]=assignment&include[]=submission_comments
+;;       without student_ids, the caller's own submissions.  Paginated.
 
 ;;; Code:
 
@@ -740,16 +756,18 @@ nil: the letters are left out, the pull goes on."
          nil)))
      ((org-canvas--gradebook-letters-p enrollments) org-canvas--gradebook-default-scheme))))
 
-(defun org-canvas--gradebook-fetch-scores (rows enrollments)
+(defun org-canvas--gradebook-fetch-scores (rows enrollments &optional course)
   "Return every counted score of the students in ROWS, or the symbol `refused'.
 The result is the plist the Groups table and the what-if read:
 :pulled-at, :unposted, :weighted, :scheme, :groups, :assignments
 and :students, one plist per row with :user-id, :name, :canvas (the
 row's current score) and :items.  ENROLLMENTS tell whether the course
-shows letters.  A refusal is logged and answered with `refused' (the
-#171 rule)."
+shows letters.  COURSE is the course object when already read, so it
+is not read twice.  A refusal is logged and answered with `refused'
+\(the #171 rule)."
   (condition-case err
-      (let* ((course (org-canvas-api-request 'GET (org-canvas-api-course-endpoint "")))
+      (let* ((course (or course
+                         (org-canvas-api-request 'GET (org-canvas-api-course-endpoint ""))))
              (raw-groups (append (org-canvas-api-request-all-pages
                                   'GET (org-canvas-api-course-endpoint "assignment_groups")
                                   '(("include[]" . "assignments")))
@@ -912,6 +930,164 @@ students whose recomputed total differs from Canvas's."
       (goto-char pos)
       (delete-region pos (save-excursion (org-end-of-subtree t t) (point))))))
 
+;;;; My Grades: A Student's Enrolment
+;;
+;; A student token reads the roster with every classmate's name and no
+;; scores, and is refused the analytics, so the teacher's tables would
+;; be empty or notes (issue #488).  What a student wants is their own
+;; standing, which Canvas serves: their submissions, each with its
+;; assignment and comments, and the totals on their enrolment.
+
+(defconst org-canvas--gradebook-course-params '(("include[]" . "total_scores"))
+  "Query parameters of the course read that tells the caller's role.
+With total_scores a student enrolment carries the computed scores.")
+
+(defconst org-canvas--gradebook-self-params
+  '(("include[]" . "assignment") ("include[]" . "submission_comments"))
+  "Query parameters of a student's read of their own submissions.
+Without student_ids Canvas answers the calling user's submissions.")
+
+(defun org-canvas--gradebook-fetch-course ()
+  "Return the course with the caller's enrolments and their totals, or nil.
+A refusal is logged and answered with nil, which the pull reads as a
+teacher's course: the tables it wrote before issue #488."
+  (condition-case err
+      (org-canvas-api-request 'GET (org-canvas-api-course-endpoint "")
+                              :params org-canvas--gradebook-course-params)
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Gradebook] Could not read the course (%s); writing the teacher's tables"
+       (error-message-string err))
+     nil)))
+
+(defun org-canvas--gradebook-student-enrollment (course)
+  "Return the caller's student enrolment in COURSE, or nil.
+Nil when the caller also teaches, assists or designs in COURSE: they
+get the teacher's tables."
+  (let* ((raw (alist-get 'enrollments course))
+         (enrollments (and (sequencep raw) (append raw nil))))
+    (unless (cl-some (lambda (e) (member (alist-get 'type e) '("teacher" "ta" "designer")))
+                     enrollments)
+      (cl-find-if (lambda (e) (equal (alist-get 'type e) "student")) enrollments))))
+
+(defun org-canvas--gradebook-fetch-self ()
+  "Return the caller's submissions, with assignments, sorted by due date.
+Undated assignments come last, then by name."
+  (let ((submissions (append (org-canvas-api-request-all-pages
+                              'GET (org-canvas-api-course-endpoint "students/submissions")
+                              org-canvas--gradebook-self-params)
+                             nil)))
+    (sort submissions #'org-canvas--gradebook-self-before-p)))
+
+(defun org-canvas--gradebook-self-key (submission)
+  "Return SUBMISSION's sort key: (DUE . NAME), DUE nil when undated."
+  (let ((a (alist-get 'assignment submission)))
+    (cons (org-canvas--alist-get-non-null 'due_at a)
+          (or (alist-get 'name a) ""))))
+
+(defun org-canvas--gradebook-self-before-p (a b)
+  "Return non-nil to put submission A before B."
+  (let ((ka (org-canvas--gradebook-self-key a))
+        (kb (org-canvas--gradebook-self-key b)))
+    (cond ((equal (car ka) (car kb)) (string< (cdr ka) (cdr kb)))
+          ((null (car kb)) t)
+          ((null (car ka)) nil)
+          (t (string< (car ka) (car kb))))))
+
+(defun org-canvas--gradebook-flag (value)
+  "Render the Canvas boolean VALUE for a cell: yes, or no."
+  (if (eq value t) "yes" "no"))
+
+(defun org-canvas--gradebook-self-title (submission)
+  "Return the assignment cell of SUBMISSION, a link when assignments.org has it."
+  (org-canvas--gradebook-assignment-cell
+   `((title . ,(alist-get 'name (alist-get 'assignment submission)))
+     (assignment_id . ,(alist-get 'assignment_id submission)))))
+
+(defun org-canvas--gradebook-insert-self-row (submission)
+  "Insert the My grades table line for SUBMISSION at point."
+  (let ((a (alist-get 'assignment submission))
+        (grade (org-canvas--alist-get-non-null 'grade submission)))
+    (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s |\n"
+                    (org-canvas--gradebook-self-title submission)
+                    (or (org-canvas--iso8601-to-org-timestamp (alist-get 'due_at a)) "-")
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat a 'points_possible))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat submission 'score))
+                    (if grade (org-canvas--gradebook-cell-text (format "%s" grade)) "-")
+                    (if (eq (alist-get 'excused submission) t) "excused"
+                      (or (alist-get 'workflow_state submission) "-"))
+                    (org-canvas--gradebook-flag (alist-get 'late submission))
+                    (org-canvas--gradebook-flag (alist-get 'missing submission))))))
+
+(defun org-canvas--gradebook-total-text (enrollment key)
+  "Return ENROLLMENT's computed KEY total as text: score, then its letter.
+KEY is `current' or `final'; - when Canvas hides the total."
+  (let ((score (org-canvas--gradebook-stat
+                enrollment (intern (format "computed_%s_score" key))))
+        (letter (org-canvas--alist-get-non-null
+                 (intern (format "computed_%s_grade" key)) enrollment)))
+    (concat (org-canvas--gradebook-number score)
+            (if (stringp letter) (format " (%s)" letter) ""))))
+
+(defun org-canvas--gradebook-insert-self-comments (submissions)
+  "Insert one list item per comment on SUBMISSIONS at point, under a line.
+Nothing when no submission has a comment."
+  (let ((items nil))
+    (dolist (s submissions)
+      (dolist (c (append (alist-get 'submission_comments s) nil))
+        (push (format "- %s, %s %s: %s\n"
+                      (org-canvas--gradebook-cell-text
+                       (alist-get 'name (alist-get 'assignment s)))
+                      (or (alist-get 'author_name c) "Unknown")
+                      (or (org-canvas--iso8601-to-org-timestamp (alist-get 'created_at c)) "")
+                      (org-canvas--gradebook-cell-text (alist-get 'comment c)))
+              items)))
+    (when items
+      (insert "\nComments:\n")
+      (apply #'insert (nreverse items)))))
+
+(defun org-canvas--gradebook-insert-self (submissions enrollment)
+  "Insert the My grades table for SUBMISSIONS at point.
+The table, then ENROLLMENT's current and final totals, then the
+submission comments."
+  (if (null submissions)
+      (insert "No assignments\n")
+    (insert "| Assignment | Due | Points | Score | Grade | Status | Late | Missing |\n")
+    (insert "|---+---+---+---+---+---+---+---|\n")
+    (mapc #'org-canvas--gradebook-insert-self-row submissions))
+  (insert (format "\nCurrent: %s; final: %s\n"
+                  (org-canvas--gradebook-total-text enrollment 'current)
+                  (org-canvas--gradebook-total-text enrollment 'final)))
+  (org-canvas--gradebook-insert-self-comments submissions))
+
+(defun org-canvas--gradebook-pull-self (file enrollment)
+  "Write the student ENROLLMENT's own grades to FILE; return a one-row list.
+The row has :user-id, :current, :final, :assignments, :missing and
+:self t.  The teacher's headings are removed: for a student they would
+hold an unscored roster and refusal notes (issue #488)."
+  (let* ((was-fresh (org-canvas--pull-was-fresh-p file))
+         (submissions (org-canvas--gradebook-fetch-self))
+         (missing (cl-count-if (lambda (s) (eq (alist-get 'missing s) t)) submissions)))
+    (org-canvas--pull-confirm-unsaved file "gradebook")
+    (org-canvas--create-file file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (dolist (title '("Students" "Sections" "Assignments" "Groups"))
+        (org-canvas--gradebook-remove-heading title))
+      (org-canvas--gradebook-rewrite-body
+       "My grades" (lambda () (org-canvas--gradebook-insert-self submissions enrollment)))
+      (org-canvas--pull-write-file-header)
+      (org-canvas--save-buffer))
+    (org-canvas--pull-kill-fresh-buffer file was-fresh)
+    (org-canvas--log-info org-canvas--logger
+      "Gradebook pull complete: my grades, %d assignments, %d missing"
+      (length submissions) missing)
+    (message "Gradebook pull complete: my grades, %d assignments, %d missing."
+             (length submissions) missing)
+    (list (list :user-id (alist-get 'user_id enrollment)
+                :current (org-canvas--gradebook-stat enrollment 'computed_current_score)
+                :final (org-canvas--gradebook-stat enrollment 'computed_final_score)
+                :assignments (length submissions) :missing missing :self t))))
+
 ;;;; Pull
 
 (defun org-canvas--gradebook-update-groups (scores)
@@ -941,12 +1117,24 @@ per assignment group, checked against Canvas's total.  Read-only, and
 the tables are derived: every pull rewrites them.  The file holds
 every student's scores afterwards; keep it out of a course
 repository.
+When the caller's enrolment is a student's, the file holds their own
+grades instead, under My grades (see `org-canvas--gradebook-pull-self').
 Return the student rows (see `org-canvas--gradebook-rows'), nil for
-a course with no students."
+a course with no students, or the student's one row."
   (interactive)
   (org-canvas--start-operation "PULLING GRADEBOOK")
   (let* ((file (expand-file-name org-canvas-gradebook-file))
-         (enrollments (org-canvas--gradebook-fetch-enrollments))
+         (course (org-canvas--gradebook-fetch-course))
+         (student (org-canvas--gradebook-student-enrollment course)))
+    (if student
+        (org-canvas--gradebook-pull-self file student)
+      (org-canvas--gradebook-pull-class file course))))
+
+(defun org-canvas--gradebook-pull-class (file course)
+  "Write the teacher's tables to FILE and return the student rows.
+COURSE is the course object already read, or nil; the Groups read
+reuses it.  A My grades heading left by a student pull is removed."
+  (let* ((enrollments (org-canvas--gradebook-fetch-enrollments))
          (was-fresh (org-canvas--pull-was-fresh-p file)))
     (org-canvas--pull-confirm-unsaved file "gradebook")
     (if (null enrollments)
@@ -959,13 +1147,14 @@ a course with no students."
              (assignments (org-canvas--gradebook-fetch-assignments))
              (rows (org-canvas--gradebook-rows enrollments summaries))
              (scores (and org-canvas-gradebook-groups
-                          (org-canvas--gradebook-fetch-scores rows enrollments))))
+                          (org-canvas--gradebook-fetch-scores rows enrollments course))))
         (when columns
           (org-canvas--log-info org-canvas--logger
             "[Gradebook] %d custom column(s): %s" (length columns)
             (mapconcat (lambda (c) (plist-get c :title)) columns ", ")))
         (org-canvas--create-file file)
         (with-current-buffer (org-canvas--find-file-noselect file)
+          (org-canvas--gradebook-remove-heading "My grades")
           (org-canvas--gradebook-rewrite-body
            "Students" (lambda () (org-canvas--gradebook-insert-students rows names summaries columns)))
           (org-canvas--gradebook-rewrite-body
@@ -990,15 +1179,17 @@ a course with no students."
 
 ;;;; Summary
 
-(defun org-canvas--gradebook-sections-table ()
+(defun org-canvas--gradebook-sections-table (&optional title)
   "Return the Sections table of `org-canvas-gradebook-file' as text, or nil.
-Nil when the file or its Sections heading is missing."
+With TITLE, the body of that level-1 heading instead.  Nil when the
+file or the heading is missing."
   (let ((file (expand-file-name org-canvas-gradebook-file)))
     (when (file-readable-p file)
       (with-temp-buffer
         (insert-file-contents file)
         (goto-char (point-min))
-        (when (re-search-forward "^\\* +Sections[ \t]*$" nil t)
+        (when (re-search-forward
+               (format "^\\* +%s[ \t]*$" (regexp-quote (or title "Sections"))) nil t)
           (let ((start (point))
                 (end (if (re-search-forward "^\\* " nil t)
                          (match-beginning 0)
@@ -1017,13 +1208,26 @@ Nil when the file or its Sections heading is missing."
 The Sections table of `org-canvas-gradebook-file', then one line with
 the course's mean and median current and final scores over ROWS, the
 student rows `org-canvas-pull-gradebook' returns.  This is what the
-shell's gradebook command prints (issue #451)."
-  (let ((table (org-canvas--gradebook-sections-table)))
-    (concat (if table (concat table "\n\n") "")
-            (format "Course: %d student%s; current %s; final %s\n"
-                    (length rows) (if (= (length rows) 1) "" "s")
-                    (org-canvas--gradebook-spread rows :current)
-                    (org-canvas--gradebook-spread rows :final)))))
+shell's gradebook command prints (issue #451).  For a student's one
+row, the My grades heading and a line of their own totals (issue #488)."
+  (if (plist-get (car rows) :self)
+      (org-canvas--gradebook-self-summary-text (car rows))
+    (let ((table (org-canvas--gradebook-sections-table)))
+      (concat (if table (concat table "\n\n") "")
+              (format "Course: %d student%s; current %s; final %s\n"
+                      (length rows) (if (= (length rows) 1) "" "s")
+                      (org-canvas--gradebook-spread rows :current)
+                      (org-canvas--gradebook-spread rows :final))))))
+
+(defun org-canvas--gradebook-self-summary-text (row)
+  "Return a student's standing after a gradebook pull, from their ROW."
+  (let ((body (org-canvas--gradebook-sections-table "My grades"))
+        (n (plist-get row :assignments)))
+    (concat (if body (concat body "\n\n") "")
+            (format "Me: %d assignment%s, %d missing; current %s; final %s\n"
+                    n (if (= n 1) "" "s") (plist-get row :missing)
+                    (org-canvas--gradebook-number (plist-get row :current))
+                    (org-canvas--gradebook-number (plist-get row :final))))))
 
 ;;;; What-If
 ;;

@@ -484,6 +484,35 @@
     "required": [],
     "wrapper": null
   },
+  "gradebook": {
+    "pull_only": true,
+    "reads": {
+      "item": {
+        "operationId": "get_single_course_courses",
+        "params": [
+          "include"
+        ]
+      },
+      "list": {
+        "operationId": "list_submissions_for_multiple_assignments_courses",
+        "params": [
+          "assignment_ids",
+          "enrollment_state",
+          "graded_since",
+          "grading_period_id",
+          "grouped",
+          "include",
+          "order",
+          "order_direction",
+          "post_to_sis",
+          "state_based_on_date",
+          "student_ids",
+          "submitted_since",
+          "workflow_state"
+        ]
+      }
+    }
+  },
   "group-categories": {
     "fields": {
       "auto_leader": {
