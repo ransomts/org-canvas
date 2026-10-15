@@ -725,6 +725,112 @@ Second text.
         (dolist (ext org-canvas--image-extensions)
           (expect (buffer-string) :to-match (format "url/%s" ext)))))))
 
+;;;; Inline images export as <img> (issue #497)
+
+(defmacro test-org-canvas-with-image-export (org &rest body)
+  "Export ORG, a heading and its body, with diagram.png cached as uploaded.
+Bind `html' to the pushed HTML in BODY."
+  (declare (indent 1))
+  `(let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+     (puthash "diagram.png" "https://canvas.example.com/courses/1/files/42/preview"
+              org-canvas--image-cache)
+     (with-temp-buffer
+       (insert ,org)
+       (org-mode)
+       (goto-char (point-min))
+       (let ((html (org-canvas--export-subtree-body-to-html)))
+         ,@body))))
+
+(describe "Inline image export (issue #497)"
+  (it "exports a bare image link as an <img> carrying the paragraph's alt"
+    (test-org-canvas-with-image-export
+        "* Page\n#+ATTR_HTML: :alt Bar chart of scores :width 300\n[[file:diagram.png]]\n"
+      (expect html :to-match
+              "<img src=\"https://canvas\\.example\\.com/courses/1/files/42/preview\" alt=\"Bar chart of scores\" width=\"300\"")
+      (expect html :not :to-match "<a ")
+      (expect html :not :to-match "<p alt")))
+
+  (it "falls back to the file name as alt, not the URL's \"preview\""
+    (test-org-canvas-with-image-export
+        "* Page\nSee [[file:diagram.png]] here.\n"
+      (expect html :to-match "<img src=\"[^\"]+/files/42/preview\" alt=\"diagram\\.png\"")
+      (expect html :not :to-match "alt=\"preview\"")))
+
+  (it "gives a second image in the paragraph the file name, not the first's alt"
+    (test-org-canvas-with-image-export
+        "* Page\n#+ATTR_HTML: :alt First\n[[file:other.png]] and [[file:diagram.png]]\n"
+      (puthash "other.png" "https://canvas.example.com/courses/1/files/43/preview"
+               org-canvas--image-cache)
+      (let ((html (save-excursion
+                    (goto-char (point-min))
+                    (org-canvas--export-subtree-body-to-html))))
+        (expect html :to-match "files/43/preview\" alt=\"First\"")
+        (expect html :to-match "files/42/preview\" alt=\"diagram\\.png\""))))
+
+  (it "exports an image in a table cell as an <img> with the file name as alt"
+    (test-org-canvas-with-image-export
+        "* Page\n| [[file:diagram.png]] |\n"
+      (expect html :to-match "<img src=\"[^\"]+/files/42/preview\" alt=\"diagram\\.png\"")))
+
+  (it "keeps a described image link a link, as Org exports it"
+    (test-org-canvas-with-image-export
+        "* Page\n[[file:diagram.png][the diagram]]\n"
+      (expect html :to-match
+              "<a href=\"https://canvas\\.example\\.com/courses/1/files/42/preview\">the diagram</a>")
+      (expect html :not :to-match "<img")))
+
+  (it "leaves a hand-written link to another Canvas file a link"
+    (test-org-canvas-with-image-export
+        "* Page\n[[https://canvas.example.com/courses/1/files/99/preview]]\n"
+      (expect html :to-match "<a href=")
+      (expect html :not :to-match "<img")))
+
+  (it "exports the same body to the same HTML twice (no random figure id)"
+    (test-org-canvas-with-image-export
+        "* Page\n[[file:diagram.png]]\n"
+      (expect html :to-match "<div class=\"figure\">")
+      (expect html :not :to-match "id=\"org")
+      (expect (save-excursion
+                (goto-char (point-min))
+                (org-canvas--export-subtree-body-to-html))
+              :to-equal html))))
+
+(describe "org-canvas--image-inline-rules"
+  (it "is ox-html's own rules when no image is cached"
+    (let ((org-canvas--image-cache nil))
+      (expect (org-canvas--image-inline-rules)
+              :to-equal org-html-inline-image-rules)))
+
+  (it "adds an exact rule for each cached http(s) URL and skips anything else"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (puthash "a.png" "https://h/courses/1/files/2/preview" org-canvas--image-cache)
+      (puthash "b.png" "relative/b.png" org-canvas--image-cache)
+      (let* ((rules (org-canvas--image-inline-rules))
+             (re (cdr (assoc "https" rules))))
+        (expect (length rules) :to-equal (+ 2 (length org-html-inline-image-rules)))
+        (expect (string-match-p re "//h/courses/1/files/2/preview") :to-be-truthy)
+        (expect (string-match-p re "//h/courses/1/files/3/preview") :not :to-be-truthy)))))
+
+(describe "org-canvas--image-url-name"
+  (it "is nil with no cache or no matching URL"
+    (let ((org-canvas--image-cache nil))
+      (expect (org-canvas--image-url-name "https://h/x") :to-be nil))
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (puthash "a.png" "https://h/a" org-canvas--image-cache)
+      (expect (org-canvas--image-url-name "https://h/x") :to-be nil)
+      (expect (org-canvas--image-url-name "https://h/a") :to-equal "a.png"))))
+
+(describe "org-canvas--html-figure-id-filter"
+  (it "drops a figure id nothing links to"
+    (expect (org-canvas--html-figure-id-filter
+             "<div id=\"org1a2b3c4\" class=\"figure\">x</div>" 'html nil)
+            :to-equal "<div class=\"figure\">x</div>"))
+
+  (it "keeps a figure id a link points at"
+    (let ((text "<div id=\"org1a2b3c4\" class=\"figure\">x</div><a href=\"#org1a2b3c4\">Figure 1</a>"))
+      (expect (org-canvas--html-figure-id-filter text 'html nil)
+              :to-equal text))))
+
 (describe "org-canvas--image-cache-init"
   (it "populates cache from API response"
     (with-org-canvas-test-config
@@ -735,12 +841,19 @@ Second text.
                      '(((id . 42)))))
                   ((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method _url &rest _args)
-                     '(((display_name . "logo.png") (url . "https://files.canvas/logo.png"))
-                       ((display_name . "banner.jpg") (url . "https://files.canvas/banner.jpg"))))))
+                     '(((id . 7) (display_name . "logo.png")
+                        (url . "https://files.canvas/logo.png"))
+                       ((id . 8) (display_name . "banner.jpg")
+                        (url . "https://files.canvas/banner.jpg"))
+                       ((display_name . "no-id.png"))))))
           (org-canvas--image-cache-init)
           (expect (hash-table-count org-canvas--image-cache) :to-equal 2)
+          ;; The preview URL, as for a fresh upload, not the download
+          ;; `url' (issue #497)
           (expect (gethash "logo.png" org-canvas--image-cache)
-                  :to-equal "https://files.canvas/logo.png")))))
+                  :to-equal (format "%s/courses/%s/files/7/preview"
+                                    test-org-canvas-base-url
+                                    test-org-canvas-course-id))))))
 
   (it "handles missing folder gracefully"
     (with-org-canvas-test-config

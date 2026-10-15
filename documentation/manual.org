@@ -608,6 +608,15 @@ Image links in page, announcement, discussion, and assignment body text (=[[file
 
 Images are uploaded to a Canvas folder named =org-canvas-images/= and cached per sync session to avoid re-uploading unchanged files.
 
+A bare image link becomes an =<img>= in the pushed body, whose =src= is the image's =/courses/<id>/files/<file-id>/preview= URL, the form Canvas's own editor writes.  The paragraph's =#+ATTR_HTML= attributes land on the =<img>=, so give every figure its alt text there (unquoted: =:alt "x"= keeps the quotes):
+
+#+begin_src org
+,#+ATTR_HTML: :alt Bar chart of quiz scores by week :width 400
+[[file:images/scores.png]]
+#+end_src
+
+An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file, so a pull followed by a push sends it back as an image; pandoc drops an =<img>='s alt text, though, so a pull does not bring =#+ATTR_HTML= back.
+
 *** Links to Other Local Files
 
 A body link to any other local file — a handout, a data set, a slide

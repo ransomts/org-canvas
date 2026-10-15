@@ -14,6 +14,7 @@
 (require 'cl-lib)
 (require 'org)
 (require 'ox)
+(require 'ox-html)
 (require 'subr-x)
 (require 'org-canvas-core-config)
 (require 'org-canvas-core-api)
@@ -94,6 +95,16 @@ SOURCE-DIR is the directory of the source .org file."
   "Hash-table mapping local filename to Canvas preview URL.
 Session-scoped; cleared at end of master sync.")
 
+(defun org-canvas--image-preview-url (file-id)
+  "Return the preview URL of course file FILE-ID, an `<img>' source.
+The `/courses/C/files/ID/preview' form Canvas's own editor writes: it
+serves an image inline to anyone who can see the course, a course copy
+rewrites it to the copy's file, and a pull maps it back to the local
+file (issue #497).  The files API's `url' is a download link instead,
+tied to no course, so a cached image used to go out as that."
+  (format "%s/courses/%s/files/%s/preview"
+          org-canvas-base-url org-canvas-course-id file-id))
+
 (defcustom org-canvas-image-folder "org-canvas-images"
   "Canvas folder name for inline images uploaded by org-canvas."
   :type 'string
@@ -115,9 +126,10 @@ Session-scoped; cleared at end of master sync.")
                                  org-canvas-base-url folder-id))))
         (dolist (file files)
           (let ((name (alist-get 'display_name file))
-                (url (alist-get 'url file)))
-            (when (and name url)
-              (puthash name url org-canvas--image-cache))))
+                (id (alist-get 'id file)))
+            (when (and name id)
+              (puthash name (org-canvas--image-preview-url id)
+                       org-canvas--image-cache))))
         (org-canvas--log-debug org-canvas--logger
           "[Images] Cache initialized: %d files in %s/"
           (hash-table-count org-canvas--image-cache)
@@ -153,12 +165,75 @@ Returns the folder ID."
        (alist-get 'id response)))))
 
 (defun org-canvas--image-replace-link (rep url)
-  "Replace image link described by REP plist with Canvas URL link."
-  (let ((display (plist-get rep :display))
-        (filename (file-name-nondirectory (plist-get rep :path))))
+  "Replace the image link REP describes with a link to Canvas URL.
+A bare link stays bare, so the export makes it an `<img>' carrying
+the paragraph's `#+ATTR_HTML' (`org-canvas--image-inline-rules');
+a described link stays a link to the image, as Org exports it
+\(issue #497)."
+  (let ((display (plist-get rep :display)))
     (goto-char (plist-get rep :start))
     (delete-region (plist-get rep :start) (plist-get rep :end))
-    (insert (format "[[%s][%s]]" url (or display filename)))))
+    (insert (if display
+                (format "[[%s][%s]]" url display)
+              (format "[[%s]]" url)))))
+
+;; ox-html inlines a bare link as an image only when its path ends in
+;; an image extension, which a Canvas preview URL does not, so the URLs
+;; this session's images went out by are made image rules of their own.
+;; Its default alt is then the URL's last part, "preview", so a link
+;; whose paragraph names no :alt gets the local file name, as a local
+;; export of the same Org would.
+
+(defun org-canvas--image-inline-rules ()
+  "Return `org-html-inline-image-rules' plus this session's image URLs.
+Each Canvas URL in `org-canvas--image-cache' is matched exactly, so a
+hand-written link to some other Canvas file stays a link."
+  (let ((paths nil))
+    (when org-canvas--image-cache
+      (maphash (lambda (_name url)
+                 (when (string-match "\\`https?:\\(//.+\\)\\'" url)
+                   (push (match-string 1 url) paths)))
+               org-canvas--image-cache))
+    (if paths
+        (let ((re (concat "\\`" (regexp-opt paths) "\\'")))
+          (append (list (cons "https" re) (cons "http" re))
+                  org-html-inline-image-rules))
+      org-html-inline-image-rules)))
+
+(defun org-canvas--image-url-name (url)
+  "Return the local file name `org-canvas--image-cache' maps to URL."
+  (when org-canvas--image-cache
+    (catch 'found
+      (maphash (lambda (name cached)
+                 (when (equal cached url) (throw 'found name)))
+               org-canvas--image-cache)
+      nil)))
+
+(defun org-canvas--image-paragraph-alt-p (link info)
+  "Return non-nil when LINK takes an :alt from its paragraph.
+ox-html lends a paragraph's `#+ATTR_HTML' to its first link only.
+INFO is the export communication channel."
+  (let ((paragraph (org-element-lineage link '(paragraph))))
+    (and paragraph
+         (eq link (org-element-map paragraph 'link #'identity info t))
+         (plist-get (org-export-read-attribute :attr_html paragraph) :alt))))
+
+(defun org-canvas--image-default-alt-filter (tree _backend info)
+  "Give each uploaded image link in TREE its file name as default alt.
+A parse-tree filter: a bare link to a URL in `org-canvas--image-cache'
+whose paragraph names no :alt gets one, so the `<img>' does not read
+\"preview\".  INFO is the export communication channel."
+  (org-element-map tree 'link
+    (lambda (link)
+      (let ((name (org-canvas--image-url-name
+                   (org-element-property :raw-link link))))
+        (when (and name
+                   (null (org-element-contents link))
+                   (not (org-canvas--image-paragraph-alt-p link info)))
+          (org-element-put-property
+           link :attr_html (list (concat ":alt " name))))))
+    info)
+  tree)
 
 (defun org-canvas--resolve-single-image (rep source-dir folder-id-ref count total)
   "Process a single image link REP in SOURCE-DIR.
@@ -443,6 +518,21 @@ stays a div."
         (format "<h%s>%s</h%s>\n" level (string-trim inner) level)
       text)))
 
+(defun org-canvas--html-figure-id-filter (text _backend _info)
+  "Drop the generated id of each figure in TEXT that nothing links to.
+ox-html gives a standalone image's `<div class=\"figure\">' a fresh
+random `orgXXXXXXX' id on every export, so the same body would hash
+differently each push and never take the unchanged-payload skip
+\(issue #497).  An id a link in TEXT points at is kept."
+  (replace-regexp-in-string
+   "<div id=\"\\(org[0-9a-f]+\\)\" class=\"figure\">"
+   (lambda (match)
+     (if (string-match-p (format "href=\"#%s\"" (match-string 1 match))
+                         text)
+         match
+       "<div class=\"figure\">"))
+   text t t))
+
 (defmacro org-canvas--with-body-export-settings (&rest body)
   "Run BODY, an Org to HTML export, the way a pushed body is exported.
 Sub- and superscripts stay literal and a heading block comes back as
@@ -451,7 +541,10 @@ the `<hN>' it was pulled from (issue #175)."
   `(let ((org-export-with-sub-superscripts nil)
          (org-export-filter-special-block-functions
           (cons #'org-canvas--html-heading-block-filter
-                org-export-filter-special-block-functions)))
+                org-export-filter-special-block-functions))
+         (org-export-filter-final-output-functions
+          (cons #'org-canvas--html-figure-id-filter
+                org-export-filter-final-output-functions)))
      ,@body))
 
 (defun org-canvas--org-to-html-string (text)
@@ -527,7 +620,11 @@ link to a file not uploaded yet is recorded there, not warned about."
           ;; Export the subtree to HTML (body only)
           (goto-char (point-min))
           (let ((org-export-with-broken-links 'mark)
-                (org-export-use-babel nil))
+                (org-export-use-babel nil)
+                (org-html-inline-image-rules (org-canvas--image-inline-rules))
+                (org-export-filter-parse-tree-functions
+                 (cons #'org-canvas--image-default-alt-filter
+                       org-export-filter-parse-tree-functions)))
             (org-canvas--with-body-export-settings
               (org-export-as 'html t nil t nil))))))))
 

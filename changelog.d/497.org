@@ -1,0 +1,10 @@
+* Fixed
+- #497 An inline image in a pushed body is an =<img>= again, with the
+  image's =/courses/<id>/files/<file-id>/preview= URL as its =src= and
+  the paragraph's =#+ATTR_HTML= attributes (=:alt= above all) on it,
+  instead of a link labelled with the file name that carried the alt
+  text on the =<a>=.  An image with no =:alt= gets its file name.  A
+  described image link stays a link.  An image already in the
+  =org-canvas-images= folder goes out by the same preview URL as a fresh
+  upload, not by its download link, and a pulled =<img>= comes back as a
+  bare link to the local file, so the next push sends it as an image.
