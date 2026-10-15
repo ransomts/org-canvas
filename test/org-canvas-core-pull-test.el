@@ -175,6 +175,19 @@
     (let ((cache (org-canvas--build-file-id-cache "/nonexistent/files.org")))
       (expect (hash-table-count cache) :to-equal 0))))
 
+(describe "org-canvas--rewrite-file-link"
+  (it "keeps a description"
+    (expect (org-canvas--rewrite-file-link "content/a.png" "A")
+            :to-equal "[[file:content/a.png][A]]"))
+  (it "keeps a bare image link bare (issue #497)"
+    (expect (org-canvas--rewrite-file-link "content/a.png" nil)
+            :to-equal "[[file:content/a.png]]"))
+  (it "labels a bare link to anything else with its file name"
+    (expect (org-canvas--rewrite-file-link "content/r.pdf" nil)
+            :to-equal "[[file:content/r.pdf][r.pdf]]")
+    (expect (org-canvas--rewrite-file-link "content/README" nil)
+            :to-equal "[[file:content/README][README]]")))
+
 (describe "org-canvas--rewrite-canvas-file-urls"
   ;; These tests focus on cache-hit behavior.  The cache-miss path now
   ;; triggers an on-demand API fetch (Task 6), so we stub the API to
@@ -191,11 +204,12 @@
               (lambda (&rest _)
                 (signal 'org-canvas-api-error '("Forbidden" nil nil)))))
 
-    (it "rewrites a bare URL link with no description to file link with filename"
+    (it "keeps a bare link to an image bare, so it pushes back as an <img>"
+      ;; pandoc writes an <img> as a bare link (issue #497)
       (expect (org-canvas--rewrite-canvas-file-urls
                "[[https://x.instructure.com/courses/1/files/29257665/preview?verifier=abc]]"
                cache)
-              :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
+              :to-equal "[[file:content/Uploaded Media/img.png]]"))
 
     (it "preserves the description when present"
       (expect (org-canvas--rewrite-canvas-file-urls
@@ -212,7 +226,7 @@
       (let ((result (org-canvas--rewrite-canvas-file-urls
                      "before [[https://x.instructure.com/courses/1/files/29257665/preview?verifier=a]] middle [[https://x.instructure.com/courses/1/files/28960058?verifier=b][label]] after"
                      cache)))
-        (expect result :to-match "\\[\\[file:content/Uploaded Media/img.png\\]\\[img.png\\]\\]")
+        (expect result :to-match "\\[\\[file:content/Uploaded Media/img.png\\]\\]")
         (expect result :to-match "\\[\\[file:content/readings/ethics.pdf\\]\\[label\\]\\]")
         (expect result :to-match "before ")
         (expect result :to-match " middle ")
@@ -227,7 +241,7 @@
       (expect (org-canvas--rewrite-canvas-file-urls
                "[[https://x.instructure.com/courses/1/files/29257665]]"
                cache)
-              :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
+              :to-equal "[[file:content/Uploaded Media/img.png]]"))
 
     (it "rewrites bare ?verifier=&wrap=1 form without /preview and without description"
       ;; Regression: lock in that `files/NNNN?verifier=…&wrap=1' (no `/preview',
@@ -235,7 +249,7 @@
       (expect (org-canvas--rewrite-canvas-file-urls
                "[[https://x.instructure.com/courses/1/files/29257665?verifier=ABC&wrap=1]]"
                cache)
-              :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
+              :to-equal "[[file:content/Uploaded Media/img.png]]"))
 
     (it "leaves a bare ?verifier= URL unchanged when its ID is not in cache"
       ;; Regression: cache miss must pass through verbatim, not partially mangle
@@ -329,7 +343,7 @@
               (let* ((input "see [[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
                      (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
                 (expect rewritten :to-match
-                        "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]\\[screenshot\\.png\\]\\]")
+                        "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]\\]")
                 (expect downloads :to-equal 1)
                 (expect (gethash "30061566" cache)
                         :to-equal "content/Uploaded Media/screenshot.png"))))

@@ -377,14 +377,27 @@ and any other unknown ID is fetched once, a failure remembered."
    (t (org-canvas--rewrite-mark-unresolved id 'failed)
       nil)))
 
+(defun org-canvas--rewrite-file-link (relpath desc)
+  "Return the Org link to local RELPATH a pulled Canvas file link becomes.
+DESC is the link's description, or nil for a bare link.  A bare link
+to an image stays bare — pandoc writes an `<img>' as one — so the
+next push sends it back as an image, not as a link labelled with its
+file name (issue #497); any other bare link is labelled so."
+  (cond
+   (desc (format "[[file:%s][%s]]" relpath desc))
+   ((member (file-name-extension relpath) org-canvas--image-extensions)
+    (format "[[file:%s]]" relpath))
+   (t (format "[[file:%s][%s]]" relpath (file-name-nondirectory relpath)))))
+
 (defun org-canvas--rewrite-canvas-file-urls (text cache)
   "Rewrite Org-bracketed Canvas file URLs in TEXT using CACHE.
 A link `[[https://.../files/ID...]]' (optionally with a `][DESC]' tail)
-is replaced by `[[file:RELPATH][DESC-or-FILENAME]]' when ID is a key in
-CACHE.  When ID is missing from CACHE, attempts to fetch its metadata
-from Canvas, download the file, register it in `org-canvas-files-file',
-and rewrite the link; if the fetch fails the URL passes through
-unchanged (the failure is recorded in the pull summary, once per ID).
+is replaced by a link to RELPATH (`org-canvas--rewrite-file-link')
+when ID is a key in CACHE.  When ID is missing from CACHE, attempts
+to fetch its metadata from Canvas, download the file, register it in
+`org-canvas-files-file', and rewrite the link; if the fetch fails the
+URL passes through unchanged (the failure is recorded in the pull
+summary, once per ID).
 A URL into another course is never fetched: it passes through with
 one warning per ID (issue #390).
 Returns TEXT unchanged when nil or empty."
@@ -403,9 +416,7 @@ Returns TEXT unchanged when nil or empty."
                          (org-canvas--rewrite-resolve-file-id
                           id url cache))))
          (if relpath
-             (format "[[file:%s][%s]]"
-                     relpath
-                     (or desc (file-name-nondirectory relpath)))
+             (org-canvas--rewrite-file-link relpath desc)
            match)))
      text t t)))
 
