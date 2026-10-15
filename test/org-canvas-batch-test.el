@@ -610,6 +610,52 @@
                           messages)
               :not :to-be nil)))
 
+  (it "posts the named columns, or the queue's, and exits 1 when one failed (#495)"
+    (let ((calls nil) (queued 0) (out nil)
+          (outcomes '((:id "2499696" :name "Exam 1" :state posted)
+                      (:id "2499697" :name "Exam 2" :state dry-run))))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-post-grades)
+                 (lambda (ids) (push (list ids org-canvas--dry-run) calls) outcomes))
+                ((symbol-function 'org-canvas-submissions-post-queue)
+                 (lambda () (cl-incf queued) nil)))
+        (setq out (with-output-to-string
+                    (expect (org-canvas-batch-main '("-n" "post" "2499696" "Exam 2"))
+                            :to-equal 0)))
+        (expect calls :to-equal '((("2499696" "Exam 2") t)))
+        (expect out :to-equal "2499696 Exam 1: posted\n2499697 Exam 2: dry-run\n")
+        (expect (test-batch--run '("post" "--queue")) :to-equal 0)
+        (expect queued :to-equal 1)
+        (setq outcomes '((:id "77" :state failed :message "No assignment with id 77")))
+        (setq out (with-output-to-string
+                    (expect (org-canvas-batch-main '("post" "77")) :to-equal 1)))
+        (expect out :to-equal "77 : No assignment with id 77\n"))))
+
+  (it "refuses --queue beside column names"
+    (let (messages)
+      (cl-letf (((symbol-function 'org-canvas-post-grades)
+                 (lambda (&rest _) (error "Must not post"))))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("post" "--queue" "2499696")) :to-equal 2)
+          (expect (test-batch--run '("post")) :to-equal 2)))
+      (expect (car messages) :to-match "post takes")))
+
+  (it "takes or keeps the named students' CONFLICTs, exiting 1 on a miss (#496)"
+    (let ((calls nil) (result '(:resolved ("Adams, Alice") :missing nil :unmarked nil))
+          (messages nil))
+      (cl-letf (((symbol-function 'org-canvas-submissions-resolve-conflicts)
+                 (lambda (file ids take) (push (list file ids take) calls) result)))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("take" "Journal_05" "5001" "5002")) :to-equal 0)
+          (expect (test-batch--run '("keep" "2497505" "5003")) :to-equal 0)
+          (expect (reverse calls) :to-equal '(("Journal_05" ("5001" "5002") t)
+                                              ("2497505" ("5003") nil)))
+          (setq result '(:resolved nil :missing (9) :unmarked (5004)))
+          (expect (test-batch--run '("take" "Journal_05" "9" "5004")) :to-equal 1)
+          (expect (test-batch--run '("keep" "Journal_05")) :to-equal 2)))
+      (expect (member "No heading for user 9" messages) :to-be-truthy)
+      (expect (member "No CONFLICT on user 5004" messages) :to-be-truthy)))
+
   (it "exits with the drift report's verdict"
     (let ((total 0))
       (cl-letf (((symbol-function 'org-canvas-diff) (lambda () total)))

@@ -175,6 +175,12 @@ copy silently.  Return the credentials file loaded, or nil."
     ("push-grades" org-canvas-batch--cmd-push-grades 1 4
      "ASSIGNMENT [--only ID,ID] [--dry-run]"
      "Push a grading file, or only the named students' rows (#441).")
+    ("post" org-canvas-batch--cmd-post 1 nil "--queue | ASSIGNMENT..."
+     "Post columns' grades by id or name, or every post row (#495).")
+    ("take" org-canvas-batch--cmd-take 2 nil "FILE USER-ID..."
+     "Resolve the students' CONFLICTs by taking Canvas's grade (#496).")
+    ("keep" org-canvas-batch--cmd-keep 2 nil "FILE USER-ID..."
+     "Resolve the students' CONFLICTs by keeping the typed grade (#496).")
     ("export-comments" org-canvas-batch--cmd-export-comments 1 2 "FILE [OUT.json]"
      "Write a grading file's comments as JSON, to OUT or stdout (#438).")
     ("import-comments" org-canvas-batch--cmd-import-comments 2 3
@@ -414,6 +420,46 @@ send.  Return 1 if anything was left behind
     (dolist (row (plist-get result :would-send))
       (princ (format "%s\n" (plist-get row :line))))
     (if (org-canvas-batch--push-grades-ok-p result) 0 1)))
+
+(defun org-canvas-batch--cmd-post (parsed)
+  "Post the grades of the columns PARSED names, or with --queue every post row.
+Grades are posted only for the columns named, by Canvas id or exact
+name, or under --queue for those the grading queue marks post.  A
+--dry-run sends nothing.  Return 1 if any column was not posted."
+  (let* ((args (plist-get parsed :args))
+         (org-canvas--dry-run (or org-canvas--dry-run
+                                  (plist-get parsed :dry-run)))
+         (outcomes (cond ((equal args '("--queue"))
+                          (org-canvas-submissions-post-queue))
+                         ((member "--queue" args)
+                          (org-canvas-batch--usage "post takes --queue alone, or ASSIGNMENT..."))
+                         (t (org-canvas-post-grades args)))))
+    (dolist (outcome outcomes)
+      (princ (format "%s %s: %s\n" (plist-get outcome :id)
+                     (or (plist-get outcome :name) "")
+                     (or (plist-get outcome :message) (plist-get outcome :state)))))
+    (if (cl-some (lambda (o) (eq (plist-get o :state) 'failed)) outcomes) 1 0)))
+
+(defun org-canvas-batch--resolve-conflicts (parsed take)
+  "Resolve the CONFLICTs PARSED names, taking Canvas's grade when TAKE.
+The first argument is the grading file, the rest Canvas user ids.
+Return 1 if an id had no heading or no CONFLICT."
+  (let* ((args (plist-get parsed :args))
+         (result (org-canvas-submissions-resolve-conflicts
+                  (car args) (cdr args) take)))
+    (dolist (id (plist-get result :missing))
+      (message "No heading for user %s" id))
+    (dolist (id (plist-get result :unmarked))
+      (message "No CONFLICT on user %s" id))
+    (if (or (plist-get result :missing) (plist-get result :unmarked)) 1 0)))
+
+(defun org-canvas-batch--cmd-take (parsed)
+  "Take Canvas's grade on the CONFLICT rows PARSED names; return the status."
+  (org-canvas-batch--resolve-conflicts parsed t))
+
+(defun org-canvas-batch--cmd-keep (parsed)
+  "Keep the typed grade on the CONFLICT rows PARSED names; return the status."
+  (org-canvas-batch--resolve-conflicts parsed nil))
 
 (defun org-canvas-batch--cmd-export-comments (parsed)
   "Write the comments of the grading file PARSED names as JSON; return 0.

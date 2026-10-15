@@ -6551,5 +6551,115 @@ closing message), :asked (the question) and :saved (the file after)."
     (expect (lookup-key org-canvas-submissions-mode-map (kbd "s"))
             :to-be #'org-canvas-submissions-push-at-point)))
 
+;;;; An Unconfirmed Push (issue #496)
+
+(describe "a push whose job was never confirmed (issue #496)"
+  (it "leaves typed rows Canvas now holds unmarked on the next refresh"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (shown (list nil)))
+      (unwind-protect
+          (progn
+            (test-rubric--display (list (test-org-canvas-make-submission '((score . nil)))) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (org-canvas--submissions-rubric-set-row "_7104" "2" "Sharp")
+              (org-canvas--submissions-rubric-set-row "_7106" "1" nil)
+              (save-buffer))
+            ;; The push stored the rows, but its job outlived the wait,
+            ;; so CANVAS_RUBRIC was never advanced.
+            (test-rubric--display
+             (list (test-org-canvas-make-submission
+                    '((score . 3)
+                      (rubric_assessment . ((_7104 . ((points . 2) (comments . "Sharp")))
+                                            (_7106 . ((points . 1))))))))
+             shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+              (expect (mapcar (lambda (r) (list (nth 3 r) (nth 4 r)))
+                              (org-canvas--submissions-rubric-rows))
+                      :to-equal '(("2" "Sharp") (nil nil) ("1" nil)))
+              (expect (org-entry-get (point) "CANVAS_RUBRIC")
+                      :to-equal (org-canvas--submissions-rubric-digest
+                                 '(("_7104" "2" "Sharp") ("_7106" "1" nil))))
+              (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))
+        (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
+        (delete-directory dir t))))
+
+  (it "sends again, unheld, a change whose values Canvas already holds"
+    (let ((change (list :user-id 5001 :name "Adams, Alice" :old-score "5" :new-score "8"
+                        :attempt 1 :triples '(("_1" "8" nil)) :old-rubric "aaa"
+                        :new-rubric "bbb" :late-status "late" :old-late-status nil)))
+      (expect (org-canvas--submissions-conflict-p change '("8" 1 "bbb" "late")) :to-be nil)
+      (expect (org-canvas--submissions-conflict-p change '("8" nil "bbb" "late")) :to-be nil)
+      (expect (org-canvas--submissions-conflict-p change '("7" 1 "bbb" "late"))
+              :to-equal "score: Canvas has 7")
+      (expect (org-canvas--submissions-conflict-p change '("8" 2 "bbb" "late"))
+              :to-equal "score: Canvas has 8")
+      (expect (org-canvas--submissions-conflict-p change '("8" 1 "ccc" "late"))
+              :to-equal "score: Canvas has 8")
+      (expect (org-canvas--submissions-conflict-p change '("8" 1 "bbb" nil))
+              :to-equal "score: Canvas has 8")
+      (expect (org-canvas--submissions-conflict-p change nil) :to-equal "score: Canvas has no grade")))
+
+  (it "compares only what a change sends"
+    (let ((score-only (list :old-score "5" :new-score "8")))
+      (expect (org-canvas--submissions-live-holds-change-p score-only '("8" 3 "zzz" "missing"))
+              :to-be-truthy)
+      (expect (org-canvas--submissions-live-holds-change-p score-only '("5" 3 nil nil))
+              :to-be nil))))
+
+(describe "org-canvas-submissions-resolve-conflicts (issue #496)"
+  (it "takes or keeps the named students' CONFLICTs and names the rest"
+    (with-org-canvas-test-config
+      (test-batch-push--with-dir
+          (concat test-grading-file-header
+                  (test-refresh--student "Adams, Alice" 5001
+                                         ":SCORE: 8\n:CANVAS_SCORE: 5\n:CONFLICT: score: Canvas has 8\n")
+                  (test-refresh--student "Beta, Bob" 5002 ":SCORE: 4\n:CANVAS_SCORE: 4\n"))
+        (let ((calls nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (push (list method url) calls)
+                       (test-org-canvas-make-submission '((score . 8) (attempt . 1)))))
+                    ((symbol-function 'message) #'ignore))
+            (let ((result (org-canvas-submissions-resolve-conflicts "1001" '("5001" 5002 9) nil)))
+              (expect (plist-get result :resolved) :to-equal '("Adams, Alice"))
+              (expect (plist-get result :unmarked) :to-equal '(5002))
+              (expect (plist-get result :missing) :to-equal '(9))))
+          (expect calls :to-equal
+                  (list (list 'GET (org-canvas-api-course-endpoint
+                                    "assignments/%s/submissions/%s" "1001" "5001"))))
+          (with-temp-buffer
+            (insert-file-contents file)
+            (expect (buffer-string) :not :to-match ":CONFLICT:")
+            (expect (buffer-string) :to-match ":CANVAS_SCORE: 8")
+            (expect (buffer-string) :to-match ":SCORE: +8\n"))))))
+
+  (it "takes Canvas's grade when asked to"
+    (with-org-canvas-test-config
+      (test-batch-push--with-dir
+          (concat test-grading-file-header
+                  (test-refresh--student "Adams, Alice" 5001
+                                         ":SCORE: 9\n:CANVAS_SCORE: 5\n:CONFLICT: score: Canvas has 8\n")
+                  "** Notes\n")
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (test-org-canvas-make-submission '((score . 8)))))
+                  ((symbol-function 'message) #'ignore))
+          (expect (plist-get (org-canvas-submissions-resolve-conflicts 1001 '(5001) t)
+                             :resolved)
+                  :to-equal '("Adams, Alice")))
+        (with-temp-buffer
+          (insert-file-contents file)
+          (expect (buffer-string) :to-match ":SCORE: +8\n")
+          (expect (buffer-string) :to-match "Typed before taking Canvas's grade")))))
+
+  (it "refuses an id that is not a user id before reading anything"
+    (with-org-canvas-test-config
+      (test-batch-push--with-dir test-grading-file-header
+        (expect (org-canvas-submissions-resolve-conflicts "1001" '("abc") t)
+                :to-throw 'user-error)))))
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

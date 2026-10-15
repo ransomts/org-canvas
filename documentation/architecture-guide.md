@@ -33,7 +33,7 @@ lisp/
 ├── org-canvas-submissions.el    # Submission viewer and grading
 ├── org-canvas-quiz-submissions.el # Read-only table of a classic quiz's attempts (requires submissions)
 ├── org-canvas-peer-reviews.el   # Read-only tables of who reviews whom on an assignment (requires submissions)
-├── org-canvas-submissions-status.el # Grading queue: per-column submitted/graded/posted counts and the next action (requires submissions)
+├── org-canvas-submissions-status.el # Grading queue: per-column submitted/graded/posted counts and the next action; pulling and posting the queue, posting a column by id (requires submissions)
 ├── org-canvas-submissions-window.el # Score a grading file by SUBMITTED_AT against each student's section window (requires submissions)
 ├── org-canvas-submissions-comments.el # Export, import and check a grading file's comments as data/JSON (requires submissions)
 ├── org-canvas-submissions-verify.el # Read a pushed column back from Canvas and count what differs from its grading file (requires submissions, submissions-comments)
