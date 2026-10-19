@@ -10,70 +10,16 @@
 
 ;; Code coverage with undercover
 (eldev-use-plugin 'undercover)
-(setf eldev-undercover-fileset '("lisp/org-canvas.el"
-                                  "lisp/org-canvas-status.el"
-                                  "lisp/org-canvas-publish.el"
-                                  "lisp/org-canvas-adopt.el"
-                                  "lisp/org-canvas-orphans.el"
-                                  "lisp/org-canvas-browse.el"
-                                  "lisp/org-canvas-search.el"
-                                  "lisp/org-canvas-batch.el"
-                                  "lisp/org-canvas-diff.el"
-                                  "lisp/org-canvas-drift.el"
-                                  "lisp/org-canvas-announcements-verify.el"
-                                  "lisp/org-canvas-core.el"
-                                  "lisp/org-canvas-core-log.el"
-                                  "lisp/org-canvas-core-config.el"
-                                  "lisp/org-canvas-core-api.el"
-                                  "lisp/org-canvas-core-org.el"
-                                  "lisp/org-canvas-core-html.el"
-                                  "lisp/org-canvas-core-pull.el"
-                                  "lisp/org-canvas-core-macros.el"
-                                  "lisp/org-canvas-core-conflict.el"
-                                  "lisp/org-canvas-core-delete.el"
-                                  "lisp/org-canvas-core-sync.el"
-                                  "lisp/org-canvas-announcements.el"
-                                  "lisp/org-canvas-assignment-groups.el"
-                                  "lisp/org-canvas-assignments.el"
-                                  "lisp/org-canvas-discussions.el"
-                                  "lisp/org-canvas-discussion-replies.el"
-                                  "lisp/org-canvas-files.el"
-                                  "lisp/org-canvas-modules.el"
-                                  "lisp/org-canvas-outcomes.el"
-                                  "lisp/org-canvas-pages.el"
-                                  "lisp/org-canvas-new-quizzes.el"
-                                  "lisp/org-canvas-new-quiz-items.el"
-                                  "lisp/org-canvas-quizzes.el"
-                                  "lisp/org-canvas-rubrics.el"
-                                  "lisp/org-canvas-sections.el"
-                                  "lisp/org-canvas-grading-periods.el"
-                                  "lisp/org-canvas-grading-schemes.el"
-                                  "lisp/org-canvas-settings.el"
-                                  "lisp/org-canvas-group-categories.el"
-                                  "lisp/org-canvas-groups.el"
-                                  "lisp/org-canvas-people.el"
-                                  "lisp/org-canvas-gradebook.el"
-                                  "lisp/org-canvas-rubric-results.el"
-                                  "lisp/org-canvas-quiz-results.el"
-                                  "lisp/org-canvas-question-banks.el"
-                                  "lisp/org-canvas-quiz-accommodations.el"
-                                  "lisp/org-canvas-calendar.el"
-                                  "lisp/org-canvas-validate.el"
-                                  "lisp/org-canvas-submissions.el"
-                                  "lisp/org-canvas-quiz-submissions.el"
-                                  "lisp/org-canvas-peer-reviews.el"
-                                  "lisp/org-canvas-submissions-status.el"
-                                  "lisp/org-canvas-submissions-window.el"
-                                  "lisp/org-canvas-submissions-comments.el"
-                                  "lisp/org-canvas-submissions-late.el"
-                                  "lisp/org-canvas-submissions-verify.el"
-                                  "lisp/org-canvas-submissions-ruling.el"
-                                  "lisp/org-canvas-submissions-grades.el"
-                                  "lisp/org-canvas-submissions-reports.el"
-                                  "lisp/org-canvas-submissions-uploads.el"
-                                  "lisp/org-canvas-messages.el"
-                                  "lisp/org-canvas-setup.el"
-                                  "lisp/org-canvas-transient.el"))
+(setf eldev-undercover-fileset
+      '("lisp/*.el"
+        ;; The two gitignored locals: generated autoloads, the
+        ;; developer's own credentials.  A glob, not a hand-maintained
+        ;; list, so a module is instrumented the moment it is added
+        ;; (issue #522) -- the module tree is spec-guarded and the
+        ;; status table registry-derived; this was the last list that
+        ;; could forget one.
+        "!lisp/org-canvas-autoloads.el"
+        "!lisp/org-canvas-credentials.el"))
 ;; Use codecov format with local report file (don't auto-send)
 (setf eldev-undercover-report-format 'codecov)
 (setf eldev-undercover-send-report nil)

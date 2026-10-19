@@ -1,0 +1,7 @@
+* Changed
+- #522 The Eldev coverage fileset instruments =lisp/*.el= rather than
+  a hand-maintained list of every module, so a module is measured the
+  moment it is added: the list could forget one and the codecov patch
+  gate would weaken invisibly.  The two gitignored locals (generated
+  autoloads, the developer's own credentials) are excluded, and a
+  coverage run reports exactly the files the old list did.
