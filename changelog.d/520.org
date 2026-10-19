@@ -1,0 +1,7 @@
+* Added
+- #520 A spec pins the duplicate-title guard's default: asking.
+  Flipping =org-canvas-duplicate-title-strategy='s default to a truthy
+  value survived a mutation sample, and would have resolved every
+  duplicate without prompting as an action that is none of adopt, skip
+  or create.  Two equivalent flag flips from the same sample join
+  the accepted-survivors baseline, with their reasons.

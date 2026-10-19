@@ -125,3 +125,16 @@ lisp/org-canvas-sections.el :: t->nil :: (end (save-excursion (org-end-of-subtre
 # scored this both killed and survived (the run-scoring hazard in the
 # README); the code reading is what this entry rests on.
 lisp/org-canvas-files.el :: t->nil :: (url-copy-file download-url local-path t))
+
+# Invisible-OK in an unfolded buffer, the flag-flip section's reason
+# (see the sections.el entry of the same shape): this site is
+# `org-canvas--drift-append-override-here' reading the bounds of a
+# heading the report names.  From the 2026-10-19 sample (issue #520).
+lisp/org-canvas-drift.el :: t->nil :: (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+
+# The statistics-cookie flag of `org-get-heading', doubly redundant
+# here: the title it returns goes through
+# `org-canvas--strip-statistics-cookie' on the same line, so the cookie
+# is stripped whichever way the flag reads.  From the 2026-10-19
+# sample (issue #520).
+lisp/org-canvas-quiz-accommodations.el :: t->nil :: (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))

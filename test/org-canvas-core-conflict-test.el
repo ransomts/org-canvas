@@ -289,6 +289,26 @@
         (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) nil)
                 :to-equal 'skip)))))
 
+(describe "org-canvas--duplicate-unattended-action"
+  (it "asks by default: the defcustom's default is nil, not a decision"
+    ;; A default of t would reach the `or' as a truthy action, so every
+    ;; duplicate would resolve as t — not adopt, skip or create —
+    ;; without prompting.  This flip survived the mutation sample of
+    ;; 2026-10-19 over conflict, drift and accommodations (issue #520).
+    (expect (default-value 'org-canvas-duplicate-title-strategy) :to-be nil))
+
+  (it "decides nothing in an interactive Emacs with no strategy set"
+    (let ((org-canvas-duplicate-title-strategy
+           (default-value 'org-canvas-duplicate-title-strategy))
+          (noninteractive nil))
+      (expect (org-canvas--duplicate-unattended-action "X") :to-be nil)))
+
+  (it "takes skip under batch, as the conflict machinery does"
+    (let ((org-canvas-duplicate-title-strategy nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (org-canvas--duplicate-unattended-action "X")
+                :to-equal 'skip)))))
+
 (describe "org-canvas--conflict-pull-local"
   (it "calls pull-item-fn and refreshes file-level LAST_SYNCED header"
     (with-temp-org-buffer
