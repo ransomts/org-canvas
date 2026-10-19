@@ -207,8 +207,8 @@ copy silently.  Return the credentials file loaded, or nil."
     ("import-grades" org-canvas-batch--cmd-import-grades 2 3
      "[--posted] FILE IN.json"
      "Write IN.json's scores, notes and comments; exit 1 on a miss (#483).")
-    ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE:TITLE..."
-     "Replace named headings with Canvas's versions.")
+    ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE or FEATURE:TITLE..."
+     "Pull a whole feature, or named headings, from Canvas.")
     ("push" org-canvas-batch--cmd-push 1 nil
      "[--conflict push|pull|skip] FEATURE:TITLE..."
      "Push named headings; --conflict resolves conflicts (#470).")
@@ -247,7 +247,9 @@ command runs without a course directory, its credentials unread.")
                 (format "  %-30s %s" (string-trim (format "%s %s" (nth 0 c) (nth 4 c)))
                         (nth 5 c)))
               org-canvas-batch--commands "\n")
-   "\n\nFEATURE:TITLE names a heading by its exact title (assignment:Essay 1);\n"
+   "\n\nA bare feature name (pull announcements) pulls that whole feature,\n"
+   "adopting items made in the web UI; FEATURE:TITLE names a heading by\n"
+   "its exact title (assignment:Essay 1);\n"
    "FEATURE#ID names it by its Canvas id (assignment#2563805).\n"
    "Exit status: 0 done, 1 drift, errors or a failed item, 2 usage, 3 error.\n"))
 
@@ -311,6 +313,27 @@ title may hold either."
      arg))
   (list (match-string 1 arg) (match-string 3 arg)
         (if (equal (match-string 2 arg) "#") 'canvas-id 'title)))
+
+(defun org-canvas-batch--feature-pull-fn (name)
+  "Return the whole-feature pull function NAME names, or signal usage.
+NAME is a module's name as the pull commands spell it, singular or
+plural (`announcements', `assignment-groups', `new-quiz'), matched
+against the whole-feature pulls the pull tiers hold.  The usage error
+names every feature."
+  (let ((want (org-canvas--singularize (downcase name))))
+    (or (cl-loop for entry in (apply #'append org-canvas--pull-tiers)
+                 for fn = (car entry)
+                 for suffix = (replace-regexp-in-string
+                               "\\`org-canvas-pull-" "" (symbol-name fn))
+                 when (string= want (org-canvas--singularize suffix))
+                 return fn)
+        (org-canvas-batch--usage
+         "%s is not a feature with a pull; the features are: %s"
+         name
+         (mapconcat (lambda (entry)
+                     (replace-regexp-in-string
+                      "\\`org-canvas-pull-" "" (symbol-name (car entry))))
+                    (apply #'append org-canvas--pull-tiers) ", ")))))
 
 ;;;; Subcommands
 
@@ -620,12 +643,30 @@ through.  Return 1 if a key matched nothing or a change was kept back."
       (if (or (plist-get result :unmatched) (plist-get result :skipped)) 1 0))))
 
 (defun org-canvas-batch--cmd-pull (parsed)
-  "Pull the headings PARSED names; return 1 if any failed."
-  (let ((entries (mapcar #'org-canvas-batch-heading-entry
-                         (plist-get parsed :args))))
-    (if (zerop (org-canvas-batch--failed-count
-                (org-canvas-pull-headings entries)))
-        0 1)))
+  "Pull what PARSED names; return 1 if any pull failed.
+An argument holding a colon or hash names headings — FEATURE:TITLE,
+FEATURE#ID — pulled one by one.  A bare feature name pulls the whole
+feature, upserting the Canvas-made items it holds (issue #511): the
+way an announcement written in the web UI is adopted from batch
+without pulling the whole course.  Features run first, so a heading
+named after one is found once its items exist."
+  (let ((entries nil) (features nil) (failed 0))
+    (dolist (arg (plist-get parsed :args))
+      (if (string-match-p "[:#]" arg)
+          (push (org-canvas-batch-heading-entry arg) entries)
+        (push arg features)))
+    (dolist (name (nreverse features))
+      (let ((fn (org-canvas-batch--feature-pull-fn name)))
+        (condition-case err
+            (funcall fn)
+          (error
+           (cl-incf failed)
+           (message "Pulling %s failed: %s" name (error-message-string err))))))
+    (when entries
+      (setq failed (+ failed
+                      (org-canvas-batch--failed-count
+                       (org-canvas-pull-headings (nreverse entries))))))
+    (if (zerop failed) 0 1)))
 
 (defun org-canvas-batch--cmd-pull-all (_parsed)
   "Import the whole course and print how the pull went.

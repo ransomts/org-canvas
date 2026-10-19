@@ -126,7 +126,7 @@ ARGS=, which is also the line to use without it.
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
-| =pull FEATURE:TITLE...=       | =org-canvas-pull-headings=                         | any heading failed |
+| =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
 | =push [--conflict STRATEGY] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=) | any heading failed |
 | =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |

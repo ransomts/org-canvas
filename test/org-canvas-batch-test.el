@@ -349,6 +349,61 @@
               (org-canvas-batch-usage-error (cadr err)))
             :to-match "use grades")))
 
+(describe "org-canvas-batch--feature-pull-fn"
+  (it "resolves a feature's whole pull, singular or plural"
+    (expect (org-canvas-batch--feature-pull-fn "announcements")
+            :to-be #'org-canvas-pull-announcements)
+    (expect (org-canvas-batch--feature-pull-fn "assignment")
+            :to-be #'org-canvas-pull-assignments)
+    (expect (org-canvas-batch--feature-pull-fn "new-quiz")
+            :to-be #'org-canvas-pull-new-quizzes)
+    (expect (org-canvas-batch--feature-pull-fn "quiz-results")
+            :to-be #'org-canvas-pull-quiz-results))
+
+  (it "refuses a name no pull answers to, listing the features"
+    (expect (condition-case err (org-canvas-batch--feature-pull-fn "essays")
+              (org-canvas-batch-usage-error (cadr err)))
+            :to-match "announcements")))
+
+(describe "org-canvas-batch--cmd-pull (bare feature, issue #511)"
+  (it "pulls a whole feature, upserting Canvas-made items"
+    (let ((called nil))
+      (cl-letf (((symbol-function 'org-canvas-pull-announcements)
+                 (lambda (&optional _managed)
+                   (push 'announcements called))))
+        (expect (org-canvas-batch--cmd-pull '(:args ("announcements")))
+                :to-equal 0)
+        (expect called :to-equal '(announcements)))))
+
+  (it "counts a failed feature pull and keeps going"
+    (let ((called nil))
+      (cl-letf (((symbol-function 'org-canvas-pull-announcements)
+                 (lambda (&optional _managed)
+                   (push 'announcements called)
+                   (signal 'org-canvas-api-error "list refused")))
+                ((symbol-function 'org-canvas-pull-pages)
+                 (lambda (&optional _managed)
+                   (push 'pages called))))
+        (expect (org-canvas-batch--cmd-pull '(:args ("pages" "announcements")))
+                :to-equal 1)
+        (expect called :to-equal '(announcements pages)))))
+
+  (it "mixes a bare feature with named headings, features first"
+    (let ((called nil) (entries nil))
+      (cl-letf (((symbol-function 'org-canvas-pull-announcements)
+                 (lambda (&optional _managed)
+                   (push 'announcements called)))
+                ((symbol-function 'org-canvas-pull-headings)
+                 (lambda (list)
+                   (push list entries)
+                   '())))
+        (expect (org-canvas-batch--cmd-pull
+                 '(:args ("announcements" "assignment:Essay 1")))
+                :to-equal 0)
+        (expect called :to-equal '(announcements))
+        (expect (car entries)
+                :to-equal '(("assignment" "Essay 1" title)))))))
+
 (describe "org-canvas-batch--help-text"
   (it "lists every command and the exit statuses"
     (let ((text (org-canvas-batch--help-text)))
