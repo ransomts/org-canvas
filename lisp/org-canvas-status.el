@@ -10,12 +10,16 @@
 ;;
 ;; `org-canvas--status-content-types' is also the table the master
 ;; delete and pull-all commands read to count what a run would touch.
+;; It derives from the feature and pull-feature registries, so a module
+;; that registers is counted without another list to edit; the defconst
+;; below is the fallback for the autoloaded-with-core-only case, beside
+;; the one row no registry provides.
 
 ;;; Code:
 
 (require 'org-canvas-core)
 
-(defconst org-canvas--status-content-types
+(defconst org-canvas--status-fallback-content-types
   '(("Assignments"       org-canvas-assignments-file       "CANVAS_ID")
     ("Pages"             org-canvas-pages-file             "CANVAS_URL")
     ("Quizzes"           org-canvas-quizzes-file           "CANVAS_ID")
@@ -30,7 +34,39 @@
     ("New Quizzes"       org-canvas-new-quizzes-file       "CANVAS_ASSIGNMENT_ID")
     ("Group Categories"  org-canvas-group-categories-file  "CANVAS_ID")
     ("Calendar Events"   org-canvas-calendar-events-file   "CANVAS_ID"))
-  "Content types for status reporting: (label file-var id-property).")
+  "Fallback content types for status reporting: (label file-var id-property).
+Shown when nothing has registered — `org-canvas-status' may be
+autoloaded with only core on the load path, where no module has
+populated a registry yet.")
+
+(defconst org-canvas--status-unregistered-content-types
+  '(("Sections" org-canvas-sections-file "CANVAS_ID"))
+  "Content types no registry provides, always in the status table.
+A file whose headings count like any other content's but that no
+feature or pull-feature entry describes: sections are pulled for
+reference and registered nowhere.")
+
+(defun org-canvas--status-content-types ()
+  "Content types for status reporting: (label file-var id-property).
+Every feature and pull-feature registry entry that names a file and an
+id property, plus the files no registry provides, sorted by label.
+`org-canvas-delete-all' and `org-canvas-pull-all' count through this
+table, so a module that registers is counted without another list to
+edit.  With nothing registered, the fallback table above: the
+autoloaded-with-core-only case."
+  (if (and (null org-canvas--feature-registry)
+           (null org-canvas--pull-feature-registry))
+      org-canvas--status-fallback-content-types
+    (let ((rows (copy-sequence org-canvas--status-unregistered-content-types))
+          (seen (mapcar #'cadr org-canvas--status-unregistered-content-types)))
+      (dolist (entry (append org-canvas--feature-registry
+                             org-canvas--pull-feature-registry))
+        (let ((file-var (plist-get entry :file-var))
+              (id-prop (plist-get entry :id-property)))
+          (when (and file-var id-prop (not (memq file-var seen)))
+            (push file-var seen)
+            (push (list (plist-get entry :name) file-var id-prop) rows))))
+      (sort rows (lambda (a b) (string-lessp (car a) (car b)))))))
 
 ;;;; Status Overview
 
@@ -105,7 +141,7 @@ not what Canvas currently holds.  Use `org-canvas-diff' for that."
           (insert (format "Active course: %s\n" org-canvas--active-course-name)))
         (insert (make-string 60 ?=))
         (insert "\n")
-        (dolist (entry org-canvas--status-content-types)
+        (dolist (entry (org-canvas--status-content-types))
           (org-canvas--status-report-file
            buf (car entry) (cadr entry) (caddr entry)))
         (insert (format "\n%s\n" (make-string 60 ?=)))

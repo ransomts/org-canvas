@@ -384,7 +384,7 @@ This is a destructive operation that removes all synced content from Canvas.
 Deletion order is reverse of sync order to respect dependencies."
   (interactive)
   (let ((synced-count 0))
-    (dolist (entry org-canvas--status-content-types)
+    (dolist (entry (org-canvas--status-content-types))
       (let ((file-var (cadr entry))
             (id-prop (caddr entry)))
         (when (and (boundp file-var)
@@ -610,7 +610,7 @@ with Canvas's copy is what a pull does; it deletes nothing."
              "Pandoc not found.  HTML will be stored raw.  Continue? ")
       (user-error "Aborted")))
   (let ((existing 0))
-    (dolist (entry org-canvas--status-content-types)
+    (dolist (entry (org-canvas--status-content-types))
       (let ((file-var (cadr entry)))
         (when (and (boundp file-var)
                    (file-exists-p (expand-file-name (symbol-value file-var))))
@@ -649,7 +649,7 @@ forward for years arrives full of near-twins — 46 pages under 29 titles
 on the course that prompted this — and a count is enough to say so
 without repeating the validator's per-group detail (issue #164)."
   (let ((noisy nil))
-    (dolist (entry org-canvas--status-content-types)
+    (dolist (entry (org-canvas--status-content-types))
       (let* ((file-var (cadr entry))
              (file (and (boundp file-var)
                         (expand-file-name (symbol-value file-var)))))

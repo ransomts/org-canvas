@@ -1,0 +1,10 @@
+* Added
+- #513 The architecture guide's module tree is checked by a spec
+  against =ls lisp/= (=test/org-canvas-module-tree-test.el=), which
+  caught the pattern row that stood in for 24 feature modules. The
+  status table and the master delete and pull-all counts derive from
+  the feature and pull-feature registries, so a module that registers
+  is counted without another list to edit and =org-canvas-status=
+  lists the content types alphabetically (Grading Schemes was
+  missing). A committed Eldev archive cache under =lisp/.eldev/= is
+  untracked and ignored.

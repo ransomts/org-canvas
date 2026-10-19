@@ -34,6 +34,7 @@
 2.2 test/org-canvas-group-categories-test.el
 2.3 test/org-canvas-groups-test.el
 2.6 test/org-canvas-messages-test.el
+0.3 test/org-canvas-module-tree-test.el
 3.8 test/org-canvas-modules-test.el
 1.4 test/org-canvas-multicourse-test.el
 3.2 test/org-canvas-new-quizzes-test.el

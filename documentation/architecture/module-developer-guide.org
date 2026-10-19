@@ -440,13 +440,14 @@ before dependencies).
 
 Add to =org-canvas--pull-tiers= in the appropriate tier.
 
-** Add to Status Content Types
+** Status Content Types
 
-Add to =org-canvas--status-content-types= (in =lisp/org-canvas-status.el=):
-
-#+begin_src elisp
-("{Feature}s" org-canvas-{feature}s-file "CANVAS_ID")
-#+end_src
+Nothing to add: a module registered with =org-canvas-register-feature=
+is in the status table, and in the master delete and pull-all counts,
+automatically — =org-canvas--status-content-types= derives them from
+the feature and pull-feature registries.  Only a file no registry
+provides needs a row, in =org-canvas--status-unregistered-content-types=
+(=lisp/org-canvas-status.el=) — sections are the one today.
 
 * Step 8: Register in Transient Menu
 
