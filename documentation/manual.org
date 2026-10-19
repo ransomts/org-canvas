@@ -316,6 +316,16 @@ Each file path is configured via a variable:
 | =org-canvas-group-categories-file=  | =group-categories.org=     |
 | =org-canvas-calendar-events-file=   | =calendar.org=             |
 | =org-canvas-sections-file=          | =sections.org=             |
+| =org-canvas-grading-schemes-file=   | =grading-schemes.org=      |
+| =org-canvas-grading-periods-file=   | =grading-periods.org=      |
+| =org-canvas-question-banks-file=    | =question-banks.org=       |
+| =org-canvas-discussion-replies-file= | =discussion-replies.org= |
+| =org-canvas-groups-file=            | =groups.org=               |
+| =org-canvas-people-file=            | =people.org=               |
+| =org-canvas-gradebook-file=         | =gradebook.org=            |
+| =org-canvas-quiz-results-file=      | =quiz-results.org=         |
+| =org-canvas-rubric-results-file=    | =rubric-results.org=       |
+| =org-canvas-messages-file=          | =messages.org=             |
 
 All paths are relative to =org-canvas-directory=, and are resolved to their
 truename: if the directory setting goes through a symlink, org-canvas opens
@@ -328,6 +338,31 @@ clobbered stamps the sync had written (#97).  In batch, org-canvas also
 rereads its own unmodified buffers when the file changed on disk, and refuses
 with a clear error — rather than dying on the prompt — when such a buffer
 holds unsaved edits.
+
+* System Context
+
+org-canvas moves course content between the Org files of a course
+directory (the source of truth) and Canvas, and reaches Canvas over
+two transports: REST for content and grading, GraphQL for what REST
+does not offer (post policies, similarity and AI Writing reports,
+module-item reorder).  plz carries every request but a PATCH, which
+curl takes (#13).  Everything a keybinding does, =scripts/org-canvas=
+does in a batch Emacs.  A course you are adopting rather than owning
+is marked read-only: pull, status and diff, never a write (#163).
+
+#+begin_src mermaid
+graph TD
+    INSTRUCTOR["instructor in Emacs"] --> OC["org-canvas"]
+    OC <-->|"push (Org to Canvas), pull (Canvas to Org)"| FILES["course Org files<br/>the source of truth"]
+    OC -->|"REST: content, files, grading"| PLZ["plz"]
+    PLZ -->|"every method but PATCH"| CANVAS["Canvas LMS"]
+    PLZ -->|"PATCH, through curl (#13)"| CURL["curl"]
+    CURL --> CANVAS
+    OC -->|"GraphQL: post policies (#202), reports (#351),<br/>module-item reorder (#352)"| CANVAS
+    OC -.->|"pandoc (optional): pulled HTML to Org"| PANDOC["pandoc"]
+    BATCH["scripts/org-canvas<br/>batch Emacs"] --> OC
+    OC -.->|"browse-at-point: the web page, no API"| WEB["Canvas web pages"]
+#+end_src
 
 * Sync Order and Dependencies
 
@@ -3425,6 +3460,38 @@ rows, in the section header and a footer line, and do not make
 =org-canvas-diff-batch= exit non-zero.  They are listed because the next
 sync writes to Canvas for them.
 
+How an item and the local headings pair into a row kind, in one
+picture -- the features first, then the module items, which pair on
+content rather than id:
+
+#+begin_src mermaid
+graph TD
+    LIST["the feature's remote list,<br/>and its headings"] --> BYID["pair by the id property"]
+    BYID --> PAIRED["paired: compare every registered<br/>property and the body"]
+    PAIRED -- "something differs" --> CHANGED["CHANGED"]
+    PAIRED -- "nothing differs" --> OK["no row"]
+    BYID --> GONE["a heading whose id the<br/>course no longer holds"]
+    GONE --> MISSING["MISSING"]
+    BYID --> TITLEPAIR["an unclaimed remote item whose title<br/>an unstamped heading shows"]
+    TITLEPAIR --> UNCLAIMED["UNCLAIMED (a create that lost its stamp)<br/>a heading that is a link pairs on<br/>the link's description"]
+    BYID --> PLAIN["an unclaimed remote item<br/>no heading pairs with"]
+    PLAIN --> EXTRA["EXTRA"]
+    BYID --> LEFT["an unstamped heading<br/>no row names"]
+    LEFT --> PENDING["PENDING (counted apart:<br/>unpushed work, not drift)"]
+#+end_src
+
+#+begin_src mermaid
+graph TD
+    ITEMS["a module's items, and<br/>modules.org's item headings everywhere"] --> PAIR["pair one to one the way the sync adopts:<br/>the heading's link resolved offline,<br/>same type and same content"]
+    PAIR -- "a heading in the item's own module" --> UNCLAIMED["UNCLAIMED: the next sync<br/>adopts the twin itself"]
+    PAIR -- "a heading under another module" --> MOVED["MOVED: =s= stamps the id on that heading,<br/>and the next sync moves the item"]
+    PAIR -- "no heading pairs" --> EXTRA["EXTRA, naming the module it sits in"]
+    STAMPED["a stamped item heading"] --> WHERE{"Canvas holds its id<br/>in another module?"}
+    WHERE -- "yes" --> RELOCATE["RELOCATE: the next sync moves it<br/>there, keeping its id"]
+    WHERE -- "no" --> CMP["compared as any other heading"]
+    LEFT["the item headings no row names"] --> PENDING2["PENDING, naming their module"]
+#+end_src
+
 New Quizzes are compared in a section of their own, *New Quizzes*, listed
 from the New Quizzes service rather than the course API (#313).  A quiz is
 paired by its =CANVAS_ASSIGNMENT_ID=, so the section has the same rows as any
@@ -3561,7 +3628,41 @@ The report used to name problems and offer no verbs: everything an operator
 did next -- visit the heading, acknowledge an extra, delete a stray remote
 object, pull one item -- happened somewhere else, by hand (#103).  The
 =*canvas-diff*= buffer is now in =org-canvas-diff-mode=, and each row is
-something the keys act on:
+something the keys act on.
+
+Each row kind meets its own subset of the keys; the grid is the map
+and the table after it the detail:
+
+| Row kind  | =RET=          | =b= / =B=      | =a=                    | =k=                       | =p=                          | =A=                          | ~= =                    | =s=                     |
+|-----------+----------------+----------------+------------------------+---------------------------+------------------------------+------------------------------+-------------------------+-------------------------|
+| CHANGED   | visit heading  | page, edit page | adopt the stamp        | —                         | pull over the heading        | write Canvas's fields in     | show Canvas's version   | —                       |
+| MISSING   | visit heading  | —              | —                      | —                         | —                            | —                            | —                       | —                       |
+| EXTRA     | open the object | page, edit page | acknowledge the id    | delete it (asks)          | quizzes only (see below)     | —                            | —                       | —                       |
+| UNCLAIMED | visit heading  | page, edit page | acknowledge the id     | delete it (asks)          | —                            | —                            | —                       | —                       |
+| PENDING   | visit heading  | —              | —                      | —                         | —                            | —                            | —                       | —                       |
+| RELOCATE  | visit heading  | —              | —                      | —                         | —                            | —                            | —                       | —                       |
+| MOVED     | open the object | —             | acknowledge the id     | delete the old copy       | —                            | —                            | —                       | stamp the id            |
+| STALE-ACK | —              | —              | drop the ack           | —                         | —                            | —                            | —                       | —                       |
+
+=a= on a CHANGED row adopts the Canvas timestamp as the heading's
+baseline and is refused when a compared property differs; =p= on an
+EXTRA row pulls a classic quiz or a New Quiz whole into a new heading
+(and a New Quiz item's quiz over its heading).  =S=, =g= and
+=TAB=/=S-TAB= act on any row (=S= stamps every MOVED row paired by
+content).  In the transient menu, =j= is =a='s stamp adoption run
+over every CHANGED row with nothing to compare, and =J= is the
+buffer's =S=.  A =WEIGHTS= line under Assignment Groups is a line,
+not a row, and never counts as drift.
+
+Three sections carry rows of their own, with their own verbs:
+
+| Section                | Keys on its rows                                                                                     |
+|------------------------+------------------------------------------------------------------------------------------------------|
+| Assignment Overrides   | =RET= visits the assignment heading, =b= its page; =p= pulls the heading, writing Canvas's table whole; =A= appends an EXTRA override to the table; =k= and =a= refuse |
+| New Quiz Items         | =k= deletes the item; =b= / =B= open the quiz's page; =p= pulls the whole quiz over its heading     |
+| Module Items           | =k= deletes the item from its module; =a= acknowledges under ="module-items"=; =org-canvas-prune-module-items= removes every such item after confirming |
+
+The detail, key by key:
 
 | Key     | On a row                | Effect                                                              |
 |---------+-------------------------+---------------------------------------------------------------------|
@@ -3873,6 +3974,39 @@ The file is named after the column, but it belongs to the column's id: the =CANV
 =v= shows a read-only summary table derived from the file's headings, so it reflects grades not yet pushed; =v= there returns to the file. =g= re-pulls from Canvas and rewrites the file, but everything you typed in it comes back after the re-pull: scores (a =SCORE= that differs from its =CANVAS_SCORE=, the 0 on a missing row included, and a =none= until Canvas holds no grade), late statuses, drafted comments, notes, =Rubric= scores and comments, and sent comments you rewrote or marked =DELETE= and have not pushed. Nothing is asked first. The summary table is the one place a refresh loses an edit, so there =g= still asks when it holds unpushed scores (and goes ahead, saying so, when Emacs runs in batch and cannot ask).
 
 A refresh also says what changed since the file was last written, which is the reason anyone refreshes. The echo area gets the counts — =Refreshed Journal 02: 3 new, 1 resubmitted after grading, 105 posted, 1 left the course (1 kept)= — and the log one line per student. The kinds, one per student: *new* work arrived (a first submission, a later attempt on an ungraded row, a student the file did not have); *resubmitted after grading*, a new attempt on a row that carries a score, whose heading is marked =:CONFLICT: attempt: 2 submitted after grading= so the old score is not mistaken for a grade of the new file, and =:GRADED_ATTEMPT: 1= naming the attempt the score was given on, while the log sets the two attempts side by side (when each was submitted, its files, its word count), read from Canvas's attempt history for those rows only; *scored on Canvas since the pull*, the =CANVAS_SCORE= moved (someone graded in SpeedGrader); *posted*, the grade became visible to the student; *left the course*, a student no longer in the pull. When nothing moved the line says so, naming the previous =PULLED_AT=; the first pull of a file says nothing. Once anything in the column has been downloaded, the line also names each attachment the file lists that is not on disk — =; 1 attachment(s) not on disk, D downloads them: Adams, Alice (essay.pdf, an older copy is there)= — so a resubmission's file is not graded from the earlier attempt's copy. A departed student's heading is dropped unless it holds work of yours — notes, a draft, =Rubric= rows, a typed score — in which case it stays with =:STATUS: left= and whatever it held, and no push or completion rule ever touches it; delete the heading when you are done with it.
+
+** The Push in One Picture
+
+Step 4 above, as a picture -- one =S= on a grading file:
+
+#+begin_src mermaid
+sequenceDiagram
+    participant F as grading file
+    participant S as push (S)
+    participant A as Canvas
+    participant J as Progress job
+    F->>S: the headings where SCORE, Rubric rows, LATE_STATUS<br/>or a draft differs from its baseline
+    Note over S: a CONFLICT heading sends nothing until<br/>t or k resolves it (#440)
+    S->>S: the checks: an unreadable SCORE, a SCORE against the<br/>rubric total, a hand-emptied table or a bad LATE_STATUS<br/>stops everything, naming it
+    S->>A: read the Comment Bank: an item the library already<br/>holds is labelled, not saved twice
+    alt one change
+        S->>A: a single PUT
+    else several changes
+        S->>A: the bulk endpoint, each student's grade and<br/>rubric assessment in the same request
+        A->>J: Canvas applies it in a background job
+        loop every progress-interval seconds, up to the timeout
+            S->>J: has the job completed?
+        end
+    end
+    Note over S,J: only a completed job counts as pushed: a failure or a<br/>timeout records no baselines and offers no posting,<br/>so the next S sends them again
+    S->>A: each drafted comment, one request each<br/>(a posted one moves under Comments)
+    S->>A: each changed LATE_STATUS, one GraphQL<br/>request per student
+    S->>F: record CANVAS_SCORE, CANVAS_RUBRIC, CANVAS_LATE_STATUS,<br/>empty the cells, save the file
+    opt a manual post policy
+        S->>A: post the column, offered once the job completed
+    end
+    Note over S,F: a dry run sends nothing and writes nothing:<br/>drafts stay drafted, no baseline, no save (#442)
+#+end_src
 
 ** Similarity and AI Writing Reports
 

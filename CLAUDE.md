@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 org-canvas is an Emacs Lisp package that synchronizes course content from Org Mode files to Canvas LMS via its REST API. Org files are the "source of truth": instructors design courses in Org Mode and push changes to Canvas.
 
-Content types, one module each: assignments (including LTI/external-tool assignments such as Gradescope), classic quizzes, new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, sections (pull-only), grading periods (pull-only), grading schemes, per-section date overrides, per-student quiz accommodations, and course settings. Submission grading (`org-canvas-submissions.el`: view, comment, download attachments, push grades, rubric assessments and late statuses, keep SpeedGrader's comment bank) is a separate feature, not a content type.
+Content types, one module each: assignments (including LTI/external-tool assignments such as Gradescope), classic quizzes, new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, sections (pull-only), grading periods (pull-only), grading schemes, per-section date overrides, per-student quiz accommodations, and course settings; question banks, discussion replies, groups, people, the gradebook, rubric results and quiz results are pull-only readers, and messages sends conversations, never part of a sync. Submission grading (`org-canvas-submissions.el`: view, comment, download attachments, push grades, rubric assessments and late statuses, keep SpeedGrader's comment bank) is a separate feature, not a content type.
 
 ## Guides
 

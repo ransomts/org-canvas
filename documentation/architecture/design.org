@@ -374,8 +374,8 @@ Every synced heading carries these Org properties:
 | Property          | Set by      | Purpose                                 |
 |-------------------+-------------+-----------------------------------------|
 | =CANVAS_ID=         | Finalize    | POST/PUT decision (absent = new item)   |
-| =LAST_SYNCED=       | Finalize    | Conflict detection baseline             |
-| =CANVAS_UPDATED_AT= | Finalize    | Visible remote timestamp (transparency) |
+| =LAST_SYNCED=       | Finalize    | When this side last synced (the file's =#+LAST_SYNCED= header is the fallback baseline) |
+| =CANVAS_UPDATED_AT= | Finalize    | The heading's own conflict baseline (Canvas's clock) |
 | =PAYLOAD_HASH=      | Sync runner | Skip optimization (unchanged = skip)    |
 
 ** Why PAYLOAD_HASH?
@@ -393,9 +393,64 @@ items with sync-at-point.
 
 ** Why CANVAS_UPDATED_AT?
 
-This is stored purely for transparency. Users can inspect their Org
-file and see when Canvas last reported the item was updated, which
-helps debug conflict detection behavior.
+Users can inspect their Org file and see when Canvas last reported
+the item was updated, which helps debug conflict detection behavior.
+It is also what the conflict check compares: the entry's own stamp
+first, falling back to the file-level =#+LAST_SYNCED= header, and it
+is Canvas's clock rather than ours, so no skew allowance is needed
+(issues #48, #104, #86; api-interaction.org, "Baseline, Drift-Aware
+Skip, and Strategy Rules").
+
+** The Lifecycle as a Diagram
+
+The table names the stamps; this is the machine they drive.  A
+heading is in one of these states, and no state is written as a flag
+of its own -- the runner derives it, each run, from the stamps the
+heading carries.  The one state nothing stores is *Drifted*: it is
+the answer to "is the remote =:modified-field= newer than the
+baseline?", asked against the run's snapshot.  Each note names the
+state's drift-report face.
+
+#+begin_src mermaid
+stateDiagram-v2
+    [*] --> New : heading written, no CANVAS_ID
+    New --> Synced : POST lands, finalize stamps all four
+    Synced --> Synced : hash matches, snapshot clean: skip
+    Synced --> Edited : local edit changes the payload
+    Edited --> Synced : PUT lands, finalize restamps
+    Synced --> Drifted : remote newer than the baseline
+    Edited --> Drifted : the same, found at the check
+    Drifted --> Synced : push or pull resolves it
+    Drifted --> Drifted : skip: asked again next run
+    Synced --> Deleted : list pull missed it, own read 404s
+    Deleted --> Synced : a relisting unmarks it
+    Synced --> [*] : delete-at-point, delete-all
+    note right of New
+        the duplicate-title guard runs before
+        the POST (#85). The drift report shows
+        PENDING, or UNCLAIMED beside its remote
+        twin; adopting the twin stamps it and
+        drops PAYLOAD_HASH (#101)
+    end note
+    note right of Drifted
+        computed each run against the snapshot,
+        never stored. A passed scheduled date with
+        the bump inside the window is no
+        conflict (#453)
+    end note
+    note right of Deleted
+        CANVAS_DELETED: the sync skips it, validate
+        warns and leaves it out of cross-heading
+        checks (#402, #399); MISSING row in the
+        drift report
+    end note
+#+end_src
+
+Two modules leave this picture by design: =files=, whose stored hash
+is two halves and whose tiers choose between an unchanged skip, a
+metadata PUT and a re-upload (issues #49, #71, #77), and any module
+with =:hash push=, whose push owns change detection outright (see
+"Pipeline macros").
 
 * Conflict Detection Design
 
@@ -408,8 +463,9 @@ changes.
 ** The Approach
 
 Before each PUT, fetch the remote item and compare its =updated_at=
-timestamp against the local =LAST_SYNCED=. If remote is newer, prompt
-the user.
+(or the feature's =:modified-field=) against the heading's
+=CANVAS_UPDATED_AT=, falling back to the file's =#+LAST_SYNCED=
+header. If remote is newer, prompt the user.
 
 ** Why Not Automatic Merge?
 
@@ -617,6 +673,67 @@ the entire session.
 *Its columns follow the run* (=org-canvas--sync-summary-columns=): a dry run swaps Success for *Would sync* under a =DRY RUN= header, and Conflicts/Pulled columns appear only when the run had some. Every counter a run populates must be listed in =org-canvas--sync-stat-keys= — both the aggregate and the per-feature entry are built from it, and a key left out is silently dropped on the way to the table. That is issue #66: =:dry-run=, =:conflict= and =:pulled= were populated but never carried, so a dry run with 31 pending assignment updates printed =0 success= and a sync that hit five conflicts printed =0 failed= and nothing else. A custom sync must record its dry-run outcome as =:dry-run=, not =:success= (settings did the latter), or the mode detection never sees it.
 
 Module items skipped because their target lacked a CANVAS_ID are collected in the modules run's context under =:module-items-pending=, which =org-canvas-sync= reads off the value =org-canvas--sync-run-pipeline= returned and hands to =org-canvas--module-retry-pending-items= after the final tier: healed items are reclassified skip→success in the summary; the rest produce a named "re-run org-canvas-sync-modules" hint.
+
+* The Grading Subsystem
+
+Submission grading is the one part of the package that grew beside the
+content types rather than out of them, and it is the densest dependency
+cluster in =lisp/=.  Everything in it requires
+=org-canvas-submissions=, because the grading file -- its per-student
+headings, its summary table, its =* Comment Bank= -- is defined there.
+=org-canvas-submissions-comments= is the second hub: sent comments are
+the currency the checking and drafting modules share.  Sending itself
+lives in =org-canvas-submissions= (=S= grades, =P= post, =C= comment
+edits), so no module in the cluster exists for it.  Two seams are
+declared, never required -- the dashed edges, the same policy
+=org-canvas-diff= uses for =org-canvas-modules.el= -- so that nothing
+here requires another feature module outright.
+
+#+begin_src mermaid
+graph LR
+    subgraph "Pull"
+        SUB["org-canvas-submissions<br/>grading file, viewer, comment bank"]
+        QS["quiz-submissions<br/>a quiz's attempts"]
+        PR["peer-reviews<br/>who reviews whom"]
+        REP["submissions-reports<br/>Similarity and AI Writing"]
+        ST["submissions-status<br/>the grading queue"]
+    end
+    subgraph "Score and draft"
+        WIN["submissions-window<br/>score by section window"]
+        LATE["submissions-late<br/>late-policy comments"]
+        GRA["submissions-grades<br/>excuse, import a grade set"]
+        RUL["submissions-ruling<br/>apply a grading ruling"]
+        UPL["submissions-uploads<br/>pair downloaded uploads"]
+    end
+    subgraph "Check before sending"
+        COM["submissions-comments<br/>export, import, check"]
+        VER["submissions-verify<br/>read the push back"]
+    end
+    QS --> SUB
+    PR --> SUB
+    REP --> SUB
+    ST --> SUB
+    WIN --> SUB
+    LATE --> SUB
+    GRA --> SUB
+    RUL --> SUB
+    UPL --> SUB
+    COM --> SUB
+    VER --> SUB
+    LATE --> COM
+    VER --> COM
+    GRA --> COM
+    RUL --> COM
+    GRA --> RUL
+    LATE -.-> SETTINGS["settings.org<br/>the late policy"]
+    WIN -.-> SECTIONS["sections.org readers<br/>MEETS, the overrides table"]
+    REP -.-> ASSIGN["assignments.org's<br/>course-wide GraphQL read"]
+#+end_src
+
+=ruling= and =uploads= never touch Canvas at all: one rewrites the
+grading file for a listed set of students (#448), the other reads what
+=D= downloaded and pairs students by shared document (#457).  The
+rest of the cluster is read-only until the push.
 
 * Credential Management
 

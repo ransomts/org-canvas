@@ -541,6 +541,55 @@ returns ='pulled=, or returns ='conflict= (for skip).
 - A rubric update moves every assignment that grades with the rubric the same way (issue #470): a =use_for_grading= association resets the assignment's points to the rubric's total, and an association taken off and put back around the PUT (#255) is written again. =org-canvas--rubric-push-to-api= keeps those baselines itself, as the override sync does. Before the PUT it finds each assignment association of the live rubric in =assignments.org= by =CANVAS_ID= and reads the assignment once (=org-canvas--rubric-clean-baselines=, through the same registry read as #348); after the update, in an =unwind-protect= since the associations are put back even when the PUT fails, it reads each heading that agreed with Canvas again and restamps its =CANVAS_UPDATED_AT=, =PAYLOAD_HASH= kept. Agreement is the push's own test, #453's scheduled-date allowance included: a stamp no earlier than the remote =updated_at=, or a newer one a passed unlock or lock date explains. A heading that had drifted, has no stamp of its own or is absent from =assignments.org= is left alone, and a dry run reads nothing
 - Modules with =:pull-item-fn= in their =org-canvas-define-sync=: announcements, pages, discussions, assignments, assignment-groups, rubrics, group-categories, calendar-events, modules (whose pull-item also replaces child item headings from the remote list, fetching them when the conflict-check GET response lacks an =items= key)
 
+** One Heading Through One Sync Run
+
+The rules above, as a picture: one stamped heading, one run, and every
+writer of its =CANVAS_UPDATED_AT=.
+
+#+begin_src mermaid
+sequenceDiagram
+    participant R as run pipeline
+    participant H as Org heading
+    participant S as snapshot
+    participant C as conflict check
+    participant A as API layer
+    participant F as finalize
+    participant P as :post-fn
+    R->>S: one list per feature
+    S-->>R: every item's :modified-field
+    R->>H: parse entry, build payload
+    R->>R: hash vs stored PAYLOAD_HASH
+    Note over R,S: a matching hash skips only when the snapshot is clean
+    R->>C: baseline: CANVAS_UPDATED_AT, else the file header
+    C->>A: GET the item (:item-params, #273)
+    A-->>C: remote :modified-field
+    alt newer than the baseline
+        Note over C: a scheduled date just passed is no conflict (#453)
+        R->>R: prompt, or org-canvas-conflict-strategy
+        Note over R: nil / push / pull / skip (nil under batch is skip)
+        opt pull
+            R->>H: pull-item-fn overwrites, restamp, drop PAYLOAD_HASH
+        end
+    end
+    R->>A: PUT or POST (plz, curl takes a PATCH, #13)
+    A-->>R: response
+    R->>F: stamp CANVAS_ID, LAST_SYNCED, CANVAS_UPDATED_AT
+    opt the :post-fn writes again
+        F->>P: declared with org-canvas--finalize-note-remote-write
+        P->>A: a further POST (rubric association)
+        F->>A: re-read once, restamp (#124)
+    end
+    Note over R,F: a dry run sends nothing and stamps nothing
+#+end_src
+
+Two more writers sit outside finalize because their writes sit
+outside it: the override sync (#348) and the rubric push (#470) run
+custom loops that read before their first write and restamp only what
+agreed with Canvas, =PAYLOAD_HASH= kept.  The verified-skip path
+backfills =CANVAS_UPDATED_AT= on a legacy entry from the snapshot
+(#48, #104), so the file header stops being anyone's baseline after
+one full sync.
+
 ** Conflict Log Line Names Its Baseline (issue #86)
 
 =org-canvas--conflict-baseline-source= returns =(TIME . LABEL)=; =org-canvas--conflict-baseline= is its car. The conflict warning and the =*canvas-conflict*= buffer print the LABEL (=CANVAS_UPDATED_AT ...= or =#+LAST_SYNCED [...] (entry has no CANVAS_UPDATED_AT)=) rather than re-reading the file header, which was wrong whenever the entry's own stamp was compared and nil whenever POM was a bare position.
@@ -548,6 +597,18 @@ returns ='pulled=, or returns ='conflict= (for skip).
 * Duplicate-Title Guard (issue #85)
 
 =org-canvas--push-to-api= chooses POST purely on the absence of an id, and every recovery from a partial create (POST succeeded, stamp never written) left the course one sync away from a second copy students could submit to. Before any POST, =org-canvas--push-guard-duplicate= looks the title up and asks adopt/skip/create — =org-canvas--resolve-duplicate= mirrors the conflict machinery: the run context's =:duplicate-apply-all= (capitals, per run), =org-canvas-duplicate-title-strategy= (the caller's seam; =create= also disables the lookup), skip under =noninteractive=. Adopt stamps the id /and/ =CANVAS_UPDATED_AT= from the item before the PUT so the conflict check that follows compares against the item's own clock. The lookup source is the run context's =:remote-titles=: the drift snapshot's title index (built by =org-canvas--sync-fetch-remote-snapshot= from the same one list request) inside a sync, the symbol =none= when a sync had no snapshot (an unregistered feature such as new quizzes, a failed fetch, detection off — check nothing rather than spend a GET per entry), and nil in a context outside a sync, where a single-entry push asks the module's =:find-fn=. The pipeline counts a =duplicate= return as a skip with a named =:skipped-titles= entry; =org-canvas--push-at-point-runtime= reports =conflict=/=pulled=/=duplicate= instead of finalizing a symbol. =org-canvas-diff= reports the same situation as =UNCLAIMED= via =org-canvas--diff-pair-unclaimed=.
+
+The guard as a picture:
+
+#+begin_src mermaid
+graph TD
+    POST["a push about to POST:<br/>the heading has no CANVAS_ID"] --> LOOK{"look the title up. Inside a sync:<br/>the snapshot's title index (:remote-titles).<br/>Outside: the module's :find-fn.<br/>No snapshot and no :find-fn:<br/>nothing is checked"}
+    LOOK -- "not held, or nothing to check" --> CREATE["POST"]
+    LOOK -- "Canvas holds the title" --> ASK{"org-canvas--resolve-duplicate:<br/>adopt, skip or create. Capitals apply<br/>to every guard this run only<br/>(:duplicate-apply-all)"}
+    ASK -- "adopt" --> ADOPT["stamp CANVAS_ID and CANVAS_UPDATED_AT from the item,<br/>drop PAYLOAD_HASH, so the PUT that follows<br/>compares against the item's own clock"]
+    ASK -- "skip (the answer under noninteractive)" --> SKIP["counted a skip, named in :skipped-titles"]
+    ASK -- "create" --> CREATE
+#+end_src
 
 *Child levels and custom pushes (issue #179, follow-up).*  Nothing that bypasses =org-canvas--push-to-api= sees the guard above, so quiz questions, New Quiz items, New Quizzes, outcomes and the 404 recovery each look their title up before a POST through the helpers named in decisions.org, "Every Create Path Adopts a Twin"; the generic features without a =:find-fn= (classic quizzes, discussions, announcements, assignment groups) gained one so a push at point is guarded outside a sync's snapshot.
 
@@ -664,6 +725,30 @@ throughout:
   before concatenating with binary content
 
 ** When a File Is Re-uploaded: Three Tiers (issues #49, #70, #71, #77)
+
+The decision as a picture (the paragraphs after it are the detail):
+
+#+begin_src mermaid
+graph TD
+    H["a files.org file heading, parsed<br/>(org-canvas--file-sync-parsed-entry)"] --> FORCE{"org-canvas--file-force-upload<br/>bound for this run?"}
+    FORCE -- "yes: every skip reasons from a hash,<br/>and a hash never says what Canvas holds" --> CHK
+    FORCE -- "no" --> SPLIT{"stored PAYLOAD_HASH is the<br/>split BYTES:METADATA form?"}
+    SPLIT -- "no: a legacy single md5" --> LEG{"fetch the Canvas copy once:<br/>do the bytes agree? (a leading CRLF<br/>from #70 is tolerated)"}
+    LEG -- "yes" --> MIG["adopt the split hash, the id survives<br/>(org-canvas--file-migrate-legacy-hash,<br/>announced up front by --announce-legacy-hashes)"]
+    LEG -- "no: a genuine difference" --> CHK
+    SPLIT -- "yes" --> BYTES{"the BYTES half matches?"}
+    BYTES -- "no: content changed" --> CHK
+    BYTES -- "yes" --> META{"the METADATA half matches?"}
+    META -- "yes" --> SKIP["skip: nothing to send"]
+    META -- "no" --> CHK
+    CHK{"the shared conflict resolution first<br/>(org-canvas--file-check-conflict,<br/>pull offered, #49)"}
+    CHK -- "conflict: pulled or skipped" --> STOP["nothing written by this push"]
+    CHK -- "clean" --> TIER{"which tier reached here?"}
+    TIER -- "metadata only" --> PUT["one PUT /api/v1/files/:id: name, folder,<br/>locked, hidden, dates -- the file id kept<br/>(org-canvas--file-update-metadata)"]
+    TIER -- "content changed, or forced" --> MOVE{"the file moved folders?<br/>(org-canvas--file-replace-in-place-p)"}
+    MOVE -- "no" --> OVER["re-upload: on_duplicate=overwrite replaces it<br/>where it stands, Canvas repoints the module items<br/>and keeps the old id as an alias (#77)"]
+    MOVE -- "yes" --> DEL["delete the old object first<br/>(org-canvas--file-clear-way-for-upload),<br/>recorded in :file-recreated-ids and warned"]
+#+end_src
 
 Files sync in three tiers rather than always re-uploading: =PAYLOAD_HASH= stores =BYTES:METADATA= (=org-canvas--file-hash-parts= splits it), so a whole-hash match skips, a bytes match goes through =org-canvas--file-update-metadata= (one =PUT /api/v1/files/:id= — name, parent_folder_id, locked/hidden/dates — keeping the file id), and only a content change re-uploads. A legacy single-md5 hash is no longer taken as evidence of a content change: =org-canvas--file-migrate-legacy-hash= fetches the Canvas copy once and adopts a split hash when the bytes agree (tolerating the leading CRLF that issue #70 put on every pre-fix upload), so the id survives. Only a genuine difference re-uploads, and =org-canvas--file-announce-legacy-hashes= says up front how many entries face that check — issue #71: a re-upload rotates the file id, and deleting the old object first made Canvas /silently drop the module items pointing at it/.
 
