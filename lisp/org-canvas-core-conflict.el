@@ -213,15 +213,15 @@ user, offering pull only when CTX names a :pull-item-fn; a capital
 answer is remembered in CTX for the rest of the run and nowhere else
 \(issue #141).  Returns \\='push, \\='pull, or \\='skip."
   ;; Fast path: apply-all already set by a previous choice this run
-  (when (plist-get ctx :conflict-apply-all)
+  (when (org-canvas--ctx-get ctx :conflict-apply-all)
     (cl-return-from org-canvas--resolve-conflict
-      (plist-get ctx :conflict-apply-all)))
+      (org-canvas--ctx-get ctx :conflict-apply-all)))
   ;; No one to ask, or a standing instruction not to
   (let ((unattended (org-canvas--conflict-unattended-action data)))
     (when unattended
       (cl-return-from org-canvas--resolve-conflict unattended)))
   ;; Show diff and prompt
-  (let* ((has-pull-fn (not (null (plist-get ctx :pull-item-fn))))
+  (let* ((has-pull-fn (not (null (org-canvas--ctx-get ctx :pull-item-fn))))
          (buf (org-canvas--conflict-format-diff data remote-response has-pull-fn))
          (choice (unwind-protect
                      (org-canvas--conflict-prompt has-pull-fn)
@@ -283,9 +283,9 @@ given earlier in this run, wins; then
 batch-mode decision; otherwise the prompt, whose capital answer is
 remembered in CTX for the rest of the run.  Returns `adopt', `skip' or
 `create'."
-  (when (plist-get ctx :duplicate-apply-all)
+  (when (org-canvas--ctx-get ctx :duplicate-apply-all)
     (cl-return-from org-canvas--resolve-duplicate
-      (plist-get ctx :duplicate-apply-all)))
+      (org-canvas--ctx-get ctx :duplicate-apply-all)))
   (let ((unattended (org-canvas--duplicate-unattended-action title)))
     (when unattended
       (cl-return-from org-canvas--resolve-duplicate unattended)))

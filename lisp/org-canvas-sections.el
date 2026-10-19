@@ -767,8 +767,8 @@ Fetches existing overrides from Canvas, then for each local override:
   - Creates a new override when none is claimed (POST)
   - Deletes the remote overrides no row claimed (DELETE), by id — after
     asking, when CONFIRM is non-nil (issue #411)
-Returns a list (CREATED UPDATED DELETED KEPT) as integer counts, KEPT
-the overrides Canvas holds that no row claims and the reconcile did
+Returns a plist (:created N :updated N :deleted N :kept N), KEPT the
+overrides Canvas holds that no row claims and the reconcile did
 not delete: always 0 without CONFIRM.
 Under `org-canvas--dry-run' the remote is still read but no write is
 issued; the counts then report what would have been done."
@@ -788,7 +788,8 @@ issued; the counts then report what would have been done."
           ('updated (setq updated (1+ updated))))))
     (let ((removed (org-canvas--override-delete-removed
                     endpoint existing matched-ids confirm)))
-      (list created updated (car removed) (cdr removed)))))
+      (list :created created :updated updated
+            :deleted (car removed) :kept (cdr removed)))))
 
 ;;;; Keeping the Assignment's Baseline (issue #348)
 ;;
@@ -933,15 +934,17 @@ since restamping it would hide the edit — unless OPTIONS, a plist,
 carries a `:mismatch-fn' that finds the heading's own fields agreeing
 with Canvas, in which case the drift was the overrides just matched
 and the stamp moves (issue #410; `org-canvas--override-restamp-explained').
-`:confirm-deletes' in OPTIONS asks before an override Canvas holds is
-deleted (issue #411).  Return the reconcile's counts."
+`(:confirm-deletes' in OPTIONS asks before an override Canvas holds is
+deleted (issue #411).  Return the reconcile's counts plist."
   (let* ((clean (org-canvas--override-baseline-clean-p
                  pom assignment-id title))
          (counts (org-canvas--override-sync-for-assignment
                   assignment-id overrides (plist-get options :confirm-deletes)))
          (mismatch-fn (plist-get options :mismatch-fn)))
     (cond
-     ((zerop (apply #'+ (cl-subseq counts 0 3))))
+     ((zerop (+ (plist-get counts :created)
+                (plist-get counts :updated)
+                (plist-get counts :deleted))))
      (clean (org-canvas--override-restamp pom assignment-id title))
      (org-canvas--dry-run)
      (mismatch-fn (org-canvas--override-restamp-explained
@@ -959,10 +962,11 @@ POM is a marker at the heading, or within its entry.  SOURCE-DIR is
 the directory section links resolve against, by default that of the
 buffer's file.  OPTIONS is the plist `org-canvas--override-sync-heading'
 takes: a push by heading passes its `:mismatch-fn' and
-`:confirm-deletes'.  Return the counts (CREATED UPDATED DELETED KEPT)
-of `org-canvas--override-sync-heading', or nil when the heading has no
-CANVAS_ID or no `#+NAME: overrides' table: the one heading's reconcile,
-which `org-canvas-sync-overrides' runs for every heading and a push by
+`:confirm-deletes'.  Return the counts plist of
+`org-canvas--override-sync-heading' — :created, :updated, :deleted
+and :kept — or nil when the heading has no CANVAS_ID or no `#+NAME:
+`overrides' table: the one heading's reconcile, which
+`org-canvas-sync-overrides' runs for every heading and a push by
 heading runs for its own (issue #380)."
   (org-with-point-at pom
     (org-back-to-heading t)
@@ -1015,9 +1019,9 @@ push of one assignment heading reconciles that heading's table."
           (dolist (marker markers)
             (let ((counts (org-canvas--override-sync-entry marker source-dir)))
               (when counts
-                (setq total-created (+ total-created (nth 0 counts)))
-                (setq total-updated (+ total-updated (nth 1 counts)))
-                (setq total-deleted (+ total-deleted (nth 2 counts)))
+                (setq total-created (+ total-created (plist-get counts :created)))
+                (setq total-updated (+ total-updated (plist-get counts :updated)))
+                (setq total-deleted (+ total-deleted (plist-get counts :deleted)))
                 (setq assignments-processed (1+ assignments-processed)))))
           (dolist (m markers) (set-marker m nil))
           (org-canvas--save-buffer)))

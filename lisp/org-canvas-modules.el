@@ -1543,7 +1543,7 @@ reason and nil comes back, so the caller falls back to recreating."
 (defun org-canvas--module-item-relocated-p (ctx id to)
   "Return non-nil when CTX records item ID moved into module TO this run."
   (member (cons (format "%s" id) (format "%s" to))
-          (plist-get ctx :module-items-relocated)))
+          (org-canvas--ctx-get ctx :module-items-relocated)))
 
 (defun org-canvas--module-item-note-relocated (ctx id to)
   "Record in CTX that item ID moved into module TO.
@@ -1680,7 +1680,7 @@ non-nil when it was deleted."
     (cond
      ((and claim (org-canvas--module-item-move-departed module-id item claim ctx))
       nil)
-     ((or claim (member id (plist-get ctx :module-items-moved)))
+     ((or claim (member id (org-canvas--ctx-get ctx :module-items-moved)))
       (org-canvas--module-delete-departed-item module-id item
                                                (plist-get claim :title)))
      (t
@@ -1772,7 +1772,7 @@ Returns (success-count skip-count fail-count)."
                                                (with-current-buffer (marker-buffer m)
                                                  (org-entry-get m "CANVAS_ID")))
                                              item-markers))
-                           (plist-get ctx :module-items-adopted))))
+                           (org-canvas--ctx-get ctx :module-items-adopted))))
       (org-canvas--module-reconcile-departed module-id module-pom remote claimed ctx))
 
     ;; Release markers to avoid memory leaks

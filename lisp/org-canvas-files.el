@@ -1387,12 +1387,12 @@ only lists them — and says how many entries carry a pre-split hash
 (defun org-canvas--file-sync-after (ctx)
   "Report the file ids a run rotated or recreated, as recorded in CTX.
 The `:after-sync' of the files pipeline."
-  (when (plist-get ctx :file-changed-ids)
+  (when (org-canvas--ctx-get ctx :file-changed-ids)
     (org-canvas--file-warn-changed-ids
-     (reverse (plist-get ctx :file-changed-ids))))
-  (when (plist-get ctx :file-recreated-ids)
+     (reverse (org-canvas--ctx-get ctx :file-changed-ids))))
+  (when (org-canvas--ctx-get ctx :file-recreated-ids)
     (org-canvas--file-warn-recreated-ids
-     (reverse (plist-get ctx :file-recreated-ids)))))
+     (reverse (org-canvas--ctx-get ctx :file-recreated-ids)))))
 
 ;; Files run on the shared pipeline with two declarations the other
 ;; content types do not need.  `:hash push': change detection is theirs —
@@ -1458,9 +1458,9 @@ correcting one file rather than a course."
     (when (org-canvas--file-force-confirm (format "'%s'" display-name))
       (let* ((org-canvas--file-force-upload t)
              (ctx (org-canvas-sync-file-at-point)))
-        (when (plist-get ctx :file-recreated-ids)
+        (when (org-canvas--ctx-get ctx :file-recreated-ids)
           (org-canvas--file-warn-recreated-ids
-           (reverse (plist-get ctx :file-recreated-ids))))
+           (reverse (org-canvas--ctx-get ctx :file-recreated-ids))))
         (message "Re-uploaded '%s'." display-name)))))
 
 ;;;; Delete Functions

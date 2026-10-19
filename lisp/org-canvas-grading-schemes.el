@@ -235,7 +235,7 @@ value, the value a percent."
   "Return the grading standard CANVAS-ID from Canvas, or nil when it has none.
 Inside a run CTX's snapshot answers without a request; a push at
 point asks with one GET, where a 404 is nil."
-  (let ((titles (plist-get ctx :remote-titles))
+  (let ((titles (org-canvas--ctx-get ctx :remote-titles))
         (found nil))
     (if (hash-table-p titles)
         (progn
@@ -283,7 +283,7 @@ CTX supplies the hash owner.  Nothing is written under a dry run."
 
 (defun org-canvas--grading-scheme-note-skip (ctx title why)
   "Name TITLE among the run's skipped entries in CTX, with WHY."
-  (let ((counters (plist-get ctx :counters)))
+  (let ((counters (org-canvas--ctx-get ctx :counters)))
     (when counters
       (plist-put counters :skipped-titles
                  (cons (format "%s (%s)" title why)

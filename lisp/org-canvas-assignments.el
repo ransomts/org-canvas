@@ -659,15 +659,7 @@ what it finds and never raises."
 ;; The REST key stays as the fallback for an assignment the query did
 ;; not answer for, and a refused query degrades to it with one warning.
 
-(defvar org-canvas--assignment-processors-cache nil
-  "Cons of (COURSE-ID . MAP) from the last course-wide processor read.
-MAP is a hash of assignment id (a string) to the list of its processor
-nodes, empty for an assignment that has none; or the symbol `refused'
-when Canvas would not answer, so the REST fallback is read instead.
-Forgotten when a command starts (`org-canvas--operation-start-hook'),
-so one command reads it once and the next reads afresh.")
-
-(defconst org-canvas--assignment-processors-query
+(defvar org-canvas--assignment-processors-query
   "query ($courseId: ID!, $cursor: String) {
   course(id: $courseId) {
     assignmentsConnection(first: 100, after: $cursor) {
@@ -685,12 +677,8 @@ so one command reads it once and the next reads afresh.")
 One page of assignments at a time.  Checked against the Canvas schema
 by the GraphQL contract test, which names it by this symbol.")
 
-(defun org-canvas--assignment-processors-forget ()
-  "Drop the cached processor map, so the next read asks Canvas."
-  (setq org-canvas--assignment-processors-cache nil))
-
-(add-hook 'org-canvas--operation-start-hook
-          #'org-canvas--assignment-processors-forget)
+(org-canvas-define-operation-cache org-canvas--assignment-processors
+  :doc "the course's processor map, or `refused'")
 
 (defun org-canvas--assignment-graphql-read (query node-value what fallback)
   "Read the course-wide assignments QUERY into a hash by assignment id.
@@ -728,15 +716,6 @@ REST fallback (the #171 rule)."
    org-canvas--assignment-processors-query
    #'org-canvas--assignment-processors-node-value
    "the document processors" "reading the REST asset_processors instead"))
-
-(defun org-canvas--assignment-processors-map ()
-  "Return the course's processor map, reading it once per command."
-  (unless (equal (car org-canvas--assignment-processors-cache)
-                 org-canvas-course-id)
-    (setq org-canvas--assignment-processors-cache
-          (cons org-canvas-course-id
-                (org-canvas--assignment-processors-fetch))))
-  (cdr org-canvas--assignment-processors-cache))
 
 (defun org-canvas--assignment-graphql-processors (item)
   "Return the processor nodes GraphQL reports for the Canvas ITEM.
@@ -828,11 +807,8 @@ contract test (issue #269), which names it by this symbol.")
 ;; `scheduled_feedback_releases' feature is on; and a mutation that
 ;; sends manual posting with no times deletes the schedule it finds.
 
-(defvar org-canvas--assignment-schedules-cache nil
-  "Cons of (COURSE-ID . MAP) from the last course-wide schedule read.
-MAP is a hash of assignment id (a string) to its `scheduledPost'
-alist, nil for an assignment with none; or the symbol `refused' when
-Canvas would not answer.  Forgotten when a command starts.")
+(org-canvas-define-operation-cache org-canvas--assignment-schedules
+  :doc "the course's schedule map, or `refused'")
 
 (defconst org-canvas--assignment-schedules-query
   "query ($courseId: ID!, $cursor: String) {
@@ -846,13 +822,6 @@ Canvas would not answer.  Forgotten when a command starts.")
   "The GraphQL query listing every assignment's scheduled posting.
 Checked against the Canvas schema by the GraphQL contract test, which
 names it by this symbol.")
-
-(defun org-canvas--assignment-schedules-forget ()
-  "Drop the cached schedule map, so the next read asks Canvas."
-  (setq org-canvas--assignment-schedules-cache nil))
-
-(add-hook 'org-canvas--operation-start-hook
-          #'org-canvas--assignment-schedules-forget)
 
 (defun org-canvas--assignment-schedule-node-value (node)
   "Return the `scheduledPost' of the assignment NODE, or nil for none."
@@ -868,15 +837,6 @@ warning: the assignments still pull, their schedules left as they are."
    #'org-canvas--assignment-schedule-node-value
    "the scheduled grade postings"
    "POST_GRADES_AT and POST_COMMENTS_AT are left as they are"))
-
-(defun org-canvas--assignment-schedules-map ()
-  "Return the course's schedule map, reading it once per command."
-  (unless (equal (car org-canvas--assignment-schedules-cache)
-                 org-canvas-course-id)
-    (setq org-canvas--assignment-schedules-cache
-          (cons org-canvas-course-id
-                (org-canvas--assignment-schedules-fetch))))
-  (cdr org-canvas--assignment-schedules-cache))
 
 (defun org-canvas--assignment-schedule (item)
   "Return the `scheduledPost' alist of the Canvas ITEM, nil, or `unknown'.
@@ -1174,12 +1134,14 @@ none of them, so other headings keep their hash."
        ""))))
 
 (defun org-canvas--assignment-overrides-note (counts)
-  "Describe the override reconcile COUNTS, (CREATED UPDATED DELETED KEPT).
+  "Describe the override reconcile COUNTS plist (:created :updated :deleted :kept).
 KEPT, the overrides Canvas holds that the table lacks and the push
 left alone (issue #411), is named only when there are any."
   (format "overrides %d created, %d updated, %d deleted%s%s"
-          (nth 0 counts) (nth 1 counts) (nth 2 counts)
-          (let ((kept (or (nth 3 counts) 0)))
+          (plist-get counts :created)
+          (plist-get counts :updated)
+          (plist-get counts :deleted)
+          (let ((kept (or (plist-get counts :kept) 0)))
             (if (> kept 0)
                 (format ", %d kept that the table lacks" kept)
               ""))
@@ -1217,7 +1179,7 @@ when the reconcile signalled: the assignment itself is pushed by
 then, and says so."
   (let* ((pom (point-marker))
          (title (org-get-heading t t t t))
-         (payload (plist-get ctx :heading-payload))
+         (payload (org-canvas--ctx-get ctx :heading-payload))
          (options (list :confirm-deletes t
                         :mismatch-fn
                         (and (hash-table-p payload)

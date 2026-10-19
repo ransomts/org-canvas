@@ -336,8 +336,8 @@ when the request failed."
 (defun org-canvas--accommodation-sync-for-quiz (quiz-id rows)
   "Reconcile the accommodation ROWS of QUIZ-ID with the extensions on Canvas.
 A row whose values differ from Canvas's is sent; a student with an
-extension on Canvas and no row is sent zeros.  Returns (SET CLEARED)
-as counts of requests sent, or previewed under the dry run."
+extension on Canvas and no row is sent zeros.  Returns a plist of the
+requests sent, or previewed under the dry run: (:set N :cleared N)."
   (let* ((endpoint (org-canvas-api-course-endpoint "quizzes/%s/extensions" quiz-id))
          (existing (org-canvas--accommodation-fetch quiz-id))
          (find (lambda (id) (cl-find id existing :key (lambda (e) (plist-get e :user-id))
@@ -353,14 +353,14 @@ as counts of requests sent, or previewed under the dry run."
         (when (org-canvas--accommodation-push-one
                endpoint (org-canvas--accommodation-cleared e) "clear")
           (cl-incf cleared))))
-    (list set cleared)))
+    (list :set set :cleared cleared)))
 
 ;;;; Commands
 
 (defun org-canvas--accommodation-sync-entry ()
   "Sync the accommodations table of the quiz heading at point.
-Returns (SET CLEARED), or nil when the heading has no CANVAS_ID or no
-table."
+Returns the counts plist (:set N :cleared N), or nil when the heading
+has no CANVAS_ID or no table."
   (let* ((canvas-id (org-canvas-org-get-property (point) "CANVAS_ID"))
          (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
          (end (save-excursion (org-end-of-subtree t) (point)))
@@ -409,8 +409,8 @@ extensions Canvas holds: the table is the whole set."
           (goto-char (marker-position marker))
           (when-let* ((counts (org-canvas--accommodation-sync-entry)))
             (cl-incf quizzes)
-            (cl-incf set (nth 0 counts))
-            (cl-incf cleared (nth 1 counts))))
+            (cl-incf set (plist-get counts :set))
+            (cl-incf cleared (plist-get counts :cleared))))
         (dolist (m markers) (set-marker m nil))))
     (org-canvas--accommodation-report quizzes set cleared)))
 
@@ -427,7 +427,8 @@ extensions Canvas holds: the table is the whole set."
     (let ((counts (org-canvas--accommodation-sync-entry)))
       (unless counts
         (user-error "This heading has no CANVAS_ID or no accommodations table"))
-      (org-canvas--accommodation-report 1 (nth 0 counts) (nth 1 counts)))))
+      (org-canvas--accommodation-report
+       1 (plist-get counts :set) (plist-get counts :cleared)))))
 
 (provide 'org-canvas-quiz-accommodations)
 ;;; org-canvas-quiz-accommodations.el ends here
