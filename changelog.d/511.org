@@ -1,0 +1,9 @@
+* Added
+- #511 =scripts/org-canvas pull= takes a bare feature name:
+  =pull announcements= runs the feature's whole pull, adopting items
+  made in the web UI into =announcements.org=, while
+  =pull announcements:Title= keeps pulling named headings.  A mixed
+  invocation runs the features first, so a heading named after one is
+  found once its items exist; a feature that fails is counted, named
+  and does not stop the rest; an unknown name is a usage error
+  listing every feature with a pull.
