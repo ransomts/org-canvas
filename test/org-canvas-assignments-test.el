@@ -3108,7 +3108,7 @@ The heading's overrides table moves section 777 to 14:20; Canvas holds
            (calls (cdr run)))
       (expect (plist-get result :error) :to-be nil)
       (expect (plist-get result :outcome) :to-be 'synced)
-      (expect (plist-get result :overrides) :to-equal '(0 1 0 0))
+      (expect (plist-get result :overrides) :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
       (expect (plist-get result :note) :to-match "1 updated")
       (expect (test-asg380-called-p calls 'PUT "assignments/456\\'") :to-be-truthy)
       (expect (test-asg380-called-p calls 'PUT "assignments/456/overrides/10\\'")
@@ -3121,7 +3121,7 @@ The heading's overrides table moves section 777 to 14:20; Canvas holds
            (result (car (car run)))
            (calls (cdr run)))
       (expect (plist-get result :outcome) :to-be 'dry-run)
-      (expect (plist-get result :overrides) :to-equal '(0 1 0 0))
+      (expect (plist-get result :overrides) :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
       (expect (plist-get result :note) :to-match "dry run")
       (expect (cl-remove-if (lambda (c) (eq (car c) 'GET)) calls) :to-equal nil)))
 
@@ -3204,7 +3204,7 @@ TEXT is the file afterwards, CALLS the API calls made."
            (result (nth 0 run)))
       (expect (plist-get result :error) :to-be nil)
       (expect (plist-get result :outcome) :to-be 'unchanged)
-      (expect (plist-get result :overrides) :to-equal '(0 1 0 0))
+      (expect (plist-get result :overrides) :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
       (expect (nth 1 run) :to-match ":CANVAS_UPDATED_AT: 2026-09-29T17:59:34Z")
       (expect (test-asg380-called-p (nth 2 run) 'PUT "assignments/456\\'") :to-be nil)
       (expect (test-asg380-called-p (nth 2 run) 'PUT "overrides/11\\'")
@@ -3213,7 +3213,7 @@ TEXT is the file afterwards, CALLS the API calls made."
   (it "keeps the stamp when Canvas holds a field otherwise, so the next push still asks"
     (let ((run (test-asg410-sync 2)))
       (expect (plist-get (nth 0 run) :outcome) :to-be 'unchanged)
-      (expect (plist-get (nth 0 run) :overrides) :to-equal '(0 1 0 0))
+      (expect (plist-get (nth 0 run) :overrides) :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
       (expect (nth 1 run) :to-match ":CANVAS_UPDATED_AT: 2026-09-28T16:32:20Z"))))
 
 (describe "org-canvas--assignment-heading-mismatches (issue #410)"
@@ -3257,11 +3257,14 @@ TEXT is the file afterwards, CALLS the API calls made."
 
 (describe "org-canvas--assignment-overrides-note (issue #411)"
   (it "names the overrides a push kept, and nothing when it kept none"
-    (expect (org-canvas--assignment-overrides-note '(0 0 0 2))
+    (expect (org-canvas--assignment-overrides-note
+             '(:created 0 :updated 0 :deleted 0 :kept 2))
             :to-equal "overrides 0 created, 0 updated, 0 deleted, 2 kept that the table lacks")
-    (expect (org-canvas--assignment-overrides-note '(0 1 0 0))
+    (expect (org-canvas--assignment-overrides-note
+             '(:created 0 :updated 1 :deleted 0 :kept 0))
             :to-equal "overrides 0 created, 1 updated, 0 deleted")
-    (expect (org-canvas--assignment-overrides-note '(1 0 0))
+    (expect (org-canvas--assignment-overrides-note
+             '(:created 1 :updated 0 :deleted 0 :kept 0))
             :to-equal "overrides 1 created, 0 updated, 0 deleted")))
 
 (describe "org-canvas--assignment-pull-after replaces the table (issue #411)"

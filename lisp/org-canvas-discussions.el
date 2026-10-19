@@ -153,27 +153,20 @@
 
 ;;;; Checkpoints: the course-wide GraphQL read
 
-(defvar org-canvas--discussion-checkpoints-cache nil
-  "Cons of (COURSE-ID . MAP) from the last course-wide checkpoint read.
-MAP is a hash of topic id (a string) to a checkpoint plist
-\=(:topic-points :topic-due-at :reply-points :reply-due-at
-:replies-required), holding only the topics that have checkpoints; or
-the symbol `refused' when Canvas would not answer, so the properties
-are left alone rather than deleted.  Forgotten when a command starts
-\=(`org-canvas--operation-start-hook') and after a checkpoint push, so
-one command reads it once and the next reads afresh.")
+;; The map is a hash of topic id to the checkpoint plist
+;; (:topic-points :topic-due-at :reply-points :reply-due-at
+;; :replies-required), holding only the topics that have checkpoints,
+;; or `refused' when Canvas would not answer, so the properties are
+;; left alone rather than deleted.  A checkpoint push forgets it too,
+;; so the push's own writes are read back on the next command.
+(org-canvas-define-operation-cache org-canvas--discussion-checkpoints
+  :doc "the course's checkpoint map, or `refused'")
 
 (defconst org-canvas--discussion-checkpoints-query
   "query ($courseId: ID!, $cursor: String) { course(id: $courseId) { discussionsConnection(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { _id replyToEntryRequiredCount checkpoints { tag pointsPossible dueAt } } } } }"
   "The GraphQL query listing every discussion's checkpoints, one page at a time.
 Checked against the Canvas schema by the GraphQL contract test
 \(issue #269), which names it by this symbol.")
-
-(defun org-canvas--discussion-checkpoints-forget ()
-  "Drop the cached checkpoint map, so the next read asks Canvas."
-  (setq org-canvas--discussion-checkpoints-cache nil))
-
-(add-hook 'org-canvas--operation-start-hook #'org-canvas--discussion-checkpoints-forget)
 
 (defun org-canvas--discussion-checkpoints-from-node (node)
   "Return the checkpoints of the GraphQL discussion NODE as a plist, or nil.
@@ -217,13 +210,6 @@ discussions still pull, with their checkpoint properties untouched
        "[Checkpoints] Could not read the discussion checkpoints (%s); the CHECKPOINT_ properties are left as they are"
        (error-message-string err))
      'refused)))
-
-(defun org-canvas--discussion-checkpoints-map ()
-  "Return the course's checkpoint map, reading it once per command."
-  (unless (equal (car org-canvas--discussion-checkpoints-cache) org-canvas-course-id)
-    (setq org-canvas--discussion-checkpoints-cache
-          (cons org-canvas-course-id (org-canvas--discussion-checkpoints-fetch))))
-  (cdr org-canvas--discussion-checkpoints-cache))
 
 (defun org-canvas--discussion-checkpoints-known-p (item)
   "Return non-nil when the checkpoints of the Canvas topic ITEM can be answered.

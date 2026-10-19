@@ -149,7 +149,7 @@ Read the syllabus first.
                           '(("Student" "Extra attempts" "Extra time" "Unlocked") hline
                             ("Adams, Alice" "1" "30" "")
                             ("#9" "" "15" "yes"))))))
-        (expect counts :to-equal '(1 1))
+        (expect counts :to-equal '(:set 1 :cleared 1))
         (expect (length test-accommodations--posts) :to-equal 2)
         (expect (alist-get 'extra_time (test-accommodations--posted 9)) :to-equal 15)
         (expect (alist-get 'manually_unlocked (test-accommodations--posted 9)) :to-be t)
@@ -167,7 +167,7 @@ Read the syllabus first.
                    (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
           (expect (org-canvas--accommodation-sync-for-quiz
                    "7" '((:user-id "9" :extra-attempts 0 :extra-time 15 :unlocked nil)))
-                  :to-equal '(1 1)))
+                  :to-equal '(:set 1 :cleared 1)))
         (expect test-accommodations--posts :to-be nil)
         (expect (cl-count-if (lambda (l) (string-match-p "\\[DRY-RUN\\] Would set" l)) logged)
                 :to-equal 1)
@@ -185,7 +185,7 @@ Read the syllabus first.
           (expect (org-canvas--accommodation-sync-for-quiz
                    "7" '((:user-id "9" :extra-attempts 1 :extra-time 0 :unlocked nil)
                          (:user-id "8" :extra-attempts 2 :extra-time 0 :unlocked nil)))
-                  :to-equal '(0 0)))
+                  :to-equal '(:set 0 :cleared 0)))
         (expect (length errors) :to-equal 2)))))
 
 (describe "org-canvas-sync-quiz-accommodations"

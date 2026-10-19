@@ -831,9 +831,25 @@ nil.  See `org-canvas--sync-ctx-keys' for what each means."
 (defun org-canvas--ctx-push (ctx key value)
   "Push VALUE onto the list stored in CTX under KEY.
 Mutates CTX in place; a nil CTX — a helper called outside any run —
-records nothing."
+records nothing.  A key `org-canvas--sync-ctx-keys' does not declare
+signals: it is a typo, not a nil value."
+  (unless (memq key org-canvas--sync-ctx-keys)
+    (org-canvas--signal 'org-canvas-config-error
+      "Run context key %S is not in org-canvas--sync-ctx-keys" key))
   (when ctx
     (plist-put ctx key (cons value (plist-get ctx key)))))
+
+(defun org-canvas--ctx-get (ctx key)
+  "Read KEY from run context CTX, signalling on an undeclared key.
+Every key is declared in `org-canvas--sync-ctx-keys' and present from
+`org-canvas--sync-make-ctx', so a key missing there is a typo, not a
+nil value: it signals rather than answering nil that no caller could
+tell from a real one.  A nil CTX — a helper called outside any run —
+reads nil."
+  (unless (memq key org-canvas--sync-ctx-keys)
+    (org-canvas--signal 'org-canvas-config-error
+      "Run context key %S is not in org-canvas--sync-ctx-keys" key))
+  (plist-get ctx key))
 
 ;;;; 2. Logging Layer
 
@@ -970,6 +986,43 @@ outlive one command forgets it here (the discussions module's
 checkpoint map), so a web-UI edit between two pulls in one session is
 seen by the second.  Runs whether or not the log is inhibited: a
 sub-phase of the master sync is still a command starting.")
+
+(defmacro org-canvas-define-operation-cache (name &rest args)
+  "Define a course-wide read cached across one command.
+NAME is the read's symbol in full (org-canvas--NAME).  The macro
+defines NAME-cache, holding (COURSE-ID . MAP) so a course switch
+reads afresh; NAME-forget, dropping the cache, registered on
+`org-canvas--operation-start-hook' so the next command reads afresh;
+and NAME-map, the getter that fills the cache from FETCH (default
+NAME-fetch) once per course and returns MAP.  FETCH's answer is kept
+as it comes, `refused' included: what a refusal means stays the
+reader's business.  ARGS may carry `:doc', naming what MAP holds for
+the getter's docstring."
+  (declare (indent 1))
+  (let* ((cache (intern (concat (symbol-name name) "-cache")))
+         (forget (intern (concat (symbol-name name) "-forget")))
+         (getter (intern (concat (symbol-name name) "-map")))
+         (fetch (or (plist-get args :fetch)
+                    (intern (concat (symbol-name name) "-fetch"))))
+         (doc (or (plist-get args :doc) "the course-wide read")))
+    ;; `#'fn' reads as (function fn): take the bare symbol either way.
+    (when (eq (car-safe fetch) 'function)
+      (setq fetch (cadr fetch)))
+    `(progn
+       (defvar ,cache nil
+         ,(format "Cons of (COURSE-ID . MAP) from the last %s read.
+Forgotten when a command starts (`org-canvas--operation-start-hook'),
+so one command reads it once and the next reads afresh." name))
+       (defun ,forget ()
+         ,(format "Drop the cached %s read, so the next read asks Canvas." name)
+         (setq ,cache nil))
+       (add-hook 'org-canvas--operation-start-hook #',forget)
+       (defun ,getter ()
+         ,(format "Return %s, reading it once per command." doc)
+         (unless (equal (car ,cache) org-canvas-course-id)
+           (setq ,cache
+                 (cons org-canvas-course-id (,fetch))))
+         (cdr ,cache)))))
 
 (defun org-canvas-clear-log ()
   "Clear the log buffer and log file (when file logging is active).

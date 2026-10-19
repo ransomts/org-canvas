@@ -1,0 +1,11 @@
+* Changed
+- #514 =org-canvas-define-operation-cache= defines the course-wide
+  reads cached for one command — the discussion checkpoints, the
+  assignment processors and the assignment posting schedules each
+  previously hand-rolled its cache, forget function and hook
+  registration. The two table reconcilers return their counts as
+  plists (=:set= and =:cleared=, =:created=, =:updated=, =:deleted=
+  and =:kept=) rather than positional lists. Run-context reads go
+  through =org-canvas--ctx-get= and pushes through
+  =org-canvas--ctx-push=, both of which signal on a key
+  =org-canvas--sync-ctx-keys= does not declare.

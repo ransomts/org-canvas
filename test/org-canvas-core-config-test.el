@@ -906,7 +906,75 @@ ran alone (issue #260)."
       (org-canvas--ctx-push ctx :file-changed-ids "changed")
       (org-canvas--ctx-push ctx :file-recreated-ids "recreated")
       (expect (plist-get ctx :file-changed-ids) :to-equal '("changed"))
-      (expect (plist-get ctx :file-recreated-ids) :to-equal '("recreated")))))
+      (expect (plist-get ctx :file-recreated-ids) :to-equal '("recreated"))))
+
+  (it "signals on a key the context never declares"
+    (expect (org-canvas--ctx-push (org-canvas--sync-make-ctx) :typoed-key 1)
+            :to-throw 'org-canvas-config-error)))
+
+(describe "org-canvas--ctx-get"
+  (it "reads a declared key"
+    (expect (org-canvas--ctx-get
+             (org-canvas--sync-make-ctx :feature-name "pages")
+             :feature-name)
+            :to-equal "pages"))
+
+  (it "reads nil from a nil context, as a helper outside any run does"
+    (expect (org-canvas--ctx-get nil :remote-titles) :to-be nil))
+
+  (it "signals on a key the context never declares"
+    (expect (org-canvas--ctx-get (org-canvas--sync-make-ctx) :typoed-key)
+            :to-throw 'org-canvas-config-error)))
+
+;;;; One operation cache, three readers
+
+(defvar test-op-cache--reads nil)
+
+(defun test-op-cache--fetch ()
+  "Answer a map naming the course, counting the reads made."
+  (setq test-op-cache--reads (1+ (or test-op-cache--reads 0)))
+  (list :course org-canvas-course-id))
+
+(org-canvas-define-operation-cache org-canvas--test-operation-cache
+  :fetch #'test-op-cache--fetch
+  :doc "the test read")
+
+(describe "org-canvas-define-operation-cache"
+  (after-all
+    (remove-hook 'org-canvas--operation-start-hook
+                 #'org-canvas--test-operation-cache-forget)
+    (setq org-canvas--test-operation-cache-cache nil
+          test-op-cache--reads nil))
+
+  (it "fills once per course and answers the same map after"
+    (setq test-op-cache--reads 0)
+    (org-canvas--test-operation-cache-forget)
+    (let ((map (org-canvas--test-operation-cache-map)))
+      (expect (org-canvas--test-operation-cache-map) :to-equal map))
+    (expect test-op-cache--reads :to-equal 1))
+
+  (it "reads afresh after a forget"
+    (setq test-op-cache--reads 0)
+    (org-canvas--test-operation-cache-forget)
+    (expect (org-canvas--test-operation-cache-map) :to-be-truthy)
+    (expect test-op-cache--reads :to-equal 1))
+
+  (it "reads afresh when the course changes"
+    (setq test-op-cache--reads 0)
+    (org-canvas--test-operation-cache-forget)
+    (let ((org-canvas-course-id "another-course"))
+      (expect (plist-get (org-canvas--test-operation-cache-map) :course)
+              :to-equal "another-course"))
+    (expect test-op-cache--reads :to-equal 1))
+
+  (it "forgets when a command starts"
+    (setq test-op-cache--reads 0)
+    (org-canvas--test-operation-cache-forget)
+    (org-canvas--test-operation-cache-map)
+    (run-hooks 'org-canvas--operation-start-hook)
+    (expect org-canvas--test-operation-cache-cache :to-be nil)
+    (org-canvas--test-operation-cache-map)
+    (expect test-op-cache--reads :to-equal 2)))
 
 ;;;; Optional requires are optional (issue #157)
 ;;

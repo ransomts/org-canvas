@@ -323,7 +323,8 @@ and :deferred, so a batch caller can set its exit status."
     ;; Heal module items skipped earlier whose targets have IDs by now;
     ;; the modules run left them in its context.
     (org-canvas--module-retry-pending-items
-     (plist-get (alist-get 'org-canvas-sync-modules results) :module-items-pending))
+     (org-canvas--ctx-get
+      (alist-get 'org-canvas-sync-modules results) :module-items-pending))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (org-canvas--sync-log-global-summary)

@@ -599,9 +599,9 @@ Body text.
           (let ((overrides (list (list :section-id "100"
                                       :due-at "2026-02-15T00:00:00Z"))))
             (let ((counts (org-canvas--override-sync-for-assignment "456" overrides)))
-              (expect (nth 0 counts) :to-equal 1)  ; created
-              (expect (nth 1 counts) :to-equal 0)  ; updated
-              (expect (nth 2 counts) :to-equal 0))))))) ; deleted
+              (expect (plist-get counts :created) :to-equal 1)
+              (expect (plist-get counts :updated) :to-equal 0)
+              (expect (plist-get counts :deleted) :to-equal 0)))))))
 
   (it "updates existing overrides"
     (with-org-canvas-test-config
@@ -617,9 +617,9 @@ Body text.
           (let ((overrides (list (list :section-id "100"
                                       :due-at "2026-02-15T00:00:00Z"))))
             (let ((counts (org-canvas--override-sync-for-assignment "456" overrides)))
-              (expect (nth 0 counts) :to-equal 0)  ; created
-              (expect (nth 1 counts) :to-equal 1)  ; updated
-              (expect (nth 2 counts) :to-equal 0))))))) ; deleted
+              (expect (plist-get counts :created) :to-equal 0)
+              (expect (plist-get counts :updated) :to-equal 1)
+              (expect (plist-get counts :deleted) :to-equal 0)))))))
 
   (it "deletes removed overrides"
     (with-org-canvas-test-config
@@ -639,9 +639,9 @@ Body text.
           (let ((overrides (list (list :section-id "100"
                                       :due-at "2026-02-15T00:00:00Z"))))
             (let ((counts (org-canvas--override-sync-for-assignment "456" overrides)))
-              (expect (nth 0 counts) :to-equal 0)  ; created
-              (expect (nth 1 counts) :to-equal 1)  ; updated
-              (expect (nth 2 counts) :to-equal 1))))))) ; deleted
+              (expect (plist-get counts :created) :to-equal 0)
+              (expect (plist-get counts :updated) :to-equal 1)
+              (expect (plist-get counts :deleted) :to-equal 1)))))))
 
   (it "handles API errors gracefully during create"
     (with-org-canvas-test-config
@@ -655,7 +655,7 @@ Body text.
                                     :due-at "2026-02-15T00:00:00Z"))))
           ;; Should not throw - errors are caught internally
           (let ((counts (org-canvas--override-sync-for-assignment "456" overrides)))
-            (expect (nth 0 counts) :to-equal 0))))))
+            (expect (plist-get counts :created) :to-equal 0))))))
 
   (it "handles no existing overrides"
     (with-org-canvas-test-config
@@ -669,9 +669,9 @@ Body text.
                                (list :section-id "200"
                                      :due-at "2026-02-12T00:00:00Z"))))
           (let ((counts (org-canvas--override-sync-for-assignment "456" overrides)))
-            (expect (nth 0 counts) :to-equal 2)
-            (expect (nth 1 counts) :to-equal 0)
-            (expect (nth 2 counts) :to-equal 0)))))))
+            (expect (plist-get counts :created) :to-equal 2)
+            (expect (plist-get counts :updated) :to-equal 0)
+            (expect (plist-get counts :deleted) :to-equal 0)))))))
 
 ;;;; Override Sync Integration
 
@@ -884,7 +884,7 @@ Just a description, no override table.
                  (counts (org-canvas--override-sync-for-assignment
                           "42" '((:section-id "1" :due-at "2026-10-19T23:59:00Z")))))
             ;; Counts still describe the plan: 0 created, 1 updated, 1 deleted.
-            (expect counts :to-equal '(0 1 1 0))
+            (expect counts :to-equal '(:created 0 :updated 1 :deleted 1 :kept 0))
             (expect calls :to-equal nil)
             (expect (seq-filter (lambda (l) (string-match-p "Would UPDATE override" l))
                                 logged)
@@ -936,7 +936,7 @@ Just a description, no override table.
                          (:section-id "2" :due-at "2026-10-20T23:59:00Z")
                          (:section-id "3" :due-at "2026-10-21T23:59:00Z")))))
           ;; One create (section 3), two updates (1 and 2), two deletes.
-          (expect counts :to-equal '(1 2 2 0))))))
+          (expect counts :to-equal '(:created 1 :updated 2 :deleted 2 :kept 0))))))
 
   (it "counts nothing when the table is empty and the remote is too"
     (with-org-canvas-test-config
@@ -945,7 +945,7 @@ Just a description, no override table.
                 ((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) nil)))
         (expect (org-canvas--override-sync-for-assignment "42" nil)
-                :to-equal '(0 0 0 0)))))
+                :to-equal '(:created 0 :updated 0 :deleted 0 :kept 0)))))
 
   (it "does not count a create whose request failed"
     (with-org-canvas-test-config
@@ -956,7 +956,7 @@ Just a description, no override table.
                    (org-canvas--signal 'org-canvas-api-error "rejected"))))
         (expect (org-canvas--override-sync-for-assignment
                  "42" '((:section-id "1" :due-at "2026-10-19T23:59:00Z")))
-                :to-equal '(0 0 0 0))))))
+                :to-equal '(:created 0 :updated 0 :deleted 0 :kept 0))))))
 
 (describe "org-canvas-pull-sections reported counts"
   ;; created/updated are only visible in the closing message, which no
@@ -1044,7 +1044,8 @@ Returns the final message string."
                   (cl-letf (((symbol-function 'org-canvas--override-parse-table)
                              (lambda (&rest _) '((:section-id "7"))))
                             ((symbol-function 'org-canvas--override-sync-for-assignment)
-                             (lambda (&rest _) '(1 0 0 0)))
+                             (lambda (&rest _) '(:created 1 :updated 0
+                                                  :deleted 0 :kept 0)))
                             ((symbol-function 'message)
                              (lambda (fmt &rest args)
                                (setq said (apply #'format fmt args)))))
@@ -1358,7 +1359,7 @@ Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
                       (:student-ids ("7") :due-at "2026-02-22T00:00:00Z")
                       (:student-ids ("8") :due-at "2026-02-22T00:00:00Z"))))
            (counts (car result)) (calls (cdr result)))
-      (expect counts :to-equal '(1 2 1 0))
+      (expect counts :to-equal '(:created 1 :updated 2 :deleted 1 :kept 0))
       (expect (member '(PUT . "10") calls) :to-be-truthy)
       (expect (member '(PUT . "30") calls) :to-be-truthy)
       (expect (member '(POST . "overrides") calls) :to-be-truthy)
@@ -1370,7 +1371,7 @@ Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
                     '(((id . 30) (student_ids . [7 8])))
                     '((:student-ids ("7") :due-at "2026-02-22T00:00:00Z"))))
            (counts (car result)) (calls (cdr result)))
-      (expect counts :to-equal '(1 0 1 0))
+      (expect counts :to-equal '(:created 1 :updated 0 :deleted 1 :kept 0))
       (expect (member '(POST . "overrides") calls) :to-be-truthy)
       (expect (member '(DELETE . "30") calls) :to-be-truthy)))
 
@@ -1380,7 +1381,7 @@ Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
                     '(((id . 40) (group_id . 55)))
                     '((:group-id "55" :due-at "2026-02-22T00:00:00Z")
                       (:student-ids ("7") :due-at "2026-02-22T00:00:00Z")))))
-      (expect (car result) :to-equal '(1 1 0 0))
+      (expect (car result) :to-equal '(:created 1 :updated 1 :deleted 0 :kept 0))
       (expect (mapcar #'car (cdr result)) :to-equal '(GET)))))
 
 (describe "org-canvas--override-target-cell (issue #224)"
@@ -1779,7 +1780,7 @@ the assignment as AFTER, with the unlock date of `test-ovr478-unlock'."
                        "456"
                        '((:section-id "100" :due-at "2026-09-28T14:20:00-04:00")
                          (:section-id "200" :due-at "2026-09-28T18:20:00Z")))))
-          (expect counts :to-equal '(0 1 0 0))
+          (expect counts :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
           (expect (test-org-canvas-api-called-p 'PUT "overrides/10\\'") :to-be nil)
           (expect (test-org-canvas-api-called-p 'PUT "overrides/20\\'") :to-be-truthy)
           ;; The unchanged override is still claimed, so it is not deleted.
@@ -1838,7 +1839,7 @@ A sections.org beside it names Section A, id 777.  Return FN's value."
         (expect (test-ovr380-call-in-file
                  "Attendance 02"
                  (lambda () (org-canvas--override-sync-entry (point-marker))))
-                :to-equal '(0 1 0 0))
+                :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
         (progn
           (expect (test-org-canvas-api-called-p 'PUT "assignments/456/overrides/10")
                   :to-be-truthy)
@@ -2056,6 +2057,6 @@ nil, and the API calls made."
           (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
             (expect (org-canvas--override-sync-for-assignment
                      "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
-                    :to-equal '(0 0 0 1))))))))
+                    :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1))))))))
 
 ;;; org-canvas-sections-test.el ends here

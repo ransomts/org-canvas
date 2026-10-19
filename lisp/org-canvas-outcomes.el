@@ -454,7 +454,7 @@ sent.  The result is the run context's `:prepared'."
   :build #'org-canvas--outcome-group-build-payload
   :prepare #'org-canvas--outcome-sync-prepare
   :push (lambda (data _payload &optional ctx)
-          (org-canvas--outcome-group-push-to-api data (plist-get ctx :prepared)))
+          (org-canvas--outcome-group-push-to-api data (org-canvas--ctx-get ctx :prepared)))
   :finalize #'org-canvas--outcome-group-finalize)
 
 (org-canvas-define-sync outcomes

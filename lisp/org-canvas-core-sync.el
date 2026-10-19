@@ -187,17 +187,17 @@ Prompts user to continue if stale headings are found."
   "Finalize a successful push RESPONSE for DATA.
 PAYLOAD-HASH is saved to the heading, unless it is nil because the push
 owns the stamp (spec :hash `push').  CTX is the sync context plist."
-  (let ((finalize-fn (plist-get ctx :finalize-fn))
-        (counters (plist-get ctx :counters))
-        (synced-ids (plist-get ctx :synced-ids))
+  (let ((finalize-fn (org-canvas--ctx-get ctx :finalize-fn))
+        (counters (org-canvas--ctx-get ctx :counters))
+        (synced-ids (org-canvas--ctx-get ctx :synced-ids))
         (canvas-id (or (plist-get data :canvas-id)
                        (plist-get data :canvas-url)))
-        (cap-feature (capitalize (plist-get ctx :feature-name)))
-        (title (plist-get data (or (plist-get ctx :title-key) :title)))
-        (total-count (plist-get ctx :total-count))
-        (progress (+ (plist-get (plist-get ctx :counters) :success)
-                     (plist-get (plist-get ctx :counters) :skip)
-                     (plist-get (plist-get ctx :counters) :fail)
+        (cap-feature (capitalize (org-canvas--ctx-get ctx :feature-name)))
+        (title (plist-get data (or (org-canvas--ctx-get ctx :title-key) :title)))
+        (total-count (org-canvas--ctx-get ctx :total-count))
+        (progress (+ (plist-get (org-canvas--ctx-get ctx :counters) :success)
+                     (plist-get (org-canvas--ctx-get ctx :counters) :skip)
+                     (plist-get (org-canvas--ctx-get ctx :counters) :fail)
                      1)))
     (funcall finalize-fn data response ctx)
     (org-canvas--sync-note-remote-time response ctx)
@@ -227,16 +227,16 @@ dirty the module."
   "Execute the skip/dry-run/push pipeline for a single entry.
 DATA is the parsed entry, PAYLOAD is the built API payload.
 CTX is the sync context plist (see `org-canvas--sync-process-entry')."
-  (let* ((push-fn (plist-get ctx :push-fn))
-         (feature-name (plist-get ctx :feature-name))
-         (total-count (plist-get ctx :total-count))
-         (counters (plist-get ctx :counters))
-         (synced-ids (plist-get ctx :synced-ids))
+  (let* ((push-fn (org-canvas--ctx-get ctx :push-fn))
+         (feature-name (org-canvas--ctx-get ctx :feature-name))
+         (total-count (org-canvas--ctx-get ctx :total-count))
+         (counters (org-canvas--ctx-get ctx :counters))
+         (synced-ids (org-canvas--ctx-get ctx :synced-ids))
          (payload-hash (org-canvas--sync-entry-hash payload data ctx))
          (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url)))
-         (title (plist-get data (or (plist-get ctx :title-key) :title)))
+         (title (plist-get data (or (org-canvas--ctx-get ctx :title-key) :title)))
          (cap-feature (capitalize feature-name))
          (progress (+ (plist-get counters :success)
                       (plist-get counters :skip)
@@ -254,7 +254,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
         cap-feature progress total-count title))
      ((org-canvas--sync-refuse-fragment-p canvas-id title)
       (org-canvas--sync-count-fragment title ctx progress))
-     ((and org-canvas--dry-run (not (plist-get ctx :dry-run-in-push)))
+     ((and org-canvas--dry-run (not (org-canvas--ctx-get ctx :dry-run-in-push)))
       (org-canvas--sync-dry-run-entry canvas-id title ctx))
      (t
       (org-canvas--sync-handle-push-response
@@ -284,14 +284,14 @@ is never touched."
 (defun org-canvas--sync-count-fragment (title ctx progress)
   "Count the refused create of TITLE as a skip in CTX, and say why.
 PROGRESS is the 1-based position for the echo-area line."
-  (let ((counters (plist-get ctx :counters)))
+  (let ((counters (org-canvas--ctx-get ctx :counters)))
     (plist-put counters :skip (1+ (plist-get counters :skip)))
     (plist-put counters :skipped-titles
                (cons (format "%s (probably a body fragment from an older pull; fold it into the item above, or confirm the create interactively)" title)
                      (plist-get counters :skipped-titles)))
     (message "%s [%d/%d] SKIPPED: '%s' (probably a body fragment; not created)"
-             (capitalize (plist-get ctx :feature-name)) progress
-             (plist-get ctx :total-count) title)))
+             (capitalize (org-canvas--ctx-get ctx :feature-name)) progress
+             (org-canvas--ctx-get ctx :total-count) title)))
 
 (defun org-canvas--sync-handle-push-response (response data payload-hash ctx progress)
   "Count RESPONSE from the push of DATA, or finalize it.
@@ -304,10 +304,10 @@ previews its own writes (spec :dry-run `push').  Anything else is the
 API response, finalized with PAYLOAD-HASH (nil when the push owns the
 stamp).  CTX is the sync context, PROGRESS the 1-based position for
 the echo-area line."
-  (let* ((counters (plist-get ctx :counters))
-         (cap-feature (capitalize (plist-get ctx :feature-name)))
-         (total-count (plist-get ctx :total-count))
-         (title (plist-get data (or (plist-get ctx :title-key) :title))))
+  (let* ((counters (org-canvas--ctx-get ctx :counters))
+         (cap-feature (capitalize (org-canvas--ctx-get ctx :feature-name)))
+         (total-count (org-canvas--ctx-get ctx :total-count))
+         (title (plist-get data (or (org-canvas--ctx-get ctx :title-key) :title))))
     (pcase response
       ('skip
        (plist-put counters :skip (1+ (plist-get counters :skip)))
@@ -367,8 +367,8 @@ a real sync would ask are answered here without a request: has Canvas
 touched this item since the baseline, and, for a create, does Canvas
 already hold this title (issue #85)?  Either way the entry counts as
 `:dry-run-conflict', not `:dry-run'."
-  (let* ((counters (plist-get ctx :counters))
-         (cap-feature (capitalize (plist-get ctx :feature-name)))
+  (let* ((counters (org-canvas--ctx-get ctx :counters))
+         (cap-feature (capitalize (org-canvas--ctx-get ctx :feature-name)))
          (remote-newer (and canvas-id (org-canvas--sync-remote-newer-at canvas-id ctx)))
          (existing (and (not canvas-id)
                         (org-canvas--sync-remote-items-titled title ctx)))
@@ -434,7 +434,7 @@ push at point is written by hand, New Quizzes' (issue #399)."
 Returns non-nil when it did, after logging why and naming it among
 CTX's skipped titles; nil otherwise."
   (let ((note (org-canvas--sync-deleted-note title))
-        (counters (plist-get ctx :counters)))
+        (counters (org-canvas--ctx-get ctx :counters)))
     (when note
       (plist-put counters :skip (1+ (plist-get counters :skip)))
       (plist-put counters :skipped-titles
@@ -451,12 +451,12 @@ MARKER is the position of the entry.  CTX is the run context from
 pipeline functions, :feature-name and :feature-upper for the log,
 :total-count, :counters and :synced-ids mutated in place, and
 :title-key, the plist key of the display name (default :title)."
-  (let ((parse-fn (plist-get ctx :parse-fn))
-        (build-fn (plist-get ctx :build-fn))
-        (feature-upper (plist-get ctx :feature-upper))
-        (feature-name (plist-get ctx :feature-name))
-        (total-count (plist-get ctx :total-count))
-        (counters (plist-get ctx :counters)))
+  (let ((parse-fn (org-canvas--ctx-get ctx :parse-fn))
+        (build-fn (org-canvas--ctx-get ctx :build-fn))
+        (feature-upper (org-canvas--ctx-get ctx :feature-upper))
+        (feature-name (org-canvas--ctx-get ctx :feature-name))
+        (total-count (org-canvas--ctx-get ctx :total-count))
+        (counters (org-canvas--ctx-get ctx :counters)))
     (org-canvas--log-info org-canvas--logger "----------------------------------------")
     (with-current-buffer (marker-buffer marker)
       (save-excursion
@@ -775,11 +775,11 @@ The md5 of the encoded payload (plus :hash-extra-fn) unless the spec
 declared :hash: a function is called with PAYLOAD and DATA; `push'
 means the push owns change detection, and nil is returned so the
 runner neither skips on a stored hash nor stamps one."
-  (let ((hash-fn (plist-get ctx :hash-fn)))
+  (let ((hash-fn (org-canvas--ctx-get ctx :hash-fn)))
     (cond ((eq hash-fn 'push) nil)
           (hash-fn (funcall hash-fn payload data))
           (t (org-canvas--sync-payload-hash
-              payload data (plist-get ctx :hash-extra-fn))))))
+              payload data (org-canvas--ctx-get ctx :hash-extra-fn))))))
 
 (defun org-canvas--sync-check-spec (spec required)
   "Signal on a key of SPEC outside the sync spec keys, or a REQUIRED key absent.
@@ -1156,7 +1156,7 @@ so a script need not (`org-canvas-sync-headings' takes several)."
   "Record RESPONSE's `updated_at' in CTX's remote-time accumulator.
 The accumulator is absent for single-entry pushes, where there is no
 file-level header to write afterwards."
-  (let ((times-ref (plist-get ctx :remote-times))
+  (let ((times-ref (org-canvas--ctx-get ctx :remote-times))
         (updated (and (listp response) (alist-get 'updated_at response))))
     (when (and times-ref (stringp updated))
       (push updated (car times-ref)))))
@@ -1239,12 +1239,12 @@ Called with point on the entry's heading.  CTX carries the remote
 snapshot and the file-level fallback baseline.  Nil when there is no
 snapshot, the snapshot has no entry for CANVAS-ID, the entry has no
 baseline, or Canvas has not touched the item since."
-  (let* ((remote-updated (plist-get ctx :remote-updated))
+  (let* ((remote-updated (org-canvas--ctx-get ctx :remote-updated))
          (updated (and remote-updated canvas-id
                        (gethash (format "%s" canvas-id) remote-updated)))
          (baseline (and updated
                         (org-canvas--conflict-baseline
-                         (point) (plist-get ctx :baseline))))
+                         (point) (org-canvas--ctx-get ctx :baseline))))
          (remote-time (and baseline (org-canvas--parse-iso8601-time updated))))
     (when (and remote-time (time-less-p baseline remote-time))
       updated)))
@@ -1267,7 +1267,7 @@ the diff and offers push/pull/skip."
 (defun org-canvas--sync-remote-items-titled (title ctx)
   "Return the remote items in CTX's snapshot that carry TITLE, or nil.
 Nil too when the run has no snapshot (:remote-titles is `none')."
-  (let ((titles (plist-get ctx :remote-titles)))
+  (let ((titles (org-canvas--ctx-get ctx :remote-titles)))
     (and (hash-table-p titles) title (gethash title titles))))
 
 (defun org-canvas--sync-warn-unverified-skips (feature-name counters ctx)
@@ -1280,11 +1280,11 @@ request failed — say so, rather than let a \"0 failed\" summary imply a
 comparison that never happened (issue #48)."
   (let ((skips (plist-get counters :skip))
         (previews (if org-canvas--dry-run (or (plist-get counters :dry-run) 0) 0))
-        (why (if (plist-get ctx :baseline)
+        (why (if (org-canvas--ctx-get ctx :baseline)
                  "the remote snapshot was unavailable"
                "this file has no #+LAST_SYNCED baseline yet (one is written after this run)")))
     (when (and org-canvas-detect-conflicts
-               (not (plist-get ctx :remote-updated)))
+               (not (org-canvas--ctx-get ctx :remote-updated)))
       (when (> skips 0)
         (org-canvas--log-warning org-canvas--logger
           "[Conflict] %d %s entr%s skipped as unchanged were not verified against Canvas — %s"
@@ -1314,7 +1314,7 @@ cost is that a remote edit in the same minute as a push is not seen.
 
 The write is forward-only (`org-canvas--sync-advance-file-header'),
 and single-entry pushes advance the same header (issue #104)."
-  (let* ((times (car (plist-get ctx :remote-times)))
+  (let* ((times (car (org-canvas--ctx-get ctx :remote-times)))
          (newest (car (sort (copy-sequence times) #'string>)))
          (time (and newest (org-canvas--parse-iso8601-time newest))))
     (when time
@@ -1373,9 +1373,9 @@ recording it is exactly as sound as the skip itself, and from then on
 the entry judges drift by its own clock.  Nothing is written when the
 entry is already stamped, the snapshot has no entry for it, there was
 no baseline (nothing was proven), or this is a dry run."
-  (let ((remote-updated (plist-get ctx :remote-updated)))
+  (let ((remote-updated (org-canvas--ctx-get ctx :remote-updated)))
     (when (and remote-updated
-               (plist-get ctx :baseline)
+               (org-canvas--ctx-get ctx :baseline)
                (not org-canvas--dry-run)
                (null (org-entry-get (point) "CANVAS_UPDATED_AT")))
       (let ((updated (gethash (format "%s" canvas-id) remote-updated)))
@@ -1702,7 +1702,7 @@ pass `:canvas-url') reads from the item."
   "Return the `:scheduled-dates-fn' of the feature CTX is running, or nil.
 CTX is the run context; its :feature-name finds the registry entry
 \(issue #453)."
-  (let ((name (plist-get ctx :feature-name)))
+  (let ((name (org-canvas--ctx-get ctx :feature-name)))
     (when name
       (org-canvas--feature-scheduled-dates-fn
        (org-canvas--registry-find-feature name)))))
@@ -1712,7 +1712,7 @@ CTX is the run context; its :feature-name finds the registry entry
 CTX is the run context; its :feature-name finds the registry entry,
 whose `:item-params' answer.  Nil for a custom push that passes no
 context, or a feature outside the registry."
-  (let ((name (plist-get ctx :feature-name)))
+  (let ((name (org-canvas--ctx-get ctx :feature-name)))
     (when name
       (org-canvas--feature-item-params
        (org-canvas--registry-find-feature name)))))
@@ -1725,9 +1725,9 @@ Otherwise CTX's :feature-name finds the registry entry, and its
 then is ID appended to ENDPOINT under the course: calendar events live
 at the global /calendar_events/:id, and a course-scoped read of one
 404s (issue #344)."
-  (let ((feature (and (plist-get ctx :feature-name)
+  (let ((feature (and (org-canvas--ctx-get ctx :feature-name)
                       (org-canvas--registry-find-feature
-                       (plist-get ctx :feature-name)))))
+                       (org-canvas--ctx-get ctx :feature-name)))))
     (cond
      (put-url-fn (funcall put-url-fn id))
      ((plist-get feature :item-url-fn)
@@ -1758,7 +1758,7 @@ Returns `push', `skip', or `pulled'."
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
-             (effective-pull-fn (plist-get ctx :pull-item-fn))
+             (effective-pull-fn (org-canvas--ctx-get ctx :pull-item-fn))
              (resolution (org-canvas--resolve-conflict data remote-response ctx)))
         (pcase resolution
           ('skip
@@ -1893,7 +1893,7 @@ is checked rather than a GET spent per entry.  Outside a sync (a
 single-entry push, whose context carries no titles) FIND-FN, the
 module's search function, is asked; a module without one is not
 checked."
-  (let ((titles (plist-get ctx :remote-titles)))
+  (let ((titles (org-canvas--ctx-get ctx :remote-titles)))
     (cond
      ((hash-table-p titles)
       (gethash title titles))
@@ -2136,7 +2136,7 @@ cleared before and after the call, so it means this post-fn and no
 other."
   (plist-put ctx :remote-touched nil)
   (funcall post-fn data response ctx)
-  (when (plist-get ctx :remote-touched)
+  (when (org-canvas--ctx-get ctx :remote-touched)
     (org-canvas--finalize-restamp-updated pom endpoint id field title ctx))
   (plist-put ctx :remote-touched nil))
 
@@ -2423,7 +2423,7 @@ saved, since it may have restamped the heading (issue #380).  CTX's
 :heading-payload is the payload the push built, whether or not it
 was sent (issue #410)."
   (let ((fn (plist-get spec :after-heading)))
-    (when (and fn (memq (plist-get ctx :outcome) '(synced unchanged dry-run)))
+    (when (and fn (memq (org-canvas--ctx-get ctx :outcome) '(synced unchanged dry-run)))
       (goto-char heading)
       (org-back-to-heading t)
       (plist-put ctx :heading-report (funcall fn ctx))
@@ -2659,8 +2659,8 @@ heading runs its entries here too."
   (condition-case err
       (let ((ctx (funcall fn target by)))
         (append (list :feature feature :target target
-                      :outcome (plist-get ctx :outcome))
-                (plist-get ctx :heading-report)))
+                      :outcome (org-canvas--ctx-get ctx :outcome))
+                (org-canvas--ctx-get ctx :heading-report)))
     (error
      (org-canvas--log-error org-canvas--logger "[%s] %s '%s' failed: %s"
        (or label "Sync headings") feature target (error-message-string err))
