@@ -98,6 +98,7 @@
 
 (require 'org-canvas-core)
 (require 'cl-lib)
+(require 'org-entities)
 
 (declare-function org-canvas-pull-at-point "org-canvas")
 (declare-function org-canvas--pull-new-heading "org-canvas" (feature id title))
@@ -484,9 +485,29 @@ so it is shown and not counted as drift (issue #293)."
 ;; a student cannot see.
 
 (defconst org-canvas--diff-named-entities
-  '(("amp" . "&") ("lt" . "<") ("gt" . ">") ("quot" . "\"")
-    ("apos" . "'") ("nbsp" . " "))
-  "Named HTML entities decoded when comparing bodies as text.")
+  (append
+   (delq nil
+         (mapcar (lambda (entry)
+                   ;; org-entities holds section-header strings too.
+                   (when (listp entry)
+                     (let ((name (nth 0 entry))
+                           (html (nth 3 entry))
+                           (utf8 (nth 6 entry)))
+                       (and (stringp name) (stringp utf8)
+                            (string-match-p "\\`&[[:alnum:]]+;\\'" html)
+                            (cons name utf8)))))
+                 org-entities))
+   ;; The XML predefine org-entities does not carry.
+   '(("apos" . "'")))
+  "Named HTML entities decoded when comparing bodies as text.
+Built from `org-entities', whose HTML spellings are exactly what
+ox-html emits.  The six-entry hand list this replaces covered only
+what Canvas was known to escape, so an `&hellip;' ox-html emits for
+`...' stayed encoded on the local side while Canvas held the
+character — a permanent CHANGED row over text nobody changed (issue
+#510).  An entity neither this table nor the numeric forms know is
+kept as written, so both sides still agree when they spell it the
+same way.")
 
 (defun org-canvas--diff-decode-entity (entity)
   "Return the text ENTITY (\"&amp;\", \"&#39;\", \"&#x2019;\") stands for.

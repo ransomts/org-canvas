@@ -676,6 +676,17 @@
   (it "keeps an unknown entity as written"
     (expect (org-canvas--diff-html-to-text "a &bogus; b") :to-equal "a &bogus; b")))
 
+(describe "org-canvas--diff-html-to-text (issue #510)"
+  (it "decodes every named entity ox-html emits, not six of them"
+    (expect (org-canvas--diff-decode-entity "&hellip;") :to-equal "…")
+    (expect (org-canvas--diff-decode-entity "&rsquo;") :to-equal "’")
+    (expect (org-canvas--diff-decode-entity "&mdash;") :to-equal "—")
+    (expect (org-canvas--diff-decode-entity "&Aacute;") :to-equal "Á"))
+
+  (it "compares an exported ellipsis against Canvas's character"
+    (expect (org-canvas--diff-html-to-text "a &hellip; b &rsquo; c &mdash; d")
+            :to-equal (org-canvas--diff-html-to-text "a … b ’ c — d"))))
+
 (describe "org-canvas--diff-text-excerpts"
   (it "cuts both sides around the first difference"
     (let* ((a (concat (make-string 30 ?x) "same then LOCAL words follow here"))

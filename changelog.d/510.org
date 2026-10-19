@@ -1,0 +1,8 @@
+* Fixed
+- #510 The drift report decodes every named HTML entity ox-html can
+  emit when it compares a body as text, not six of them: the table is
+  built from =org-entities=, so an =…= Canvas holds compares equal to
+  the =&hellip;= an export of =...= produces, and a curly quote or
+  dash no longer reads as a permanent CHANGED row over text nobody
+  changed.  Numeric entities were already decoded, and an entity no
+  table knows is still kept as written.
