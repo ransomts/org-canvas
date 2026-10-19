@@ -87,6 +87,13 @@ Also in the menu: Files (=F= force re-upload all, =z= the file at point), Publis
 | =sections.org=          | 1 = sections  | /none/         | =CANVAS_ID=   |
 | =group-categories.org=  | 1 = groups    | /none/         | =CANVAS_ID=   |
 | =calendar.org=          | 1 = events    | description  | =CANVAS_ID=   |
+| =grading-schemes.org=   | 1 = schemes   | cutoffs table | =CANVAS_ID=   |
+
+Pulled for reference, never pushed: =grading-periods.org=,
+=question-banks.org=, =discussion-replies.org=, =groups.org=,
+=people.org=, =gradebook.org=, =quiz-results.org=,
+=rubric-results.org=.  =messages.org= sends conversations on its own
+and is never part of a sync.
 
 * Common Properties (all content types)
 

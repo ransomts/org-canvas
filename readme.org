@@ -20,7 +20,7 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 - *Conflict Detection*: Interactive push/pull/skip resolution when remote changes are detected
 - *Modular Architecture*: Sync individual content types or the entire course at once
 - *Dependency-Aware*: Syncs in proper order respecting cross-references between files
-- *Content Types*: Assignments (including LTI tools such as Gradescope), classic quizzes, New Quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, grading schemes, per-section date overrides, per-student quiz accommodations, and course settings; sections and grading periods are pulled for reference
+- *Content Types*: Assignments (including LTI tools such as Gradescope), classic quizzes, New Quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, grading schemes, per-section date overrides, per-student quiz accommodations, and course settings; sections, grading periods, question banks, discussion replies, groups, the roster, the gradebook overview, rubric results and quiz item analyses are pulled for reference; messages.org sends Canvas conversations without ever joining a sync
 - *Submission Grading*: View submissions, post comments, download attachments, and push grades, rubric assessments and late statuses back to Canvas -- all from Emacs
 - *Drift Report*: =org-canvas-diff= compares every heading with Canvas without writing anything
 - *Canvas Migration*: Import an entire existing Canvas course into Org files with =org-canvas-pull-all=
@@ -107,7 +107,15 @@ my-course/
 ├── calendar.org              ; Calendar events (office hours, holidays, review sessions)
 ├── grading-schemes.org       ; Letter-grade schemes
 ├── grading-periods.org       ; Grading periods (pulled from Canvas)
-└── sections.org              ; Course sections (pulled from Canvas); date overrides are tables in assignments.org
+├── question-banks.org        ; Question banks (pulled from Canvas, read-only)
+├── discussion-replies.org    ; Discussion replies archive (pulled from Canvas)
+├── groups.org                ; Groups and members (pulled from Canvas)
+├── people.org                ; Course roster (pulled from Canvas)
+├── gradebook.org             ; Course-wide grade overview (pulled from Canvas)
+├── quiz-results.org          ; Classic quiz item analyses (pulled from Canvas)
+├── rubric-results.org        ; Rubric criterion results (pulled from Canvas)
+├── sections.org              ; Course sections (pulled from Canvas); date overrides are tables in assignments.org
+└── messages.org              ; Canvas conversations to send (never part of a sync)
 #+end_example
 
 ** Basic Usage
@@ -221,6 +229,10 @@ This prompts for an assignment, fetches submissions from Canvas, saves them as a
 | =D= | Download every student's attachments          |
 | =S= | Push modified grades to Canvas                |
 | =P= | Post the grades so students can see them     |
+| =C= | Push only the edits made to sent comments |
+| =s= | Push the student heading at point alone |
+| =t= | Take Canvas's grade on a CONFLICT heading, the typed one kept under Notes |
+| =k= | Keep the typed grade against Canvas's baseline |
 | =g= | Refresh submissions from Canvas               |
 | =B= | Read the comment bank into the Comment Bank section |
 | =x= | Delete the saved comment at point from the bank |

@@ -1,0 +1,25 @@
+* Added
+- #512 The manual opens with a system context diagram (Emacs, plz and
+  curl, Canvas REST and GraphQL, pandoc, the batch script, the browse
+  path) and the drift report's keys gain a matrix: every row kind
+  against every key, with the three sections that carry their own
+  verbs. The architecture narratives gain a sync-state lifecycle
+  diagram (design.org), a conflict sequence diagram naming every
+  writer of =CANVAS_UPDATED_AT= (api-interaction.org) and a
+  grading-subsystem map of the submissions modules by lifecycle
+  phase. Four more follow the same pattern: a flowchart of the files
+  re-upload tiers and one of the duplicate-title guard
+  (api-interaction.org), a pairing flow showing how an item and the
+  Org headings become a drift-report row kind plus a sequence
+  diagram of the grade push (manual.org). The module tree lists
+  =org-canvas-submissions-ruling= and =org-canvas-submissions-uploads=
+  and every feature module on a row of its own; the readme, the
+  manual's file table and the cheatsheet list every course file, the
+  pull-only readers and =messages.org= among them; the readme's
+  grading-file keybindings table gains the =C=, =s=, =t= and =k= keys
+  the mode map holds; and design.org's and pull-system.org's
+  sync-state tables name =CANVAS_UPDATED_AT= as the baseline it has
+  been since #48 and #104, not a transparency stamp. Decisions.org
+  records why the two table reconcilers (assignment overrides, quiz
+  accommodations) stay two modules until a third table arrives rather
+  than a =define-table-reconcile= macro.

@@ -526,8 +526,8 @@ Every pulled heading receives:
 | Property             | Value                        | Purpose                 |
 |----------------------+------------------------------+-------------------------|
 | =CANVAS_ID=          | From API response            | Match in future syncs   |
-| =LAST_SYNCED=        | Current time                 | Conflict baseline       |
-| =CANVAS_UPDATED_AT=  | Remote =updated_at=          | Transparency            |
+| =LAST_SYNCED=        | Current time                 | When this side last synced |
+| =CANVAS_UPDATED_AT=  | Remote =updated_at=          | The conflict baseline going forward |
 | Module-specific props | From API response           | Feature data            |
 | Body                 | HTML converted to Org        | Content                 |
 
