@@ -4,6 +4,7 @@ dist/
 **.elc
 /lisp/org-canvas-autoloads.el
 /lisp/.env
+/lisp/.eldev/
 coverage/
 test-results.xml
 /lisp/org-canvas-credentials.el

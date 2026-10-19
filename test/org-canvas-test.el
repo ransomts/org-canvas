@@ -307,7 +307,57 @@
           (org-canvas-status)
           (with-current-buffer "*canvas-status*"
             (expect (buffer-string) :to-match "file not found"))
-          (kill-buffer "*canvas-status*"))))))
+          (kill-buffer "*canvas-status*")))))
+
+  (it "derives its content-type table from the registries, sorted by label"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Grading Schemes"
+                       :file-var 'org-canvas-grading-schemes-file
+                       :id-property "CANVAS_ID")
+                 (list :name "Assignments"
+                       :file-var 'org-canvas-assignments-file
+                       :id-property "CANVAS_ID")))
+          (org-canvas--pull-feature-registry
+           (list (list :name "New Quizzes"
+                       :file-var 'org-canvas-new-quizzes-file
+                       :id-property "CANVAS_ASSIGNMENT_ID"))))
+      (expect (org-canvas--status-content-types)
+              :to-equal
+              '(("Assignments" org-canvas-assignments-file "CANVAS_ID")
+                ("Grading Schemes" org-canvas-grading-schemes-file "CANVAS_ID")
+                ("New Quizzes" org-canvas-new-quizzes-file "CANVAS_ASSIGNMENT_ID")
+                ("Sections" org-canvas-sections-file "CANVAS_ID")))))
+
+  (it "counts each file once, whichever registry holds it"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Pages" :file-var 'org-canvas-pages-file
+                       :id-property "CANVAS_URL")))
+          (org-canvas--pull-feature-registry
+           (list (list :name "Wiki Pages" :file-var 'org-canvas-pages-file
+                       :id-property "CANVAS_URL"))))
+      (expect (org-canvas--status-content-types)
+              :to-equal
+              '(("Pages" org-canvas-pages-file "CANVAS_URL")
+                ("Sections" org-canvas-sections-file "CANVAS_ID")))))
+
+  (it "skips a registry entry that names no id property"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Assignments"
+                       :file-var 'org-canvas-assignments-file
+                       :id-property "CANVAS_ID")
+                 (list :name "Question Banks"
+                       :file-var 'org-canvas-question-banks-file)))
+          (org-canvas--pull-feature-registry nil))
+      (expect (org-canvas--status-content-types)
+              :to-equal
+              '(("Assignments" org-canvas-assignments-file "CANVAS_ID")
+                ("Sections" org-canvas-sections-file "CANVAS_ID")))))
+
+  (it "falls back to the built-in table when nothing has registered"
+    (let ((org-canvas--feature-registry nil)
+          (org-canvas--pull-feature-registry nil))
+      (expect (org-canvas--status-content-types)
+              :to-equal org-canvas--status-fallback-content-types))))
 
 ;;;; org-canvas-sync-dry-run
 

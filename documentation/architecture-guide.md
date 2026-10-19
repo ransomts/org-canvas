@@ -75,7 +75,7 @@ lisp/
                                  #   checked in at test/org-canvas-autoloads.el)
 ```
 
-`ls lisp/` is the authority; update this tree when a file is added.
+`ls lisp/` is the authority; update this tree when a file is added. A spec checks it: `test/org-canvas-module-tree-test.el`.
 
 ## Dependency Rules
 
