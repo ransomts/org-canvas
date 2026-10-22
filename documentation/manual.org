@@ -131,6 +131,7 @@ ARGS=, which is also the line to use without it.
 | =push [--conflict STRATEGY] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=) | any heading failed |
 | =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |
 | =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
+| =delete --yes FEATURE:TITLE...= | =org-canvas-delete-headings= (=-n=: prints what would go, sends nothing) | any heading failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
 | =post ASSIGNMENT...= | =org-canvas-post-grades=, no grading file needed (=--queue=: every column the queue marks =post=) | a column was not posted |
@@ -170,9 +171,14 @@ names (see [[*Adopting the Drift][Adopting the Drift]]); =--body= lets
 it replace a body, and =--overrides= appends the heading's EXTRA
 override rows to its table.  =show= takes the same names and prints
 each heading's Canvas version, writing nothing (see [[*Showing the
-Canvas Version][Showing the Canvas Version]]).
+Canvas Version][Showing the Canvas Version]]).  =delete= takes the
+same names and deletes each heading's item from Canvas, clearing the
+heading's sync properties (see [[*Deleting a Single Item][Deleting a
+Single Item]]); it needs =--yes= (=-y=), which answers the delete
+confirmation and nothing else, or =--dry-run=, which prints one
+=Would delete FEATURE 'TITLE' (CANVAS_ID ID)= line per heading.
 =--dry-run= (=-n=)
-before the command makes =push=, =publish=, =unpublish=,
+before the command makes =push=, =publish=, =unpublish=, =delete=,
 =push-comments= and =sync= send nothing, and =adopt= write nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
 among its arguments) sets =org-canvas-conflict-strategy= for that run
 alone: =push= overwrites Canvas, =pull= overwrites the heading, and
@@ -5318,6 +5324,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
 | =org-canvas-delete-grading-scheme-at-point=  | Delete grading scheme at point   |
+| =org-canvas-delete-headings=                 | Delete a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries, each by its delete at point |
 
 ** Submission Commands
 
@@ -5573,7 +5580,33 @@ Deleting items that are no longer needed.
 1. Navigate to the heading in the =.org= file.
 2. Run the delete-at-point command (e.g., =M-x org-canvas-delete-assignment-at-point=).
 3. This deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
-4. Optionally remove the heading from the Org file.
+4. Optionally remove the heading from the Org file, and any =modules.org= item linking to it: Canvas removes the module item with the item it points at, and nothing removes the Org side for you.
+
+A script names the headings instead of visiting them (#525):
+
+#+begin_src emacs-lisp
+(let ((org-canvas-delete-confirmed t))
+  (org-canvas-delete-headings '((assignment . "Journal 06")
+                                (page "week-05-objectives" canvas-id))))
+#+end_src
+
+Each heading is found as =org-canvas-sync-headings= finds it, by exact
+title or, with =canvas-id=, by its stamp; the feature's delete at point
+runs there and the file is saved.  Binding
+=org-canvas-delete-confirmed= answers the delete confirmation in
+advance and no other question: an overwrite, a conflict or a mass
+deletion still asks, where stubbing =y-or-n-p= or =org-canvas--confirm=
+would have silenced them too.  In batch, an unconfirmed run is refused
+before anything is read, rather than left reading standard input.  Under
+=org-canvas--dry-run= nothing is asked, sent or written.  Each result
+is a plist =(:feature :target :outcome :id-property :id)=, =:outcome=
+=deleted=, =dry-run=, =declined= or =failed= (with =:error=).  From the
+shell:
+
+#+begin_src sh
+scripts/org-canvas -n delete "assignment:Journal 06"      # what would go
+scripts/org-canvas delete --yes "assignment:Journal 06" "assignment#2497507"
+#+end_src
 
 *** Deleting All Items of a Type
 

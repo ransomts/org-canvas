@@ -1,0 +1,14 @@
+* Added
+- #525 =scripts/org-canvas delete --yes FEATURE:TITLE...= (or
+  =FEATURE#ID=) deletes named headings' items from Canvas through each
+  feature's delete at point, and =--dry-run= prints what would go.
+  From Lisp, =org-canvas-delete-headings= takes the same entries as
+  =org-canvas-sync-headings=, and binding =org-canvas-delete-confirmed=
+  answers the delete confirmation alone, so a script no longer stubs
+  =org-canvas--confirm= or =y-or-n-p= and silences every other prompt
+  with it.
+
+* Changed
+- #525 A delete at point under a dry run asks nothing and sends nothing,
+  and returns =deleted=, =dry-run=, =declined= or nil (failed) instead
+  of t or nil.
