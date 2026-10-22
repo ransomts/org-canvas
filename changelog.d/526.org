@@ -1,0 +1,13 @@
+* Added
+- #526 =M-x org-canvas-extend-student= gives one student a new deadline
+  on the assignment heading at point: it asks for a student from
+  =people.org=, a due time and a lock time (the due time plus
+  =org-canvas-extend-student-late-hours=, 48 by default), takes the
+  unlock from the student's section row, writes a =Students:= row into
+  the heading's overrides table, and sends that override alone,
+  updating the one Canvas holds for exactly that student rather than
+  creating a second.  No other override is sent or deleted, and the
+  heading is restamped as after any override write (#348).
+  =org-canvas-extend-student-named= does the same without asking, and
+  the batch command line runs it as =extend ASSIGNMENT STUDENT DUE
+  [LOCK]=.

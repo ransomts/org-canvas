@@ -147,6 +147,7 @@ ARGS=, which is also the line to use without it.
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
+| =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
@@ -179,7 +180,8 @@ confirmation and nothing else, or =--dry-run=, which prints one
 =Would delete FEATURE 'TITLE' (CANVAS_ID ID)= line per heading.
 =--dry-run= (=-n=)
 before the command makes =push=, =publish=, =unpublish=, =delete=,
-=push-comments= and =sync= send nothing, and =adopt= write nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
+=push-comments= and =sync= send nothing, =adopt= write nothing, and
+=extend= neither.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
 among its arguments) sets =org-canvas-conflict-strategy= for that run
 alone: =push= overwrites Canvas, =pull= overwrites the heading, and
 =skip= leaves the entry alone and names it, which is also what a batch
@@ -2274,6 +2276,48 @@ repository.  Where the repository is shared, or the course files are
 kept in the open, write the row as =Students: #1234= instead; a pull
 writes names when =people.org= is there to resolve them, and =#id=
 otherwise.
+
+*** One Student's New Deadline
+
+=M-x org-canvas-extend-student= on an assignment heading (or anywhere
+under it) gives one student a new deadline without editing the table
+by hand (#526).  It asks for a student among =people.org='s students
+(pull the roster first), a due time, and a lock time, offering the due
+time plus =org-canvas-extend-student-late-hours= (default 48; 0 locks
+at the due time).  The unlock is the student's own row's when there is
+one, else the row of the section =people.org= puts them in, else the
+heading's =UNLOCK_AT=.
+
+It writes a =Students: Last, First= row into the heading's =#+NAME:
+overrides= table (starting the table when there is none, and adding
+any date column a pulled table dropped), replacing the student's own
+row rather than adding a second, and saves the file.  Then it sends
+that override alone: Canvas's override for exactly that student is
+updated, or left alone when it already carries the dates, and one is
+created otherwise.  No other row is sent and nothing is deleted, unlike
+the reconcile a push of the heading runs.  A row, or a Canvas override,
+that names the student beside others is refused before anything is
+sent: edit that row instead.  As after any override write, the
+heading's =CANVAS_UPDATED_AT= is restamped when it agreed with Canvas
+before, so the next push is not called a conflict.  The heading's own
+fields are not compared, which needs the payload a push builds, so a
+heading that had already drifted keeps its stamp and its next push
+reports the conflict.  When the write fails the row stays in the
+table, and the next push of the heading or =org-canvas-sync-overrides=
+sends it.  A dry run writes no row and sends nothing; a read-only
+course refuses.
+
+From Lisp or a script, =(org-canvas-extend-student-named ASSIGNMENT
+STUDENT DUE &optional LOCK)= does the same without asking: the
+assignment by exact title or =#CANVAS_ID=, the student by =people.org=
+title or =#USER_ID=, the times as =org-read-date= reads them.  It
+returns =created=, =updated=, =unchanged=, =dry-run=, or nil when the
+write failed.  The batch command line runs it as =extend=:
+
+#+begin_src sh
+scripts/org-canvas -n extend "Recitation 7" "Adams, Alice" "2026-10-22 20:00"
+scripts/org-canvas extend "#2563805" "#1234" "2026-10-22 20:00" "2026-10-24 20:00"
+#+end_src
 
 ** group-categories.org
 
@@ -5194,6 +5238,7 @@ skipped, for a script that wants the data rather than the report.
 | =org-canvas-sync-files=               | Upload files                                 |
 | =org-canvas-sync-calendar-events=      | Sync calendar events                         |
 | =org-canvas-sync-overrides=           | Sync the date overrides (section, group, students) |
+| =org-canvas-extend-student=           | Give one student a new deadline on the assignment at point, sending that override alone |
 | =org-canvas-sync-quiz-accommodations= | Sync the per-student accommodations of every classic quiz |
 
 ** Pull Commands
@@ -5657,6 +5702,8 @@ Setting different due dates for different course sections.
    #+end_src
 
    =Students: #1234= names a student by Canvas id instead, which keeps the name out of the course repository.  Pull the assignments before editing a table by hand, so extensions given in the web UI are in it and survive the sync; =M-x org-canvas-diff= lists any the table lacks under *Assignment Overrides*, and a push of one heading asks before deleting them.
+
+   Or let =M-x org-canvas-extend-student= write the row and send that override alone: see [[*One Student's New Deadline][One Student's New Deadline]].
 
 ** Pre-Semester Validation Checklist
 

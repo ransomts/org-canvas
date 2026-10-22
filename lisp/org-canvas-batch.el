@@ -218,6 +218,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Unpublish named headings, sending only the flag (#466).")
     ("delete" org-canvas-batch--cmd-delete 1 nil "[--yes] FEATURE:TITLE..."
      "Delete named headings from Canvas; --yes confirms (#525).")
+    ("extend" org-canvas-batch--cmd-extend 3 4 "ASSIGNMENT STUDENT DUE [LOCK]"
+     "Give one student a new deadline, sending that override alone (#526).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
     ("adopt" org-canvas-batch--cmd-adopt 1 nil
@@ -820,6 +822,17 @@ command or after it, sends nothing and prints what would go."
       (if (cl-every (lambda (r) (memq (plist-get r :outcome) '(deleted dry-run)))
                     results)
           0 1))))
+
+(defun org-canvas-batch--cmd-extend (parsed)
+  "Give the student PARSED names a new deadline on its assignment.
+The arguments are ASSIGNMENT (a title, or #CANVAS_ID), STUDENT (a
+people.org title, or #USER_ID), DUE and an optional LOCK, as
+`org-canvas-extend-student-named' takes them.  A dry run on
+--dry-run.  Return 1 when the override was not sent."
+  (let ((org-canvas--dry-run (or org-canvas--dry-run
+                                 (plist-get parsed :dry-run))))
+    (if (apply #'org-canvas-extend-student-named (plist-get parsed :args))
+        0 1)))
 
 (defun org-canvas-batch--cmd-diff (_parsed)
   "Print the drift report; return 1 if anything drifted."

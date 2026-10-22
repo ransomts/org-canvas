@@ -795,6 +795,31 @@
         (expect (test-batch--run '("sync")) :to-equal 1)
         (expect dry :to-be nil)))))
 
+(describe "the extend command (issue #526)"
+  (it "passes its arguments on, a dry run under -n, and exits 1 when nothing was sent"
+    (let ((calls nil) (outcome 'created))
+      (cl-letf (((symbol-function 'org-canvas-extend-student-named)
+                 (lambda (&rest args)
+                   (push (cons org-canvas--dry-run args) calls)
+                   outcome)))
+        (expect (test-batch--run '("extend" "Lab 1" "Adams, Alice" "2026-10-23 16:00"))
+                :to-equal 0)
+        (expect (test-batch--run '("-n" "extend" "#456" "#1" "2026-10-23 16:00"
+                                   "2026-10-25 16:00"))
+                :to-equal 0)
+        (setq outcome nil)
+        (expect (test-batch--run '("extend" "Lab 1" "#1" "tomorrow")) :to-equal 1))
+      (expect (reverse calls)
+              :to-equal '((nil "Lab 1" "Adams, Alice" "2026-10-23 16:00")
+                          (t "#456" "#1" "2026-10-23 16:00" "2026-10-25 16:00")
+                          (nil "Lab 1" "#1" "tomorrow")))))
+
+  (it "is a usage error with too few arguments"
+    (let (messages)
+      (test-batch--quietly messages
+        (expect (test-batch--run '("extend" "Lab 1" "#1")) :to-equal 2))
+      (expect (car messages) :to-match "extend takes ASSIGNMENT STUDENT DUE"))))
+
 ;;;; Entry point
 
 (describe "org-canvas-batch"
