@@ -1172,5 +1172,356 @@ nil when there is no such heading or table."
                                          (org-canvas--override-row-window row columns)))
                                   (cdr table)))))))))))
 
+;;;; One Student's New Deadline (issue #526)
+;;
+;; `org-canvas-extend-student' writes one `Students:' row into the
+;; overrides table of the assignment heading at point and sends that
+;; override alone: the reconcile that `org-canvas-sync-overrides' and a
+;; push of the heading run would also send, or delete, every other row.
+
+(defcustom org-canvas-extend-student-late-hours 48
+  "Hours after a new due time that `org-canvas-extend-student' locks at.
+The lock prompt offers the due time plus this many hours, and
+`org-canvas-extend-student-named' uses it when no lock is named; 0
+locks at the due time itself."
+  :type 'number
+  :group 'org-canvas)
+
+(defun org-canvas--extend-students ()
+  "Return the students of people.org as (TITLE USER-ID SECTIONS) lists.
+In file order: the level-2 headings whose ROLE is student and which
+carry a USER_ID.  A missing people.org, or one naming no student, is
+a `user-error' that says to pull the roster."
+  (let* ((file (org-canvas--override-lookup-file 'org-canvas-people-file))
+         (students
+          (and file
+               (with-current-buffer (org-canvas--find-file-noselect file)
+                 (org-with-wide-buffer
+                  (delq nil
+                        (org-map-entries
+                         (lambda ()
+                           (let ((id (org-entry-get (point) "USER_ID")))
+                             (and id (list (org-get-heading t t t t) id
+                                           (org-entry-get (point) "SECTIONS")))))
+                         "LEVEL=2+ROLE=\"student\"" 'file)))))))
+    (or students
+        (user-error "No students in people.org; run org-canvas-pull-people first"))))
+
+(defun org-canvas--extend-find-student (students name)
+  "Return the entry of STUDENTS that NAME, a heading title or #USER_ID, names."
+  (let ((id (org-canvas--override-literal-id name)))
+    (or (cl-find-if (lambda (s) (if id (equal (nth 1 s) id) (equal (car s) name)))
+                    students)
+        (user-error "No student %s in people.org" name))))
+
+(defun org-canvas--extend-timestamp (time)
+  "Return TIME, a Lisp time value, as an active Org timestamp with a time."
+  (format-time-string "<%Y-%m-%d %a %H:%M>" time))
+
+(defun org-canvas--extend-lock-time (due-time)
+  "Return DUE-TIME moved on by `org-canvas-extend-student-late-hours'."
+  (time-add due-time (round (* 3600 org-canvas-extend-student-late-hours))))
+
+(defun org-canvas--extend-row-claim (cell user-id)
+  "Say how the overrides row whose first cell is CELL names USER-ID.
+`exact' when the row is that student's alone, `shared' when it names
+them beside others, and nil when it is another row or names no one."
+  (when (string-match org-canvas--override-students-regexp cell)
+    (let ((ids (mapcar #'org-canvas--override-resolve-student-id
+                       (split-string (match-string 1 cell) ";" t "[ \t]+"))))
+      (cond ((equal ids (list user-id)) 'exact)
+            ((member user-id ids) 'shared)))))
+
+(defun org-canvas--extend-first-cell (row)
+  "Return the first cell of the table ROW, trimmed; \"\" for a rule line."
+  (if (listp row) (string-trim (or (car row) "")) ""))
+
+(defun org-canvas--extend-cell (row index)
+  "Return the trimmed cell INDEX of ROW if a timestamp, else nil."
+  (let ((cell (and index (listp row) (string-trim (or (nth index row) "")))))
+    (and cell (string-prefix-p "<" cell) cell)))
+
+(defun org-canvas--extend-section-row-p (cell keys)
+  "Return non-nil when CELL is a section row naming one of KEYS."
+  (and (not (string-match-p org-canvas--override-group-regexp cell))
+       (not (string-match-p org-canvas--override-students-regexp cell))
+       (member (car (org-canvas--section-keys cell)) keys)))
+
+(defun org-canvas--extend-unlock (rows student)
+  "Return the Unlock At timestamp STUDENT's new row inherits, or nil.
+ROWS is the overrides table as `org-table-to-lisp' reads it, nil when
+the heading at point has none.  The student's own row keeps its
+unlock; failing that, the row of a section people.org's SECTIONS puts
+them in gives it; failing that, the heading's UNLOCK_AT."
+  (let ((keys (org-canvas--section-keys (or (nth 2 student) "")))
+        (col (nth 1 (org-canvas--override-date-columns (car rows)))))
+    (or (cl-some (lambda (row)
+                   (and (eq (org-canvas--extend-row-claim
+                             (org-canvas--extend-first-cell row) (nth 1 student))
+                            'exact)
+                        (org-canvas--extend-cell row col)))
+                 (cdr rows))
+        (cl-some (lambda (row)
+                   (and (org-canvas--extend-section-row-p
+                         (org-canvas--extend-first-cell row) keys)
+                        (org-canvas--extend-cell row col)))
+                 (cdr rows))
+        (org-entry-get (point) "UNLOCK_AT"))))
+
+(defun org-canvas--extend-widen (rows)
+  "Return (ROWS . COLUMNS), ROWS with every date column it lacks appended.
+ROWS is an overrides table as `org-table-to-lisp' reads it, header
+first; COLUMNS are the due, unlock and lock indexes as
+`org-canvas--override-date-columns' finds them.  A pulled table drops
+the columns no row fills, and the new row may fill one."
+  (let ((columns (org-canvas--override-date-columns (car rows))))
+    (cl-loop for title in '("Due At" "Unlock At" "Lock At")
+             for k from 0
+             unless (nth k columns)
+             do (setf (nth k columns) (length (car rows)))
+             (setq rows (cons (append (car rows) (list title))
+                              (mapcar (lambda (r) (if (listp r) (append r (list "")) r))
+                                      (cdr rows)))))
+    (cons rows columns)))
+
+(defun org-canvas--extend-build-row (width columns target dates)
+  "Return a row WIDTH cells wide naming TARGET, DATES in its date COLUMNS.
+DATES are the due, unlock and lock cells, a nil one left empty."
+  (let ((row (make-list (max width (1+ (apply #'max columns))) "")))
+    (setf (nth 0 row) target)
+    (cl-mapc (lambda (col date) (setf (nth col row) (or date ""))) columns dates)
+    row))
+
+(defun org-canvas--extend-rows (rows student dates)
+  "Return ROWS, an overrides table, with STUDENT's row set to DATES.
+A row naming STUDENT alone is replaced in place, and otherwise the new
+row goes last; a row naming STUDENT beside others is a `user-error',
+since that override would change for everyone it names.  ROWS nil
+starts a new table."
+  (let* ((widened (org-canvas--extend-widen
+                   (or rows (list (list "Section" "Due At" "Unlock At" "Lock At")
+                                  'hline))))
+         (new (org-canvas--extend-build-row
+               (length (car (car widened))) (cdr widened)
+               (org-canvas--override-students-cell (list (nth 1 student))) dates))
+         (replaced nil)
+         (kept (mapcar
+                (lambda (row)
+                  (pcase (org-canvas--extend-row-claim
+                          (org-canvas--extend-first-cell row) (nth 1 student))
+                    ('exact (setq replaced t) new)
+                    ('shared (user-error "%s shares an override row with others; edit that row instead"
+                                         (car student)))
+                    (_ row)))
+                (car widened))))
+    (if replaced kept (append kept (list new)))))
+
+(defun org-canvas--extend-render (rows)
+  "Return ROWS, a table in `org-table-to-lisp' form, as Org table text."
+  (mapconcat (lambda (row)
+               (if (listp row)
+                   (concat "| " (mapconcat #'identity row " | ") " |\n")
+                 "|-|\n"))
+             rows ""))
+
+(defun org-canvas--extend-table-region (end)
+  "Return (BEG . TABLE-END) of the overrides table between point and END.
+Nil when there is none."
+  (save-excursion
+    (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+      (forward-line 1)
+      (when (looking-at-p org-table-line-regexp)
+        (cons (point) (org-table-end))))))
+
+(defun org-canvas--extend-new-table-position ()
+  "Move to the place for a new overrides table of the heading at point.
+That is the end of the heading's own text, before any child heading,
+after a blank line; the `#+NAME:' line is inserted there."
+  (goto-char (save-excursion (outline-next-heading) (point)))
+  (unless (bolp) (insert "\n"))
+  (unless (save-excursion (forward-line -1) (looking-at-p "[ \t]*$"))
+    (insert "\n"))
+  (insert "#+NAME: overrides\n"))
+
+(defun org-canvas--extend-write-table (rows)
+  "Write ROWS as the overrides table of the heading at point, and align it.
+The table under the heading is replaced; a heading with none gets one
+at the end of its own text."
+  (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+         (region (org-canvas--extend-table-region end)))
+    (save-excursion
+      (if region
+          (progn (delete-region (car region) (cdr region))
+                 (goto-char (car region)))
+        (org-canvas--extend-new-table-position))
+      (let ((start (point)))
+        (insert (org-canvas--extend-render rows))
+        (goto-char start)
+        (org-table-align)))))
+
+(defun org-canvas--override-shared-remote (user-id existing)
+  "Return the override of EXISTING naming USER-ID beside other students."
+  (let ((id (string-to-number user-id)))
+    (cl-find-if (lambda (item)
+                  (let ((ids (append (alist-get 'student_ids item) nil)))
+                    (and (memql id ids) (cdr ids))))
+                existing)))
+
+(defun org-canvas--override-push-alone (pom assignment-id override title)
+  "Send OVERRIDE for ASSIGNMENT-ID and no other; keep the heading's baseline.
+POM is the assignment heading, TITLE its name for the log.  The
+override Canvas holds for exactly OVERRIDE's students is updated, or
+left alone when it carries the dates already; else one is created.
+Nothing is deleted, and a failed read of the overrides signals rather
+than create a twin (Hard Rule 16).  A Canvas override naming the
+student beside others is a `user-error'.  The heading is restamped as
+after any reconcile that wrote, when it agreed with Canvas before
+\(issue #348).  Return `created', `updated', `unchanged', or nil when
+the write failed, which the log names."
+  (let* ((clean (org-canvas--override-baseline-clean-p pom assignment-id title))
+         (endpoint (org-canvas-api-course-endpoint
+                    "assignments/%s/overrides" assignment-id))
+         (existing (append (org-canvas-api-request-all-pages 'GET endpoint) nil))
+         (claimed (org-canvas--override-find-existing override existing))
+         (shared (and (not claimed)
+                      (org-canvas--override-shared-remote
+                       (car (plist-get override :student-ids)) existing))))
+    (when shared
+      (user-error "Canvas holds override %s for %s; edit that override's row instead"
+                  (alist-get 'id shared)
+                  (org-canvas--override-existing-label shared)))
+    (let ((outcome (org-canvas--override-reconcile-one endpoint override claimed)))
+      (when (and clean (memq outcome '(created updated)))
+        (org-canvas--override-restamp pom assignment-id title))
+      outcome)))
+
+(defun org-canvas--extend-heading ()
+  "Move to the assignment heading at point; return (ASSIGNMENT-ID . TITLE).
+A heading without CANVAS_ID is a `user-error': the assignment has to
+be on Canvas before an override can be."
+  (unless (derived-mode-p 'org-mode) (user-error "Not in an Org buffer"))
+  (org-back-to-heading t)
+  (while (> (org-current-level) 1) (org-up-heading-safe))
+  (let ((id (org-entry-get (point) "CANVAS_ID"))
+        (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t))))
+    (unless id
+      (user-error "'%s' has no CANVAS_ID; push the assignment first" title))
+    (cons id title)))
+
+(defun org-canvas--extend-report (student title dates outcome)
+  "Say how giving STUDENT DATES on TITLE came out, OUTCOME the push's answer."
+  (let ((head (format "%s on '%s': due %s, lock %s" (car student) title
+                      (nth 0 dates) (or (nth 2 dates) "none"))))
+    (org-canvas--log-info org-canvas--logger "[Extend] %s: %s"
+      head (or outcome "failed"))
+    (message "%s; %s." head
+             (pcase outcome
+               ('created "override created")
+               ('updated "override updated")
+               ('unchanged "Canvas already held these dates, nothing sent")
+               (_ "row written but the override was not sent, see the log")))))
+
+(defun org-canvas--extend-dry-run (pom heading student override)
+  "Preview giving STUDENT OVERRIDE on HEADING, (ID . TITLE) at POM.
+The overrides are read and the write is logged, never sent; no row is
+written.  Return `dry-run'."
+  (org-canvas--log-info org-canvas--logger
+    "[DRY-RUN] Would write %s's row under '%s'" (car student) (cdr heading))
+  (org-canvas--override-push-alone pom (car heading) override (cdr heading))
+  (message "Would extend %s on '%s' (dry run); nothing sent or written."
+           (car student) (cdr heading))
+  'dry-run)
+
+(defun org-canvas--extend-student-here (student due-time lock-time)
+  "Give STUDENT DUE-TIME and LOCK-TIME on the assignment heading at point.
+STUDENT is an entry of `org-canvas--extend-students'; the times are
+Lisp time values, LOCK-TIME nil for no lock.  The student's row of
+the overrides table is written, with the unlock
+`org-canvas--extend-unlock' finds, and saved; then that override alone
+is sent (`org-canvas--override-push-alone').  A dry run writes no row
+and sends nothing.  Return what the push returned, or `dry-run'."
+  (org-canvas-clear-log)
+  (let* ((heading (org-canvas--extend-heading))
+         (pom (point-marker))
+         (rows (org-canvas--override-find-table
+                (save-excursion (org-end-of-subtree t) (point))))
+         (dates (list (org-canvas--extend-timestamp due-time)
+                      (org-canvas--extend-unlock rows student)
+                      (and lock-time (org-canvas--extend-timestamp lock-time))))
+         (new-rows (org-canvas--extend-rows rows student dates))
+         (override (list :student-ids (list (nth 1 student))
+                         :due-at (org-canvas-org-parse-timestamp (nth 0 dates))
+                         :unlock-at (org-canvas-org-parse-timestamp (nth 1 dates))
+                         :lock-at (org-canvas-org-parse-timestamp (nth 2 dates)))))
+    (unwind-protect
+        (if org-canvas--dry-run
+            (org-canvas--extend-dry-run pom heading student override)
+          (org-canvas--check-writable 'POST (format "extending '%s'" (cdr heading)))
+          (org-canvas--ensure-buffer-fresh)
+          (org-canvas--extend-write-table new-rows)
+          (org-canvas--save-buffer)
+          (let ((outcome (org-canvas--override-push-alone
+                          pom (car heading) override (cdr heading))))
+            (org-canvas--save-buffer)
+            (org-canvas--extend-report student (cdr heading) dates outcome)
+            outcome))
+      (set-marker pom nil))))
+
+(defun org-canvas--extend-read-args ()
+  "Read a student, a due time and a lock time; return (STUDENT DUE LOCK).
+The lock prompt offers the due time plus
+`org-canvas-extend-student-late-hours'."
+  (let* ((students (org-canvas--extend-students))
+         (name (completing-read "Student: " (mapcar #'car students) nil t))
+         (student (org-canvas--extend-find-student students name))
+         (due (org-read-date t t nil (format "Due for %s: " name)))
+         (lock (org-read-date t t nil "Lock: " nil
+                              (format-time-string
+                               "%Y-%m-%d %H:%M"
+                               (org-canvas--extend-lock-time due)))))
+    (list student due lock)))
+
+;;;###autoload
+(defun org-canvas-extend-student ()
+  "Give one student a new deadline on the assignment heading at point.
+Ask for a student from people.org, a due time and a lock time (the
+due time plus `org-canvas-extend-student-late-hours' by default).
+The unlock is the student's own row's, else their section's row's,
+else the heading's UNLOCK_AT.  A `Students: NAME' row is written into
+the heading's `#+NAME: overrides' table, replacing the student's own
+row when there is one, and that override alone is sent: updated when
+Canvas holds one for exactly that student, created otherwise, nothing
+else touched (issue #526).  CANVAS_UPDATED_AT is restamped when the
+heading agreed with Canvas before (issue #348).  A dry run writes and
+sends nothing; a read-only course refuses."
+  (interactive)
+  (let ((args (org-canvas--extend-read-args)))
+    (org-canvas--extend-student-here (nth 0 args) (nth 1 args) (nth 2 args))))
+
+;;;###autoload
+(defun org-canvas-extend-student-named (assignment student due &optional lock)
+  "Give STUDENT a DUE time on ASSIGNMENT, all named, without asking.
+ASSIGNMENT is an assignments.org heading's exact title, or #CANVAS_ID;
+STUDENT a people.org title, or #USER_ID.  DUE and LOCK are dates as
+`org-read-date' reads them (\"2026-10-22 16:00\"); LOCK nil is DUE
+plus `org-canvas-extend-student-late-hours'.  Otherwise as
+`org-canvas-extend-student'; return what it returns."
+  (let* ((file (or (org-canvas--override-lookup-file 'org-canvas-assignments-file)
+                   (user-error "No assignments.org in this course")))
+         (id (org-canvas--override-literal-id assignment))
+         (person (org-canvas--extend-find-student (org-canvas--extend-students) student))
+         (due-time (org-read-date t t due))
+         (lock-time (if lock (org-read-date t t lock)
+                      (org-canvas--extend-lock-time due-time)))
+         (marker (org-canvas--sync-find-heading
+                  file "LEVEL=1" (or id assignment) (if id 'canvas-id 'title)
+                  "CANVAS_ID" "assignment" "extend")))
+    (unwind-protect
+        (with-current-buffer (marker-buffer marker)
+          (save-excursion
+            (goto-char marker)
+            (org-canvas--extend-student-here person due-time lock-time)))
+      (set-marker marker nil))))
+
 (provide 'org-canvas-sections)
 ;;; org-canvas-sections.el ends here
