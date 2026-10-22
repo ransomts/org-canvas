@@ -14,8 +14,8 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
-;; pull-all, push, publish, diff, adopt, show, validate, sync ...), which
-;; `scripts/org-canvas' wraps:
+;; pull-all, push, publish, delete, diff, adopt, show, validate,
+;; sync ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -216,6 +216,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Publish named headings, sending only the flag (#466).")
     ("unpublish" org-canvas-batch--cmd-unpublish 1 nil "FEATURE:TITLE..."
      "Unpublish named headings, sending only the flag (#466).")
+    ("delete" org-canvas-batch--cmd-delete 1 nil "[--yes] FEATURE:TITLE..."
+     "Delete named headings from Canvas; --yes confirms (#525).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
     ("adopt" org-canvas-batch--cmd-adopt 1 nil
@@ -759,6 +761,46 @@ A --dry-run sends nothing and writes nothing."
 (defun org-canvas-batch--cmd-unpublish (parsed)
   "Unpublish the headings PARSED names; return 1 if any failed."
   (org-canvas-batch--set-published parsed nil))
+
+(defun org-canvas-batch--delete-args (args)
+  "Read delete ARGS into (CONFIRMED DRY-RUN . HEADINGS).
+CONFIRMED is non-nil for --yes or -y and DRY-RUN for --dry-run or -n,
+anywhere among ARGS; HEADINGS are the other arguments, in order.  No
+heading is a usage error."
+  (let ((confirmed nil) (dry-run nil) (headings nil))
+    (dolist (arg args)
+      (cond ((member arg '("-y" "--yes")) (setq confirmed t))
+            ((member arg '("-n" "--dry-run")) (setq dry-run t))
+            (t (push arg headings))))
+    (unless headings
+      (org-canvas-batch--usage "delete takes %s"
+                               (nth 4 (assoc "delete" org-canvas-batch--commands))))
+    (cons confirmed (cons dry-run (nreverse headings)))))
+
+(defun org-canvas-batch--cmd-delete (parsed)
+  "Delete the headings PARSED names from Canvas; return 1 if any failed.
+--yes answers the delete confirmation, binding
+`org-canvas-delete-confirmed' and nothing else, so every other
+question still stands; without it, and without --dry-run, nothing is
+deleted and the command is a usage error.  A --dry-run, before the
+command or after it, sends nothing and prints what would go."
+  (let* ((args (org-canvas-batch--delete-args (plist-get parsed :args)))
+         (entries (mapcar #'org-canvas-batch-heading-entry (cddr args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (nth 1 args)
+                                  (plist-get parsed :dry-run)))
+         (org-canvas-delete-confirmed (car args)))
+    (unless (or org-canvas-delete-confirmed org-canvas--dry-run)
+      (org-canvas-batch--usage
+       "delete needs --yes to confirm, or --dry-run to see what would go"))
+    (let ((results (org-canvas-delete-headings entries)))
+      (dolist (r results)
+        (when (eq (plist-get r :outcome) 'dry-run)
+          (princ (format "Would delete %s '%s' (%s %s)\n"
+                         (plist-get r :feature) (plist-get r :target)
+                         (plist-get r :id-property) (plist-get r :id)))))
+      (if (cl-every (lambda (r) (memq (plist-get r :outcome) '(deleted dry-run)))
+                    results)
+          0 1))))
 
 (defun org-canvas-batch--cmd-diff (_parsed)
   "Print the drift report; return 1 if anything drifted."

@@ -355,9 +355,14 @@ signals), =:list-url-fn=, =:delete-url-fn=, =:delete-data=,
 
 Generates =org-canvas-delete-{feature}-at-point= which:
 1. Reads CANVAS_ID from heading
-2. Prompts for confirmation
-3. Sends DELETE request
-4. Cleans local sync properties
+2. Under a dry run, stops there and returns =dry-run=
+3. Prompts for confirmation (=org-canvas-delete-confirmed= answers it)
+4. Sends DELETE request
+5. Cleans local sync properties
+
+and registers it for =org-canvas-delete-headings= and
+=scripts/org-canvas delete= (#525), which find the heading in the file
+and under the query the feature's registrations name.
 
 Optional parameters: =:id-property=, =:delete-url-fn=, =:delete-data=,
 =:post-delete-fn=.
