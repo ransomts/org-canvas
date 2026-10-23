@@ -113,6 +113,7 @@
 (require 'org-canvas-adopt)
 (require 'org-canvas-drift)
 (require 'org-canvas-announcements-verify)
+(require 'org-canvas-heading-verify)
 (require 'org-canvas-orphans)
 (require 'org-canvas-browse)
 (require 'org-canvas-search)

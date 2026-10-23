@@ -14,8 +14,8 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
-;; pull-all, push, publish, diff, adopt, show, validate, sync ...), which
-;; `scripts/org-canvas' wraps:
+;; pull-all, push, publish, delete, diff, adopt, show, validate,
+;; sync ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -198,8 +198,8 @@ copy silently.  Return the credentials file loaded, or nil."
     ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
      "Pull gradebook.org; print its Sections table and the course's scores.")
     ("verify" org-canvas-batch--cmd-verify 1 nil
-     "[--hidden] ASSIGNMENT... | announcements:TITLE..."
-     "Read pushed columns or announcements back; exit 1 on a difference.")
+     "[--hidden] ASSIGNMENT... | FEATURE:TITLE..."
+     "Read pushed columns or headings back; exit 1 on a difference.")
     ("apply-ruling" org-canvas-batch--cmd-apply-ruling 2 2 "FILE RULING.json"
      "Apply RULING.json's rulings to listed students; exit 1 on a miss (#448).")
     ("excuse" org-canvas-batch--cmd-excuse 1 3 "[--all] [--overwrite] FILE"
@@ -216,6 +216,10 @@ copy silently.  Return the credentials file loaded, or nil."
      "Publish named headings, sending only the flag (#466).")
     ("unpublish" org-canvas-batch--cmd-unpublish 1 nil "FEATURE:TITLE..."
      "Unpublish named headings, sending only the flag (#466).")
+    ("delete" org-canvas-batch--cmd-delete 1 nil "[--yes] FEATURE:TITLE..."
+     "Delete named headings from Canvas; --yes confirms (#525).")
+    ("extend" org-canvas-batch--cmd-extend 3 4 "ASSIGNMENT STUDENT DUE [LOCK]"
+     "Give one student a new deadline, sending that override alone (#526).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift.")
     ("adopt" org-canvas-batch--cmd-adopt 1 nil
@@ -572,6 +576,20 @@ Nil ARGS verify nothing and agree."
                 (org-canvas-verify-announcements
                  (mapcar #'org-canvas-batch-heading-entry args)))))
 
+(defun org-canvas-batch--heading-verify-arg-p (arg)
+  "Return non-nil when ARG names an assignment, module or file heading.
+FEATURE:TITLE or FEATURE#ID, the feature spelled in lower case."
+  (let ((case-fold-search nil))
+    (string-match-p "\\`\\(assignments?\\|modules?\\|files?\\)[:#]" arg)))
+
+(defun org-canvas-batch--verify-headings (args)
+  "Verify the assignment, module and file headings ARGS name.
+Return non-nil if all agree; nil ARGS verify nothing and agree."
+  (or (null args)
+      (cl-every (lambda (r) (zerop (plist-get r :differences)))
+                (org-canvas-verify-headings
+                 (mapcar #'org-canvas-batch-heading-entry args)))))
+
 (defun org-canvas-batch--verify-columns (targets hidden)
   "Verify the grading files TARGETS name, HIDDEN as for --hidden.
 Return non-nil if every column agrees; nil TARGETS agree."
@@ -584,20 +602,25 @@ Return non-nil if every column agrees; nil TARGETS agree."
 A column is compared with its grading file; --hidden counts a posted
 submission as a difference (`org-canvas-submissions-verify').  An
 announcements:TITLE or announcements#ID argument is compared with its
-heading (`org-canvas-verify-announcements', #502).  Return 1 if any
-differs."
+heading (`org-canvas-verify-announcements', #502), and an
+assignments:, modules: or files: argument with its heading
+\(`org-canvas-verify-headings', #524).  Return 1 if any differs."
   (let* ((args (plist-get parsed :args))
          (hidden (and (member "--hidden" args) t))
          (rest (remove "--hidden" args))
          (announcements (seq-filter #'org-canvas-batch--announcement-arg-p rest))
-         (targets (seq-remove #'org-canvas-batch--announcement-arg-p rest)))
+         (headings (seq-filter #'org-canvas-batch--heading-verify-arg-p rest))
+         (targets (seq-remove (lambda (a) (or (org-canvas-batch--announcement-arg-p a)
+                                              (org-canvas-batch--heading-verify-arg-p a)))
+                              rest)))
     (unless rest
       (org-canvas-batch--usage "verify takes %s"
                                (nth 4 (assoc "verify" org-canvas-batch--commands))))
-    ;; Both run, so one report does not hide the other.
+    ;; Every kind runs, so one report does not hide another.
     (let ((ok-columns (org-canvas-batch--verify-columns targets hidden))
-          (ok-announcements (org-canvas-batch--verify-announcements announcements)))
-      (if (and ok-columns ok-announcements) 0 1))))
+          (ok-announcements (org-canvas-batch--verify-announcements announcements))
+          (ok-headings (org-canvas-batch--verify-headings headings)))
+      (if (and ok-columns ok-announcements ok-headings) 0 1))))
 
 (defun org-canvas-batch--cmd-apply-ruling (parsed)
   "Apply the JSON rulings PARSED names to its grading file.
@@ -759,6 +782,57 @@ A --dry-run sends nothing and writes nothing."
 (defun org-canvas-batch--cmd-unpublish (parsed)
   "Unpublish the headings PARSED names; return 1 if any failed."
   (org-canvas-batch--set-published parsed nil))
+
+(defun org-canvas-batch--delete-args (args)
+  "Read delete ARGS into (CONFIRMED DRY-RUN . HEADINGS).
+CONFIRMED is non-nil for --yes or -y and DRY-RUN for --dry-run or -n,
+anywhere among ARGS; HEADINGS are the other arguments, in order.  No
+heading is a usage error."
+  (let ((confirmed nil) (dry-run nil) (headings nil))
+    (dolist (arg args)
+      (cond ((member arg '("-y" "--yes")) (setq confirmed t))
+            ((member arg '("-n" "--dry-run")) (setq dry-run t))
+            (t (push arg headings))))
+    (unless headings
+      (org-canvas-batch--usage "delete takes %s"
+                               (nth 4 (assoc "delete" org-canvas-batch--commands))))
+    (cons confirmed (cons dry-run (nreverse headings)))))
+
+(defun org-canvas-batch--cmd-delete (parsed)
+  "Delete the headings PARSED names from Canvas; return 1 if any failed.
+--yes answers the delete confirmation, binding
+`org-canvas-delete-confirmed' and nothing else, so every other
+question still stands; without it, and without --dry-run, nothing is
+deleted and the command is a usage error.  A --dry-run, before the
+command or after it, sends nothing and prints what would go."
+  (let* ((args (org-canvas-batch--delete-args (plist-get parsed :args)))
+         (entries (mapcar #'org-canvas-batch-heading-entry (cddr args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (nth 1 args)
+                                  (plist-get parsed :dry-run)))
+         (org-canvas-delete-confirmed (car args)))
+    (unless (or org-canvas-delete-confirmed org-canvas--dry-run)
+      (org-canvas-batch--usage
+       "delete needs --yes to confirm, or --dry-run to see what would go"))
+    (let ((results (org-canvas-delete-headings entries)))
+      (dolist (r results)
+        (when (eq (plist-get r :outcome) 'dry-run)
+          (princ (format "Would delete %s '%s' (%s %s)\n"
+                         (plist-get r :feature) (plist-get r :target)
+                         (plist-get r :id-property) (plist-get r :id)))))
+      (if (cl-every (lambda (r) (memq (plist-get r :outcome) '(deleted dry-run)))
+                    results)
+          0 1))))
+
+(defun org-canvas-batch--cmd-extend (parsed)
+  "Give the student PARSED names a new deadline on its assignment.
+The arguments are ASSIGNMENT (a title, or #CANVAS_ID), STUDENT (a
+people.org title, or #USER_ID), DUE and an optional LOCK, as
+`org-canvas-extend-student-named' takes them.  A dry run on
+--dry-run.  Return 1 when the override was not sent."
+  (let ((org-canvas--dry-run (or org-canvas--dry-run
+                                 (plist-get parsed :dry-run))))
+    (if (apply #'org-canvas-extend-student-named (plist-get parsed :args))
+        0 1)))
 
 (defun org-canvas-batch--cmd-diff (_parsed)
   "Print the drift report; return 1 if anything drifted."

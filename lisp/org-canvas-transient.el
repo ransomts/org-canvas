@@ -35,7 +35,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("Q" "New Quiz" org-canvas-sync-new-quiz-at-point)
    ("G" "Group Category" org-canvas-sync-group-category-at-point)
    ("k" "Grading scheme" org-canvas-sync-grading-scheme-at-point)
-   ("A" "Quiz accommodations" org-canvas-sync-quiz-accommodations-at-point)])
+   ("A" "Quiz accommodations" org-canvas-sync-quiz-accommodations-at-point)
+   ("x" "Extend one student" org-canvas-extend-student)])
 
 ;;;###autoload (autoload 'org-canvas-dispatch-pull-single "org-canvas-transient" nil t)
 (transient-define-prefix org-canvas-dispatch-pull-single ()

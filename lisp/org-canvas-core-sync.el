@@ -2907,6 +2907,107 @@ is pulled.  Nothing asks to confirm.  Return one plist per entry,
                   entries #'org-canvas--pull-heading-fn-for "Pull headings")))
     (org-canvas--pull-headings-report results)
     results))
+;;;; 12. Delete by Heading (issue #525)
+;;
+;; Deleting one Canvas item by its heading from a script meant finding
+;; the heading by regexp and stubbing `org-canvas--confirm' and
+;; `y-or-n-p' for the rest of the run, which silenced every other
+;; question with the one meant.  `org-canvas-delete-headings' finds each
+;; heading as the sync by heading does and runs the feature's own
+;; `org-canvas-delete-FEATURE-at-point' there, registered by
+;; `org-canvas-define-delete-at-point'; the confirmation is answered in
+;; advance by binding `org-canvas-delete-confirmed', which answers that
+;; question alone.
+
+(defun org-canvas--delete-heading-feature (singular)
+  "Return the feature registry entry whose singular name is SINGULAR, or nil."
+  (cl-find singular org-canvas--feature-registry
+           :key (lambda (f) (org-canvas--singularize
+                             (org-canvas--delete-heading-key f)))
+           :test #'equal))
+
+(defun org-canvas--delete-heading-key (feature)
+  "Return FEATURE's registry name as the property registry keys it."
+  (downcase (replace-regexp-in-string " " "-" (plist-get feature :name))))
+
+(defun org-canvas--delete-heading-fn-for (feature)
+  "Return the delete by heading of FEATURE, a function of TARGET and BY.
+FEATURE is the module's name, plural or singular, as a symbol or
+string; one with no delete at point is a `user-error' listing those
+that have one.  The heading is looked for in the feature's file under
+its property registration's query, as the drift report finds it."
+  (let* ((name (if (symbolp feature) (symbol-name feature) feature))
+         (deleter (org-canvas--heading-fn-lookup
+                   name org-canvas--delete-heading-fns "delete"))
+         (singular (org-canvas--singularize name))
+         (entry (or (org-canvas--delete-heading-feature singular) (error "No feature %s" singular)))
+         (props (gethash (org-canvas--delete-heading-key entry)
+                         org-canvas--property-registry))
+         (query (or (plist-get props :query) "LEVEL=1")))
+    (lambda (target by)
+      (org-canvas--delete-heading-runtime deleter entry singular query target by))))
+
+(defun org-canvas--delete-heading-runtime (deleter feature singular query
+                                                   target by)
+  "Run DELETER at the heading of FEATURE that TARGET names; return a context.
+FEATURE is the feature registry entry, SINGULAR its name and QUERY
+the heading match; TARGET and BY are as in
+`org-canvas--sync-find-heading'.  The heading's file is saved.  The
+context's :outcome is DELETER's answer, `failed' for nil, and its
+:heading-report names the id property and the id deleted."
+  (let* ((id-property (or (plist-get feature :id-property) "CANVAS_ID"))
+         (marker (org-canvas--sync-find-heading
+                  (expand-file-name (symbol-value (plist-get feature :file-var)))
+                  query target by id-property singular "delete")))
+    (with-current-buffer (marker-buffer marker)
+      (save-excursion
+        (goto-char marker)
+        (let* ((id (org-entry-get (point) id-property))
+               (outcome (funcall deleter)))
+          (org-canvas--save-buffer)
+          (org-canvas--sync-make-ctx
+           :outcome (or outcome 'failed)
+           :heading-report (list :id-property id-property :id id)))))))
+
+(defun org-canvas--delete-headings-report (results)
+  "Say how RESULTS, the list `org-canvas-delete-headings' built, came out.
+One redacted line per heading, then one line of counts."
+  (dolist (r results)
+    (org-canvas--user-message "%s '%s': %s%s"
+      (plist-get r :feature) (plist-get r :target) (plist-get r :outcome)
+      (if (plist-get r :error) (format " — %s" (plist-get r :error)) "")))
+  (let ((count (lambda (o) (cl-count o results
+                                     :key (lambda (r) (plist-get r :outcome))))))
+    (message "Deleted %d heading(s): %d deleted, %d dry run, %d declined, %d failed"
+             (length results) (funcall count 'deleted) (funcall count 'dry-run)
+             (funcall count 'declined) (funcall count 'failed))))
+
+;;;###autoload
+(defun org-canvas-delete-headings (entries)
+  "Delete ENTRIES, named headings of several features, from Canvas.
+ENTRIES are written as `org-canvas-sync-headings' takes them:
+\(FEATURE . TITLE), or (FEATURE TARGET BY) where BY is nil, `title' or
+`canvas-id'.  Each heading's `org-canvas-delete-FEATURE-at-point' runs
+there and its file is saved; the heading stays, its sync properties
+cleared.  Every feature is resolved before the first delete; after
+that a failed heading is reported and the next one runs.
+
+Each delete asks first unless `org-canvas-delete-confirmed' is bound
+non-nil, which answers that question and no other.  In batch, where
+there is nobody to ask, an unconfirmed run is refused before anything
+is read.  A dry run (`org-canvas--dry-run') asks nothing and sends
+nothing.  Return one plist per entry, (:feature :target :outcome),
+:outcome `deleted', `dry-run', `declined' or `failed' with :error,
+and :id-property and :id naming what went (issue #525)."
+  (when (and noninteractive (not org-canvas-delete-confirmed)
+             (not org-canvas--dry-run))
+    (user-error "Nothing deleted: confirm with org-canvas-delete-confirmed bound to t (scripts/org-canvas delete --yes)"))
+  (org-canvas-clear-log)
+  (let* ((org-canvas--inhibit-log-clear t)
+         (results (org-canvas--headings-run
+                   entries #'org-canvas--delete-heading-fn-for "Delete headings")))
+    (org-canvas--delete-headings-report results)
+    results))
 
 
 (provide 'org-canvas-core-sync)

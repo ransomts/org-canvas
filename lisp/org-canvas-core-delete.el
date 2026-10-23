@@ -176,6 +176,64 @@ Returns the count of successfully deleted items."
 
       deleted-count)))
 
+(defvar org-canvas--dry-run)
+
+(defvar org-canvas-delete-confirmed nil
+  "When non-nil, answer yes to the delete-at-point confirmation alone.
+Bind it around a call to an `org-canvas-delete-FEATURE-at-point'
+command or `org-canvas-delete-headings' to confirm the delete in
+advance; `scripts/org-canvas delete --yes' binds it for its run.
+Unlike stubbing `y-or-n-p' or `org-canvas--confirm', it leaves every
+other question in the call asked, so a batch caller can tell the
+delete confirmation from any other safety prompt (issue #525).")
+
+(defvar org-canvas--delete-heading-fns nil
+  "Alist of (SINGULAR . FUNCTION): every feature's delete at point.
+Filled by `org-canvas-define-delete-at-point', and read by
+`org-canvas-delete-headings' to find a feature's deleter (issue #525).")
+
+(defun org-canvas--delete-register-heading-fn (singular fn)
+  "Record FN as the delete at point of the feature called SINGULAR.
+A second registration for the same name replaces the first."
+  (setf (alist-get singular org-canvas--delete-heading-fns nil nil #'equal) fn))
+
+(defun org-canvas--delete-confirm (title)
+  "Return non-nil when deleting TITLE from Canvas is confirmed.
+Yes without asking when `org-canvas-delete-confirmed' is non-nil,
+else the answer `y-or-n-p' reads."
+  (or org-canvas-delete-confirmed
+      (y-or-n-p (format "Delete '%s' from Canvas? " title))))
+
+(defun org-canvas--delete-item-send (feature-name title canvas-id url pom
+                                                  delete-data post-delete-fn)
+  "Send the DELETE of FEATURE-NAME's TITLE, CANVAS-ID, to URL; clean POM.
+POM is the heading's position.  URL is a function of no arguments
+returning the request's URL.  DELETE-DATA and POST-DELETE-FN are as
+in `org-canvas--delete-item-at-point'.  Return `deleted', or nil after
+logging the failure."
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+  (org-canvas--log-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
+    feature-name title canvas-id)
+  (condition-case err
+      (progn
+        (if delete-data
+            (org-canvas-api-request 'DELETE (funcall url) :data delete-data)
+          (org-canvas-api-request 'DELETE (funcall url)))
+        (org-canvas--log-info org-canvas--logger "Successfully deleted from Canvas")
+        (when post-delete-fn
+          (funcall post-delete-fn pom))
+        ;; The children went with it on Canvas: clear theirs too (#331)
+        (org-canvas--clear-subtree-sync-properties pom)
+        (org-canvas--log-info org-canvas--logger "Cleaned local properties")
+        (message "%s '%s' deleted." (capitalize feature-name) title)
+        'deleted)
+    (error
+     (org-canvas--log-error org-canvas--logger "Failed to delete: %s"
+                 (error-message-string err))
+     (message "Failed to delete %s. Check logs." feature-name)
+     nil)))
+
 (cl-defun org-canvas--delete-item-at-point (feature-name
                                             &key
                                             endpoint
@@ -194,7 +252,10 @@ Keyword arguments:
   DELETE-DATA - Extra alist data to include in DELETE request.
   POST-DELETE-FN - Function (pom) called after API delete for cleanup.
 
-Return non-nil if deletion succeeded."
+The delete is confirmed first (`org-canvas--delete-confirm').  A dry
+run (`org-canvas--dry-run') asks nothing, sends nothing and writes
+nothing.  Return `deleted', `dry-run' or `declined', or nil when the
+delete failed (issue #525)."
   (org-back-to-heading t)
   (let* ((id-property (or id-property "CANVAS_ID"))
          (pom (point))
@@ -204,35 +265,19 @@ Return non-nil if deletion succeeded."
     (unless canvas-id
       (user-error "No %s property found for this heading" id-property))
 
-    (when (y-or-n-p (format "Delete '%s' from Canvas? " title))
-      (org-canvas-clear-log)
-      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (org-canvas--log-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
-                 feature-name title canvas-id)
-
-      (condition-case err
-          (let ((url (if delete-url-fn
+    (cond
+     (org-canvas--dry-run
+      (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would delete %s '%s' (%s %s)"
+        feature-name title id-property canvas-id)
+      (message "Would delete %s '%s' (dry run); nothing sent." feature-name title)
+      'dry-run)
+     ((not (org-canvas--delete-confirm title)) 'declined)
+     (t (org-canvas--delete-item-send
+         feature-name title canvas-id
+         (lambda () (if delete-url-fn
                         (funcall delete-url-fn canvas-id)
-                      (org-canvas-api-course-endpoint
-                       endpoint canvas-id))))
-            (if delete-data
-                (org-canvas-api-request 'DELETE url
-                                        :data delete-data)
-              (org-canvas-api-request 'DELETE url))
-            (org-canvas--log-info org-canvas--logger
-                       "Successfully deleted from Canvas")
-            (when post-delete-fn
-              (funcall post-delete-fn pom))
-            ;; The children went with it on Canvas: clear theirs too (#331)
-            (org-canvas--clear-subtree-sync-properties pom)
-            (org-canvas--log-info org-canvas--logger "Cleaned local properties")
-            (message "%s '%s' deleted." (capitalize feature-name) title)
-            t)
-        (error
-         (org-canvas--log-error org-canvas--logger "Failed to delete: %s"
-                     (error-message-string err))
-         (message "Failed to delete %s. Check logs." feature-name)
-         nil)))))
+                      (org-canvas-api-course-endpoint endpoint canvas-id)))
+         pom delete-data post-delete-fn)))))
 
 (defun org-canvas--delete-all-runtime (spec)
   "Runtime body for generated delete-all functions.
@@ -446,7 +491,8 @@ Example:
            :id-property ,id-property
            :delete-url-fn ,delete-url-fn
            :delete-data ',delete-data
-           :post-delete-fn ,post-delete-fn)))))
+           :post-delete-fn ,post-delete-fn))
+       (org-canvas--delete-register-heading-fn ,feature-name #',fn-name))))
 
 (provide 'org-canvas-core-delete)
 ;;; org-canvas-core-delete.el ends here

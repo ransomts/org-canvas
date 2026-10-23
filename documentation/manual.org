@@ -131,6 +131,7 @@ ARGS=, which is also the line to use without it.
 | =push [--conflict STRATEGY] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=) | any heading failed |
 | =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |
 | =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
+| =delete --yes FEATURE:TITLE...= | =org-canvas-delete-headings= (=-n=: prints what would go, sends nothing) | any heading failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
 | =post ASSIGNMENT...= | =org-canvas-post-grades=, no grading file needed (=--queue=: every column the queue marks =post=) | a column was not posted |
@@ -142,9 +143,11 @@ ARGS=, which is also the line to use without it.
 | =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =verify announcements:TITLE...= | =org-canvas-verify-announcements=, writing nothing (may share a line with columns) | an announcement differs from its heading |
+| =verify assignments:TITLE modules:TITLE files:TITLE...= | =org-canvas-verify-headings=, writing nothing (may share a line with columns and announcements) | an assignment, module or file differs from its heading |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
+| =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
 | =diff=                        | =org-canvas-diff=                                  | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
@@ -169,10 +172,16 @@ names (see [[*Adopting the Drift][Adopting the Drift]]); =--body= lets
 it replace a body, and =--overrides= appends the heading's EXTRA
 override rows to its table.  =show= takes the same names and prints
 each heading's Canvas version, writing nothing (see [[*Showing the
-Canvas Version][Showing the Canvas Version]]).
+Canvas Version][Showing the Canvas Version]]).  =delete= takes the
+same names and deletes each heading's item from Canvas, clearing the
+heading's sync properties (see [[*Deleting a Single Item][Deleting a
+Single Item]]); it needs =--yes= (=-y=), which answers the delete
+confirmation and nothing else, or =--dry-run=, which prints one
+=Would delete FEATURE 'TITLE' (CANVAS_ID ID)= line per heading.
 =--dry-run= (=-n=)
-before the command makes =push=, =publish=, =unpublish=,
-=push-comments= and =sync= send nothing, and =adopt= write nothing.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
+before the command makes =push=, =publish=, =unpublish=, =delete=,
+=push-comments= and =sync= send nothing, =adopt= write nothing, and
+=extend= neither.  =push --conflict STRATEGY= (or =--conflict=STRATEGY=, anywhere
 among its arguments) sets =org-canvas-conflict-strategy= for that run
 alone: =push= overwrites Canvas, =pull= overwrites the heading, and
 =skip= leaves the entry alone and names it, which is also what a batch
@@ -2268,6 +2277,48 @@ kept in the open, write the row as =Students: #1234= instead; a pull
 writes names when =people.org= is there to resolve them, and =#id=
 otherwise.
 
+*** One Student's New Deadline
+
+=M-x org-canvas-extend-student= on an assignment heading (or anywhere
+under it) gives one student a new deadline without editing the table
+by hand (#526).  It asks for a student among =people.org='s students
+(pull the roster first), a due time, and a lock time, offering the due
+time plus =org-canvas-extend-student-late-hours= (default 48; 0 locks
+at the due time).  The unlock is the student's own row's when there is
+one, else the row of the section =people.org= puts them in, else the
+heading's =UNLOCK_AT=.
+
+It writes a =Students: Last, First= row into the heading's =#+NAME:
+overrides= table (starting the table when there is none, and adding
+any date column a pulled table dropped), replacing the student's own
+row rather than adding a second, and saves the file.  Then it sends
+that override alone: Canvas's override for exactly that student is
+updated, or left alone when it already carries the dates, and one is
+created otherwise.  No other row is sent and nothing is deleted, unlike
+the reconcile a push of the heading runs.  A row, or a Canvas override,
+that names the student beside others is refused before anything is
+sent: edit that row instead.  As after any override write, the
+heading's =CANVAS_UPDATED_AT= is restamped when it agreed with Canvas
+before, so the next push is not called a conflict.  The heading's own
+fields are not compared, which needs the payload a push builds, so a
+heading that had already drifted keeps its stamp and its next push
+reports the conflict.  When the write fails the row stays in the
+table, and the next push of the heading or =org-canvas-sync-overrides=
+sends it.  A dry run writes no row and sends nothing; a read-only
+course refuses.
+
+From Lisp or a script, =(org-canvas-extend-student-named ASSIGNMENT
+STUDENT DUE &optional LOCK)= does the same without asking: the
+assignment by exact title or =#CANVAS_ID=, the student by =people.org=
+title or =#USER_ID=, the times as =org-read-date= reads them.  It
+returns =created=, =updated=, =unchanged=, =dry-run=, or nil when the
+write failed.  The batch command line runs it as =extend=:
+
+#+begin_src sh
+scripts/org-canvas -n extend "Recitation 7" "Adams, Alice" "2026-10-22 20:00"
+scripts/org-canvas extend "#2563805" "#1234" "2026-10-22 20:00" "2026-10-24 20:00"
+#+end_src
+
 ** group-categories.org
 
 Group sets for group assignments and group discussions.
@@ -3832,6 +3883,53 @@ Interactively it asks for a title; from Lisp it takes headings as
 =org-canvas-show-headings= does, =(("announcements" . "Exam 2 reminder"))=,
 and returns one plist per heading with =:rows= and =:differences=.
 
+** Verifying Assignments, Modules and Files
+
+=org-canvas-sync-headings= reports each heading =synced= when Canvas
+accepted the request, which is not proof of what students now see: a
+module sync creates, updates and reorders items, a module item can
+publish the file it links, and a re-upload gives a file a new id.
+=M-x org-canvas-verify-headings= reads each named assignment, module or
+file back by the =CANVAS_ID= its heading carries now (after a re-upload,
+the new one), one request per heading plus one for a module's items,
+and compares it with the heading (#524):
+
+| Feature    | Rows                       | Org                                                 | Canvas                           |
+|------------+----------------------------+-----------------------------------------------------+----------------------------------|
+| assignment | title                      | the heading                                         | =name=                           |
+|            | published                  | =PUBLISHED= (true when absent)                      | =published=                      |
+|            | points                     | =POINTS=, only when written                         | =points_possible=                |
+|            | due_at, unlock_at, lock_at | =DUE_AT=, =UNLOCK_AT=, =LOCK_AT= (none when absent) | the base dates                   |
+| module     | title, published           | the heading, =PUBLISHED= (true when absent)         | =name=, =published=              |
+|            | item N                     | each child heading, at the place the push sends it  | the item list, in position order |
+|            | extra                      | (no heading)                                        | an item no child heading names   |
+| file       | published                  | =PUBLISHED= (true when absent)                      | =locked=, inverted               |
+|            | hidden                     | =HIDDEN= (false when absent)                        | =hidden=                         |
+|            | unlock_at, lock_at         | =UNLOCK_AT=, =LOCK_AT= (none when absent)           | =unlock_at=, =lock_at=           |
+
+An assignment is read with =override_assignment_dates=false=, as every
+assignment read is, so a student's extension never stands in for the
+base due date.  A module item agrees when it sits at the same place
+among the items the push sends (a child whose linked content has no
+=CANVAS_ID= yet is not sent, and is itself a difference), carries the
+same title, and, when the heading or its type says how it is published
+(=PUBLISHED= written, or a SubHeader or external URL), has that state.
+Timestamps are compared to the minute, as the drift report compares
+them.  A file heading is a link, so its title is not compared.  A
+heading with no =CANVAS_ID=, one Canvas no longer holds, and a title
+that names no heading are each a difference, and the next heading is
+still read.  Nothing is written, locally or on Canvas.  From the shell,
+alone or beside grading columns and announcements:
+
+#+begin_src sh
+scripts/org-canvas verify "assignments:Chapter 3 check" "modules:Week 9" "files:deck-09.pdf"   # exit 1 on a difference
+#+end_src
+
+Interactively it asks for a feature and a title; from Lisp it takes
+headings as =org-canvas-show-headings= does, =(("modules" . "Week 9"))=,
+and returns one plist per heading with =:feature=, =:rows= and
+=:differences=.
+
 ** Deleting Rows in Batch
 
 Cleaning up after a reshuffle -- a week of sessions dropped, their module
@@ -5140,6 +5238,7 @@ skipped, for a script that wants the data rather than the report.
 | =org-canvas-sync-files=               | Upload files                                 |
 | =org-canvas-sync-calendar-events=      | Sync calendar events                         |
 | =org-canvas-sync-overrides=           | Sync the date overrides (section, group, students) |
+| =org-canvas-extend-student=           | Give one student a new deadline on the assignment at point, sending that override alone |
 | =org-canvas-sync-quiz-accommodations= | Sync the per-student accommodations of every classic quiz |
 
 ** Pull Commands
@@ -5270,6 +5369,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
 | =org-canvas-delete-grading-scheme-at-point=  | Delete grading scheme at point   |
+| =org-canvas-delete-headings=                 | Delete a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries, each by its delete at point |
 
 ** Submission Commands
 
@@ -5357,6 +5457,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-show-at-point=        | Show the Canvas version of the heading at point, writing nothing (see [[*Showing the Canvas Version][Showing the Canvas Version]]) |
 | =org-canvas-show-headings=        | The same for headings named by title or Canvas id |
 | =org-canvas-verify-announcements= | Read pushed announcements back and compare them with their headings, writing nothing (see [[*Verifying an Announcement][Verifying an Announcement]]) |
+| =org-canvas-verify-headings= | Read pushed assignments, modules and files back and compare them with their headings, writing nothing (see [[*Verifying Assignments, Modules and Files][Verifying Assignments, Modules and Files]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
@@ -5524,7 +5625,33 @@ Deleting items that are no longer needed.
 1. Navigate to the heading in the =.org= file.
 2. Run the delete-at-point command (e.g., =M-x org-canvas-delete-assignment-at-point=).
 3. This deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
-4. Optionally remove the heading from the Org file.
+4. Optionally remove the heading from the Org file, and any =modules.org= item linking to it: Canvas removes the module item with the item it points at, and nothing removes the Org side for you.
+
+A script names the headings instead of visiting them (#525):
+
+#+begin_src emacs-lisp
+(let ((org-canvas-delete-confirmed t))
+  (org-canvas-delete-headings '((assignment . "Journal 06")
+                                (page "week-05-objectives" canvas-id))))
+#+end_src
+
+Each heading is found as =org-canvas-sync-headings= finds it, by exact
+title or, with =canvas-id=, by its stamp; the feature's delete at point
+runs there and the file is saved.  Binding
+=org-canvas-delete-confirmed= answers the delete confirmation in
+advance and no other question: an overwrite, a conflict or a mass
+deletion still asks, where stubbing =y-or-n-p= or =org-canvas--confirm=
+would have silenced them too.  In batch, an unconfirmed run is refused
+before anything is read, rather than left reading standard input.  Under
+=org-canvas--dry-run= nothing is asked, sent or written.  Each result
+is a plist =(:feature :target :outcome :id-property :id)=, =:outcome=
+=deleted=, =dry-run=, =declined= or =failed= (with =:error=).  From the
+shell:
+
+#+begin_src sh
+scripts/org-canvas -n delete "assignment:Journal 06"      # what would go
+scripts/org-canvas delete --yes "assignment:Journal 06" "assignment#2497507"
+#+end_src
 
 *** Deleting All Items of a Type
 
@@ -5575,6 +5702,8 @@ Setting different due dates for different course sections.
    #+end_src
 
    =Students: #1234= names a student by Canvas id instead, which keeps the name out of the course repository.  Pull the assignments before editing a table by hand, so extensions given in the web UI are in it and survive the sync; =M-x org-canvas-diff= lists any the table lacks under *Assignment Overrides*, and a push of one heading asks before deleting them.
+
+   Or let =M-x org-canvas-extend-student= write the row and send that override alone: see [[*One Student's New Deadline][One Student's New Deadline]].
 
 ** Pre-Semester Validation Checklist
 

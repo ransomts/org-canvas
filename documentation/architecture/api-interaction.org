@@ -894,11 +894,25 @@ the others. Progress messages show =[N/M]= counts.
 =org-canvas--delete-item-at-point= deletes a single item:
 
 1. Read CANVAS_ID from heading (error if absent)
-2. Prompt user for confirmation
-3. DELETE from Canvas
-4. Clean local sync properties, the registered id stamps included, on
+2. Under =org-canvas--dry-run=, log what would go and return =dry-run=:
+   nothing asked, sent or written (Hard Rule 1, #525)
+3. Confirm through =org-canvas--delete-confirm=: yes without asking when
+   =org-canvas-delete-confirmed= is bound non-nil, else =y-or-n-p=; a no
+   returns =declined=
+4. DELETE from Canvas
+5. Clean local sync properties, the registered id stamps included, on
    the heading and every heading below it (#331)
-5. Optional =post-delete-fn= callback
+6. Optional =post-delete-fn= callback; return =deleted=, or nil when the
+   DELETE failed
+
+=org-canvas-define-delete-at-point= also registers the generated command
+in =org-canvas--delete-heading-fns=, which =org-canvas-delete-headings=
+(core-sync, and =scripts/org-canvas delete=) reads to delete headings by
+title or Canvas id.  The confirmation is its own variable, never
+=org-canvas--confirm= or a stubbed =y-or-n-p=, so a script that answers
+it leaves every other question in the run standing; in batch an
+unconfirmed =org-canvas-delete-headings= is refused before anything is
+read (#525).
 
 ** Delete Macros
 

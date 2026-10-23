@@ -571,6 +571,57 @@
         (expect (test-batch--run '("push" "page:Week 1")) :to-equal 1)
         (expect dry :to-be nil))))
 
+  (it "deletes named headings under --yes, binding only the delete confirmation (#525)"
+    (let ((seen nil) (outcome 'deleted)
+          (org-canvas-delete-confirmed nil))
+      (cl-letf (((symbol-function 'org-canvas-delete-headings)
+                 (lambda (e)
+                   (setq seen (list e org-canvas-delete-confirmed org-canvas--dry-run
+                                    org-canvas-assume-yes))
+                   (list (list :feature "assignment" :target "Journal 06"
+                               :outcome outcome)))))
+        (expect (test-batch--run '("delete" "--yes" "assignment:Journal 06"
+                                   "page#week-1"))
+                :to-equal 0)
+        (expect seen :to-equal '((("assignment" "Journal 06" title)
+                                  ("page" "week-1" canvas-id))
+                                 t nil nil))
+        (setq outcome 'failed)
+        (expect (test-batch--run '("delete" "assignment:Journal 06" "-y"))
+                :to-equal 1)
+        (expect org-canvas-delete-confirmed :to-be nil))))
+
+  (it "prints what a dry run would delete, unconfirmed (#525)"
+    (let ((seen nil) (status nil) (out nil))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-delete-headings)
+                 (lambda (_e)
+                   (setq seen (list org-canvas-delete-confirmed org-canvas--dry-run))
+                   (list (list :feature "assignment" :target "Journal 06"
+                               :outcome 'dry-run :id-property "CANVAS_ID"
+                               :id "2497506")))))
+        (dolist (args '(("-n" "delete" "assignment:Journal 06")
+                        ("delete" "assignment:Journal 06" "--dry-run")))
+          (setq out (with-output-to-string
+                      (setq status (org-canvas-batch-main args))))
+          (expect status :to-equal 0)
+          (expect seen :to-equal '(nil t))
+          (expect out :to-equal
+                  "Would delete assignment 'Journal 06' (CANVAS_ID 2497506)\n")))))
+
+  (it "refuses a delete with no --yes or --dry-run, or no heading (#525)"
+    (let ((called nil) (messages nil))
+      (cl-letf (((symbol-function 'org-canvas-delete-headings)
+                 (lambda (_e) (setq called t) nil)))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("delete" "assignment:Journal 06")) :to-equal 2)
+          (expect (test-batch--run '("delete" "--yes")) :to-equal 2)))
+      (expect called :to-be nil)
+      (expect (mapcar (lambda (m) (car (split-string m "\n"))) (reverse messages))
+              :to-equal
+              '("org-canvas: delete needs --yes to confirm, or --dry-run to see what would go"
+                "org-canvas: delete takes [--yes] FEATURE:TITLE..."))))
+
   (it "binds the conflict strategy --conflict names for the push alone (#470)"
     (let ((seen nil) (entries nil)
           (org-canvas-conflict-strategy nil))
@@ -743,6 +794,31 @@
         (setq fail 1)
         (expect (test-batch--run '("sync")) :to-equal 1)
         (expect dry :to-be nil)))))
+
+(describe "the extend command (issue #526)"
+  (it "passes its arguments on, a dry run under -n, and exits 1 when nothing was sent"
+    (let ((calls nil) (outcome 'created))
+      (cl-letf (((symbol-function 'org-canvas-extend-student-named)
+                 (lambda (&rest args)
+                   (push (cons org-canvas--dry-run args) calls)
+                   outcome)))
+        (expect (test-batch--run '("extend" "Lab 1" "Adams, Alice" "2026-10-23 16:00"))
+                :to-equal 0)
+        (expect (test-batch--run '("-n" "extend" "#456" "#1" "2026-10-23 16:00"
+                                   "2026-10-25 16:00"))
+                :to-equal 0)
+        (setq outcome nil)
+        (expect (test-batch--run '("extend" "Lab 1" "#1" "tomorrow")) :to-equal 1))
+      (expect (reverse calls)
+              :to-equal '((nil "Lab 1" "Adams, Alice" "2026-10-23 16:00")
+                          (t "#456" "#1" "2026-10-23 16:00" "2026-10-25 16:00")
+                          (nil "Lab 1" "#1" "tomorrow")))))
+
+  (it "is a usage error with too few arguments"
+    (let (messages)
+      (test-batch--quietly messages
+        (expect (test-batch--run '("extend" "Lab 1" "#1")) :to-equal 2))
+      (expect (car messages) :to-match "extend takes ASSIGNMENT STUDENT DUE"))))
 
 ;;;; Entry point
 

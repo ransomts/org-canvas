@@ -4,6 +4,7 @@
 #   scripts/test-each-file.sh --timings > test/shard-weights.txt
 # Stale numbers only unbalance the shards; they never drop a file.
 2.0 test/org-canvas-announcements-verify-test.el
+2.0 test/org-canvas-heading-verify-test.el
 8.9 test/org-canvas-announcements-test.el
 2.0 test/org-canvas-assignment-groups-test.el
 2.6 test/org-canvas-assignments-test.el

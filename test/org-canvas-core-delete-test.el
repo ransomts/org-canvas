@@ -15,6 +15,7 @@
 (require 'org-canvas-assignments)
 (require 'org-canvas-rubrics)
 (require 'org-canvas-files)
+(require 'org-canvas)
 
 (describe "org-canvas--delete-all-items (mocked)"
   (it "deletes items from Canvas via queued helper"
@@ -468,7 +469,7 @@
          (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
            (expect result :to-be nil))))))
 
-  (it "returns nil when user cancels"
+  (it "returns declined when user cancels"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
         (with-temp-org-buffer
@@ -478,9 +479,9 @@
 :END:
 "
          (org-back-to-heading)
-         ;; Should return nil when user cancels
+         ;; Declined, which is not a failure (#525)
          (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
-           (expect result :to-be nil)))))))
+           (expect result :to-be 'declined)))))))
 
 (describe "org-canvas--delete-all-items edge paths"
   (it "handles empty remote items list"
@@ -581,7 +582,7 @@
          (org-back-to-heading)
          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
            (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
-             (expect result :to-be t)
+             (expect result :to-be 'deleted)
              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
              (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
              (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))))
@@ -863,6 +864,178 @@
       (expect (plist-get seen :id-property) :to-equal "CANVAS_URL")
       (expect (functionp (plist-get seen :skip-fn)) :to-be t)
       (expect (org-canvas--delete-spec seen) :not :to-throw))))
+
+;;;; Delete by Heading (issue #525)
+
+(defconst test-delete-headings--assignments
+  "* Journal 06
+:PROPERTIES:
+:CANVAS_ID: 2497506
+:LAST_SYNCED: [2026-01-01 Thu]
+:END:
+
+* Journal 07
+:PROPERTIES:
+:CANVAS_ID: 2497507
+:END:
+
+* Unsynced
+"
+  "An assignments.org for the delete-by-heading specs.")
+
+(defmacro test-delete-headings--with-file (var content &rest body)
+  "Run BODY with VAR, a temp Org file holding CONTENT, as assignments.org.
+The pages file is the same file, so a page spec can name its headings."
+  (declare (indent 2))
+  `(let* ((,var (make-temp-file "delete-headings-" nil ".org" ,content))
+          (org-canvas-assignments-file ,var)
+          (org-canvas-pages-file ,var))
+     (unwind-protect
+         (with-org-canvas-test-config
+           (with-mock-api
+             (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                       ((symbol-function 'message) #'ignore))
+               ,@body)))
+       (let ((buf (find-buffer-visiting ,var)))
+         (when buf
+           (with-current-buffer buf (set-buffer-modified-p nil))
+           (kill-buffer buf)))
+       (delete-file ,var))))
+
+(defun test-delete-headings--file-text (file)
+  "Return FILE's text as saved on disk."
+  (with-temp-buffer (insert-file-contents file) (buffer-string)))
+
+(describe "org-canvas-delete-confirmed"
+  (it "answers the delete confirmation without asking"
+    (let ((asked nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (setq asked t) nil)))
+        (let ((org-canvas-delete-confirmed t))
+          (expect (org-canvas--delete-confirm "X") :to-be-truthy))
+        (expect asked :to-be nil)
+        (expect (org-canvas--delete-confirm "X") :to-be nil)
+        (expect asked :to-be t))))
+
+  (it "leaves every other question asked"
+    (let ((asked nil) (noninteractive nil) (org-canvas-assume-yes nil)
+          (org-canvas-delete-confirmed t))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (setq asked t) nil)))
+        (expect (org-canvas--confirm "Overwrite? ") :to-be nil)
+        (expect asked :to-be t)))))
+
+(describe "org-canvas--delete-heading-fns"
+  (it "holds a deleter for every feature with a delete at point"
+    (expect (sort (mapcar #'car org-canvas--delete-heading-fns) #'string<)
+            :to-equal
+            '("announcement" "assignment" "assignment-group" "calendar-event"
+              "discussion" "file" "grading-scheme" "group-category" "module"
+              "page" "rubric")))
+
+  (it "names a feature registry entry for every deleter"
+    (dolist (entry org-canvas--delete-heading-fns)
+      (expect (list (car entry)
+                    (and (org-canvas--delete-heading-feature (car entry)) t))
+              :to-equal (list (car entry) t)))))
+
+(describe "org-canvas--delete-item-at-point post-delete-fn"
+  (it "calls the post-delete function at the heading after the delete"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Item\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"
+         (org-back-to-heading)
+         (let ((seen nil) (org-canvas-delete-confirmed t))
+           (cl-letf (((symbol-function 'display-buffer) #'ignore))
+             (expect (org-canvas--delete-item-at-point
+                      "item" :endpoint "items/%s"
+                      :post-delete-fn (lambda (pom) (setq seen pom)))
+                     :to-be 'deleted))
+           (expect seen :to-equal (point))))))))
+
+(describe "org-canvas--delete-heading-fn-for"
+  (it "signals for a deleter whose feature is not registered"
+    (let ((org-canvas--delete-heading-fns '(("widget" . ignore))))
+      (expect (org-canvas--delete-heading-fn-for "widget")
+              :to-throw 'error '("No feature widget")))))
+
+(describe "org-canvas-delete-headings"
+  (it "deletes each named heading, by title or Canvas id, and saves the file"
+    (test-delete-headings--with-file file test-delete-headings--assignments
+      (let* ((org-canvas-delete-confirmed t)
+             (results (org-canvas-delete-headings
+                       '((assignment . "Journal 06")
+                         ("assignments" "2497507" canvas-id)))))
+        (expect (mapcar (lambda (r) (plist-get r :outcome)) results)
+                :to-equal '(deleted deleted))
+        (expect (mapcar (lambda (r) (plist-get r :id)) results)
+                :to-equal '("2497506" "2497507"))
+        (expect (plist-get (car results) :id-property) :to-equal "CANVAS_ID")
+        (expect-api-called 'DELETE "assignments/2497506")
+        (expect-api-called 'DELETE "assignments/2497507")
+        (let ((text (test-delete-headings--file-text file)))
+          (expect text :to-match "^\\* Journal 06")
+          (expect text :not :to-match "CANVAS_ID")))))
+
+  (it "sends and writes nothing in a dry run, and asks nothing"
+    (test-delete-headings--with-file file test-delete-headings--assignments
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (error "Must not ask"))))
+        (let* ((org-canvas--dry-run t)
+               (results (org-canvas-delete-headings '((assignment . "Journal 06")))))
+          (expect (plist-get (car results) :outcome) :to-be 'dry-run)
+          (expect (plist-get (car results) :id) :to-equal "2497506")
+          (expect test-org-canvas-api-calls :to-be nil)
+          (expect (test-delete-headings--file-text file)
+                  :to-equal test-delete-headings--assignments)))))
+
+  (it "refuses an unconfirmed run in batch before anything is read"
+    (test-delete-headings--with-file _file test-delete-headings--assignments
+      (let ((noninteractive t) (org-canvas-delete-confirmed nil))
+        (expect (org-canvas-delete-headings '((assignment . "Journal 06")))
+                :to-throw 'user-error)
+        (expect test-org-canvas-api-calls :to-be nil))))
+
+  (it "asks for each heading outside batch, a no leaving it alone"
+    (test-delete-headings--with-file file test-delete-headings--assignments
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+        (let* ((noninteractive nil)
+               (results (org-canvas-delete-headings '((assignment . "Journal 06")))))
+          (expect (plist-get (car results) :outcome) :to-be 'declined)
+          (expect test-org-canvas-api-calls :to-be nil)
+          (expect (test-delete-headings--file-text file) :to-match "2497506")))))
+
+  (it "reports a missing heading or a refused delete, and runs the next"
+    (test-delete-headings--with-file file test-delete-headings--assignments
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method url &rest _)
+                   (when (string-match-p "2497506" url) (error "Forbidden"))
+                   nil)))
+        (let* ((org-canvas-delete-confirmed t)
+               (results (org-canvas-delete-headings
+                         '((assignment . "No Such")
+                           (assignment . "Unsynced")
+                           (assignment . "Journal 06")
+                           (assignment . "Journal 07")))))
+          (expect (mapcar (lambda (r) (plist-get r :outcome)) results)
+                  :to-equal '(failed failed failed deleted))
+          (expect (plist-get (car results) :error) :to-match "No assignment heading")
+          (expect (plist-get (nth 1 results) :error) :to-match "No CANVAS_ID")
+          (expect (test-delete-headings--file-text file) :to-match "2497506")))))
+
+  (it "matches a page by its CANVAS_URL"
+    (test-delete-headings--with-file _file "* Week 1\n:PROPERTIES:\n:CANVAS_URL: week-1\n:END:\n"
+      (let* ((org-canvas-delete-confirmed t)
+             (results (org-canvas-delete-headings '(("pages" "week-1" canvas-id)))))
+        (expect (plist-get (car results) :outcome) :to-be 'deleted)
+        (expect (plist-get (car results) :id-property) :to-equal "CANVAS_URL")
+        (expect-api-called 'DELETE "pages/week-1"))))
+
+  (it "stops on a feature with no delete before anything runs"
+    (test-delete-headings--with-file _file test-delete-headings--assignments
+      (let ((org-canvas-delete-confirmed t))
+        (expect (org-canvas-delete-headings '((assignment . "Journal 06")
+                                              (quiz . "Q")))
+                :to-throw 'user-error)
+        (expect test-org-canvas-api-calls :to-be nil)))))
 
 
 (provide 'org-canvas-core-delete-test)

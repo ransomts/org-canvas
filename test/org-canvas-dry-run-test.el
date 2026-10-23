@@ -225,7 +225,28 @@ finished."
              (dry-lines (seq-filter (lambda (l) (string-match-p "\\[DRY-RUN\\]" l))
                                     (plist-get result :log))))
         (expect (seq-filter (lambda (l) (string-match-p "Would set accommodation" l)) dry-lines)
-                :not :to-equal nil)))))
+                :not :to-equal nil))))
+
+  ;; Giving one student a deadline (issue #526) takes arguments, so it
+  ;; is run here by name rather than from the list above.
+  (it "reaches the push path in a student's extension, writing nothing"
+    (org-canvas-dry-run--with-course dir
+      (let ((org-canvas-people-file (expand-file-name "people.org" dir)))
+        (with-temp-file org-canvas-people-file
+          (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n"
+                  ":ROLE: student\n:END:\n"))
+        (let* ((result (org-canvas-dry-run--exercise
+                        (lambda ()
+                          (org-canvas-extend-student-named
+                           "Midterm Exam" "Adams, Alice" "2026-10-23 16:00"))
+                        dir))
+               (dry-lines (seq-filter (lambda (l) (string-match-p "\\[DRY-RUN\\]" l))
+                                      (plist-get result :log))))
+          (expect (plist-get result :writes) :to-equal nil)
+          (expect (plist-get result :after) :to-equal (plist-get result :before))
+          (expect (seq-filter (lambda (l) (string-match-p "Would CREATE override" l))
+                              dry-lines)
+                  :not :to-equal nil))))))
 
 (provide 'org-canvas-dry-run-test)
 ;;; org-canvas-dry-run-test.el ends here

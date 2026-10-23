@@ -1,0 +1,13 @@
+* Added
+- #524 =org-canvas-verify-headings= reads pushed assignments, modules
+  and files back by the =CANVAS_ID= each heading carries now and
+  compares them with their headings: an assignment's title,
+  =PUBLISHED=, =POINTS= and base dates (read with
+  =override_assignment_dates=false=); a module's title, =PUBLISHED= and
+  items, each child's position among the items the push sends, its
+  title and its publish state, with an item no child names called out;
+  a file's =PUBLISHED= (=locked=), =HIDDEN=, =UNLOCK_AT= and =LOCK_AT=,
+  so a re-upload that dropped a date shows at once.  It writes nothing.
+  =scripts/org-canvas verify modules:TITLE files:TITLE
+  assignments:TITLE= runs it in batch, beside grading columns and
+  announcements, and exits 1 on a difference.
