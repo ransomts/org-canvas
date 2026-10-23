@@ -5114,8 +5114,10 @@ Nil OUTCOME means no grade was sent, which leaves nothing unconfirmed."
   (memq (plist-get outcome :state) '(nil completed)))
 
 (defun org-canvas--submissions-grades-note (count outcome)
-  "Return the push message's opening for COUNT grades sent with OUTCOME."
-  (pcase (plist-get outcome :state)
+  "Return the push message's opening for COUNT grades sent with OUTCOME.
+A dry run reads as one even when no grade was in it and OUTCOME is
+nil, so a comment-only dry run never says Pushed (issue #529)."
+  (pcase (if org-canvas--dry-run 'dry-run (plist-get outcome :state))
     ('dry-run (format "Dry run: would push %d grade(s)" count))
     ('failed (format "Canvas did not apply %d grade(s) (%s); nothing recorded"
                      count (plist-get outcome :message)))

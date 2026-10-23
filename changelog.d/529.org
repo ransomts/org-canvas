@@ -1,0 +1,4 @@
+* Fixed
+- #529 A dry-run grade push carrying only comments opens with "Dry
+  run: would push 0 grade(s)" instead of "Pushed 0 grade(s)".  Nothing
+  was ever sent; only the wording read as a real push.

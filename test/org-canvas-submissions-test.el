@@ -5339,6 +5339,14 @@ Return a plist: :calls, :waits, :asked (the post offer was made),
               "\\[DRY-RUN\\] Would send 2 grade(s) for assignment 1001 through update_grades, a Canvas background job")
       (expect said :to-match "^Dry run: would push 2 grade(s)")))
 
+  (it "says a comment-only dry run would push, never that it pushed (issue #529)"
+    (let ((org-canvas--dry-run t))
+      (expect (org-canvas--submissions-grades-note 0 nil)
+              :to-equal "Dry run: would push 0 grade(s)"))
+    (let ((org-canvas--dry-run nil))
+      (expect (org-canvas--submissions-grades-note 0 nil)
+              :to-equal "Pushed 0 grade(s)")))
+
   (it "says nothing of a background job for a single dry-run grade"
     (let ((logged nil) (state nil))
       (with-org-canvas-test-config
