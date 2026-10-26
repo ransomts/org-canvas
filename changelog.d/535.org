@@ -1,0 +1,6 @@
+* Added
+- #535 =org-canvas-validate= reports, as an error, a module item that
+  links straight at a file path (=[[file:content/notes.pdf][Notes]]=)
+  which is neither on disk beside =modules.org= nor the link target of
+  a =files.org= heading.  The push skips such an item without a word;
+  the path is resolved the way the push resolves it.

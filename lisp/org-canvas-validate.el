@@ -906,38 +906,67 @@ Returns a list of issues."
                          clean-heading)
                  t))))))))
 
-(cl-defun org-canvas--validate-module-item-link (loc)
+(defun org-canvas--validate-module-heading-link (raw-heading loc)
+  "Check the `file:X.org::*Heading' link in RAW-HEADING, or return nil.
+Nil too when RAW-HEADING holds no such link.  LOC is a
+\(:file :line :heading) plist."
+  ;; Greedy `.+' for the heading group so a target heading that is
+  ;; itself a file link (nested brackets) is captured whole;
+  ;; backtracking lands on the last `][' boundary.  A `[^]]'-based
+  ;; group truncates at the first nested `]' (false "missing
+  ;; heading" on links to files.org headings).
+  (when (string-match "\\[\\[file:\\([^]]+\\)::\\*\\(.+\\)\\]\\[" raw-heading)
+    (let* ((file-path (match-string 1 raw-heading))
+           (source-dir (file-name-directory (plist-get loc :file)))
+           (abs-path (expand-file-name file-path source-dir)))
+      (if (not (file-exists-p abs-path))
+          (list (org-canvas--validate-make-issue
+                 'error loc nil
+                 (format "Module item links to missing file: %s" file-path)))
+        (let ((clean-heading (replace-regexp-in-string
+                              "\\\\[][]"
+                              (lambda (m) (substring m 1))
+                              (match-string 2 raw-heading))))
+          (org-canvas--validate-module-item-target
+           abs-path clean-heading file-path loc))))))
+
+(declare-function org-canvas--module-resolve-file-path "org-canvas-modules"
+                  (file modules-file-dir))
+(declare-function org-canvas--module-content-target "org-canvas-modules"
+                  (rel-path modules-file-dir))
+
+(defun org-canvas--validate-module-file-link (raw-heading loc)
+  "Check the bare `file:PATH' link in RAW-HEADING, or return nil.
+A module item linking straight at a file is resolved by the push
+against the `files.org' heading whose link target is the same path
+\(`org-canvas--module-content-target'), and an Org file is found on
+disk relative to the modules file, by its basename as a fallback
+\(`org-canvas--module-resolve-file-path').  A path neither finds is an
+error, as a missing heading is: the push skips the item (issue #535).
+LOC is a (:file :line :heading) plist."
+  (when (string-match "\\[\\[file:\\([^]]+\\)\\]\\[" raw-heading)
+    (let ((path (match-string 1 raw-heading))
+          (dir (file-name-directory (plist-get loc :file))))
+      (unless (or (string-match-p "::" path)
+                  (org-canvas--module-resolve-file-path path dir)
+                  (org-canvas--module-content-target path dir))
+        (list (org-canvas--validate-make-issue
+               'error loc nil
+               (format "Module item links to missing file: %s (not on disk, and no files.org heading links to it)"
+                       path)))))))
+
+(defun org-canvas--validate-module-item-link (loc)
   "Check that module item link at point resolves to a synced heading.
 LOC is a (:file :line :heading) plist.
 Skips items with EXTERNAL_URL property or plain-text SubHeaders."
-  (when (org-entry-get (point) "EXTERNAL_URL")
-    (cl-return-from org-canvas--validate-module-item-link nil))
-  (let ((raw-heading (save-excursion
-                       (org-back-to-heading t)
-                       (looking-at org-complex-heading-regexp)
-                       (match-string-no-properties 4))))
-    (when (and raw-heading
-               ;; Greedy `.+' for the heading group so a target heading that is
-               ;; itself a file link (nested brackets) is captured whole;
-               ;; backtracking lands on the last `][' boundary.  A `[^]]'-based
-               ;; group truncates at the first nested `]' (false "missing
-               ;; heading" on links to files.org headings).
-               (string-match
-                "\\[\\[file:\\([^]]+\\)::\\*\\(.+\\)\\]\\["
-                raw-heading))
-      (let* ((file-path (match-string 1 raw-heading))
-             (source-dir (file-name-directory (plist-get loc :file)))
-             (abs-path (expand-file-name file-path source-dir)))
-        (if (not (file-exists-p abs-path))
-            (list (org-canvas--validate-make-issue
-                   'error loc nil
-                   (format "Module item links to missing file: %s" file-path)))
-          (let ((clean-heading (replace-regexp-in-string
-                                "\\\\[][]"
-                                (lambda (m) (substring m 1))
-                                (match-string 2 raw-heading))))
-            (org-canvas--validate-module-item-target
-             abs-path clean-heading file-path loc)))))))
+  (unless (org-entry-get (point) "EXTERNAL_URL")
+    (when-let* ((raw-heading (save-excursion
+                               (org-back-to-heading t)
+                               (looking-at org-complex-heading-regexp)
+                               (match-string-no-properties 4))))
+      (if (string-match-p "\\[\\[file:[^]]+::\\*" raw-heading)
+          (org-canvas--validate-module-heading-link raw-heading loc)
+        (org-canvas--validate-module-file-link raw-heading loc)))))
 
 (defun org-canvas--validate-quiz-question-points (pos)
   "Return the point value for the question at POS.

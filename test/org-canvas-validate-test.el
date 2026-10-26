@@ -2248,6 +2248,67 @@ EXCEPT is a list of filenames to skip."
           (when buf (kill-buffer buf)))
         (delete-file target-file)))))
 
+(defun test-validate--module-file-link-issues (items)
+  "Return the module-item-link issues of each heading in ITEMS.
+ITEMS is the text of the level-2 item headings.  They sit in a
+modules.org beside a files.org whose one heading links to
+content/listed.pdf (not on disk), a file content/on-disk.pdf and a
+pages.org.  The answer is a list, per item in order, of
+\(SEVERITY MESSAGE) pairs."
+  (let* ((dir (file-name-as-directory (make-temp-file "validate-535-" t)))
+         (modules (expand-file-name "modules.org" dir)))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "content" dir))
+          (with-temp-file (expand-file-name "content/on-disk.pdf" dir) (insert "pdf"))
+          (with-temp-file (expand-file-name "pages.org" dir)
+            (insert "* Intro\n:PROPERTIES:\n:CANVAS_URL: intro\n:END:\n"))
+          (with-temp-file (expand-file-name "files.org" dir)
+            (insert "* [[file:content/listed.pdf][listed.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"))
+          (with-temp-file modules (insert "* Week 1\n" items))
+          (with-current-buffer (org-canvas--find-file-noselect modules)
+            (unwind-protect
+                (let ((markers (org-map-entries #'point-marker "LEVEL=2" 'file)))
+                  (mapcar (lambda (marker)
+                            (goto-char marker)
+                            (mapcar (lambda (issue)
+                                      (list (plist-get issue :severity)
+                                            (plist-get issue :message)))
+                                    (org-canvas--validate-module-item-link
+                                     (list :file modules :line (line-number-at-pos)
+                                           :heading "item"))))
+                          markers))
+              (kill-buffer))))
+      (dolist (name '("files.org" "pages.org"))
+        (when-let* ((buf (find-buffer-visiting (expand-file-name name dir))))
+          (kill-buffer buf)))
+      (delete-directory dir t))))
+
+(describe "module item links to a bare file path (issue #535)"
+  (it "passes a file on disk, one files.org lists and an Org file found by name"
+    (expect (test-validate--module-file-link-issues
+             (concat "** [[file:content/on-disk.pdf][On disk]]\n"
+                     "** [[file:content/listed.pdf][Listed]]\n"
+                     "** [[file:../elsewhere/pages.org][Pages]]\n"))
+            :to-equal '(nil nil nil)))
+
+  (it "reports a path that is neither on disk nor in files.org as an error"
+    (let ((issues (test-validate--module-file-link-issues
+                   (concat "** [[file:content/on-disk.pdf][On disk]]\n"
+                           "** [[file:content/gone.pdf][Gone]]\n"
+                           "** [[file:content/listed.pdf][Listed]]\n"))))
+      (expect (nth 0 issues) :to-be nil)
+      (expect (nth 2 issues) :to-be nil)
+      (expect (length (nth 1 issues)) :to-equal 1)
+      (expect (car (car (nth 1 issues))) :to-equal 'error)
+      (expect (nth 1 (car (nth 1 issues))) :to-match
+              "missing file: content/gone.pdf (not on disk, and no files.org heading")))
+
+  (it "leaves a link with a search option to the heading-link check"
+    (expect (test-validate--module-file-link-issues
+             "** [[file:pages.org::#intro][Intro]]\n")
+            :to-equal '(nil))))
+
 (describe "org-canvas--validate-module-item-link with escaped brackets"
   (it "unescapes \\[ in heading name before searching"
     (let ((target-file (make-temp-file "test-pages" nil ".org")))

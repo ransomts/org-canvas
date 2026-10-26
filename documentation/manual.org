@@ -1679,7 +1679,11 @@ File-type module items should link *directly to the file on disk*
 
 org-canvas resolves the path against the file-heading link targets in
 =files.org= to find the Canvas file ID.  This is also the form
-=org-canvas-pull-modules= writes.
+=org-canvas-pull-modules= writes.  A push skips an item whose path it
+cannot resolve, so =org-canvas-validate= reports, as an error, an item
+linking a path that is neither on disk (relative to =modules.org=, an
+Org file also by its name there) nor the link target of a =files.org=
+heading.
 
 A legacy nested form that searches =files.org= for a heading which is
 itself a link also still resolves on push:
