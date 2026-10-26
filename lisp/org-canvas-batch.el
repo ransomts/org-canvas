@@ -15,7 +15,7 @@
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
 ;; pull-all, push, publish, delete, diff, adopt, show, validate,
-;; sync ...), which `scripts/org-canvas' wraps:
+;; sync, check ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -232,6 +232,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Validate the Org files offline; exit 1 on errors." json)
     ("sync" org-canvas-batch--cmd-sync 0 0 ""
      "Push every enabled feature; exit 1 if any item failed.")
+    ("check" org-canvas-batch--cmd-check 0 0 ""
+     "Read the token's user and the course; exit 3 on a 401 (#532).")
     ("version" org-canvas-batch--cmd-version 0 0 ""
      "Print the version, commit and directory loaded (also --version)."
      no-course))
@@ -933,6 +935,41 @@ Return 1 if any item failed."
                                   (plist-get parsed :dry-run)))
          (counters (org-canvas-sync)))
     (if (> (or (plist-get counters :fail) 0) 0) 1 0)))
+
+;;;; Connection Check
+
+(defun org-canvas-batch-check-text (info)
+  "Return the connection report for INFO, `org-canvas-connection-info''s plist.
+One line each: instance, user, course, course code, read-only."
+  (format "Instance:    %s\nUser:        %s\nCourse:      %s\nCourse code: %s\nRead-only:   %s\n"
+          (plist-get info :instance) (plist-get info :user)
+          (plist-get info :course) (plist-get info :course-code)
+          (if (plist-get info :read-only) "yes" "no")))
+
+(defun org-canvas-batch--check-failed (err)
+  "Report ERR, a failed connection check, redacted; return 1.
+A 404 names the course id, the usual culprit."
+  (org-canvas--user-message "Connection check failed on %s, course %s: %s"
+                            org-canvas-base-url org-canvas-course-id
+                            (error-message-string err))
+  (when (org-canvas--api-not-found-p err)
+    (message "Check org-canvas-course-id in %s" org-canvas-batch-credentials-file))
+  1)
+
+(defun org-canvas-batch--cmd-check (_parsed)
+  "Read the token's user and the course, and print what they say.
+GETs only, so a read-only course is checked too.  Return 0 when both
+reads succeed and 1 when either fails: a 403, a wrong course id's
+404, a timeout.  A 401, or a token not configured at all, is let
+through to `org-canvas-batch-main', which prints the expired-token
+message and exits 3, as any command meeting it does (issue #532)."
+  (condition-case err
+      (progn (princ (org-canvas-batch-check-text (org-canvas-connection-info)))
+             0)
+    ;; A 403 is a credentials error too; it is a refusal, not a bad token.
+    (org-canvas-permission-error (org-canvas-batch--check-failed err))
+    (org-canvas-credentials-error (signal (car err) (cdr err)))
+    (error (org-canvas-batch--check-failed err))))
 
 ;;;; Version
 
