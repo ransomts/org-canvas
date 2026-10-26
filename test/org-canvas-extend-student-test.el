@@ -209,6 +209,30 @@ The overrides endpoint answers OVERRIDES; the assignment answers
           (expect text :to-match "<2026-10-23 Fri 16:00>")
           (expect text :not :to-match "<2026-10-21 Wed 16:00>")))))
 
+  (it "keeps the Accept cell of the row it replaces (issue #538)"
+    (test-extend--with-course
+        (test-extend--assignment
+         (concat "#+NAME: overrides\n"
+                 "| Section | Due At | Unlock At | Lock At | Accept |\n"
+                 "|---------+--------+-----------+---------+--------|\n"
+                 "| [[file:sections.org::*Section A][Section A]] | <2026-10-20 Tue 16:00> "
+                 "| <2026-10-16 Fri 09:05> | <2026-10-22 Thu 16:00> | lock-window Lab week |\n"
+                 "| Students: Adams, Alice | <2026-10-21 Wed 16:00> "
+                 "| <2026-10-17 Sat 08:00> | | lock-window Medical, no late window |\n"))
+      (test-extend--with-api (test-extend--api [((id . 31) (student_ids . [1])
+                                                 (due_at . "2026-10-21T20:00:00Z"))])
+        (expect (test-extend--run) :to-equal 'updated)
+        (let ((text (buffer-string)))
+          (expect text :to-match "<2026-10-23 Fri 16:00>")
+          (expect text :to-match "lock-window Medical, no late window *|$")
+          (expect text :to-match "lock-window Lab week *|$")))))
+
+  (it "keeps a short hand-typed row's dates whole when it replaces it"
+    (expect (org-canvas--extend-keep-cells '("Students: A" "<old>")
+                                           '("Students: A" "<due>" "" "<lock>" "")
+                                           '(1 2 3))
+            :to-equal '("Students: A" "<due>" "" "<lock>" "")))
+
   (it "sends nothing when Canvas already holds those dates"
     (test-extend--with-course (test-extend--assignment test-extend--table)
       (let ((due (org-canvas-org-parse-timestamp "<2026-10-23 Fri 16:00>"))

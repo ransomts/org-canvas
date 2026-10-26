@@ -594,7 +594,10 @@ Other findings (date order, targets) are left out."
                              ":DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n"))))
         (expect (mapcar (lambda (i) (list (nth 1 i) (nth 3 i))) issues)
                 :to-equal
-                '((13 "Override row 'Group: #2': Lock window mismatch: locks 120 hour(s) before the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-12 Thu 23:59>); the course allows 48 hour(s)")
+                ;; Group: #2's own due date also runs past the lock it
+                ;; inherits, a date-order finding of its own (issue #538).
+                '((13 "Override row 'Group: #2': Due At is after Lock At (<2099-03-17 Tue 23:59> > <2099-03-12 Thu 23:59> (the assignment's))")
+                  (13 "Override row 'Group: #2': Lock window mismatch: locks 120 hour(s) before the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-12 Thu 23:59>); the course allows 48 hour(s)")
                   (15 "Override row 'Group: #4': Lock window mismatch: locks 0 hour(s) after the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-17 Tue 23:59>); the course allows 48 hour(s)"))))))
 
   (it "reads a row setting only a lock date against the assignment's due date"
@@ -4745,5 +4748,319 @@ Inline @@html:<b>bold</b>@@ snippet.
         (expect (plist-get spec :local-only) :to-be t)
         (expect spec-type :to-be 'boolean)
         (expect (plist-get spec :api-key) :to-be nil)))))
+
+;;;; Accepting a Finding With a Reason (issue #538)
+
+(defun test-validate-538--entry (props &optional table)
+  "Return the findings of an assignment heading, whole plists.
+PROPS is its drawer text and TABLE an override table under it; the
+heading is checked as the assignment spec checks it."
+  (with-temp-org-buffer
+      (format "* HW\n:PROPERTIES:\n%s:END:\n%s"
+              props (if table (concat "\n#+NAME: overrides\n" table) ""))
+    (org-back-to-heading t)
+    (org-canvas--validate-entry-at-marker
+     nil '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
+     #'org-canvas--validate-assignment-structure "/c/assignments.org")))
+
+(defun test-validate-538--brief (issues)
+  "Return ISSUES as (SEVERITY LINE CHECK ACCEPTED MESSAGE) lists."
+  (mapcar (lambda (i)
+            (list (plist-get i :severity) (plist-get i :line)
+                  (plist-get i :check) (plist-get i :accepted)
+                  (plist-get i :message)))
+          issues))
+
+(defconst test-validate-538--online
+  ":SUBMISSION: online_upload\n:UNLOCK_AT: <2099-03-01 Sun 00:00>\n:DUE_AT: <2099-03-10 Tue 23:59>\n"
+  "An online heading, unlocked and due, with no lock date.")
+
+(describe "check ids on findings (issue #538)"
+  (it "names lock-window on a missing lock and on a mismatch"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (let* ((missing (org-canvas--validate-lock-window
+                       "<2099-03-10 Tue 23:59>" nil '(:file "/f" :line 1) ""))
+             (mismatch (org-canvas--validate-lock-window
+                        "<2099-03-10 Tue 23:59>" "<2099-03-11 Wed 23:59>"
+                        '(:file "/f" :line 1) ""))
+             (missing-check (plist-get missing :check))
+             (mismatch-check (plist-get mismatch :check)))
+        (expect missing-check :to-be 'lock-window)
+        (expect mismatch-check :to-be 'lock-window))))
+
+  (it "names require-unlock, and date-order on a heading and a row"
+    (let* ((org-canvas-validate-require-unlock t)
+           (unlock (car (org-canvas--validate-late-window
+                         "<2099-03-10 Tue 23:59>" nil nil '(:file "/f" :line 1))))
+           (unlock-check (plist-get unlock :check))
+           (brief (test-validate-538--brief
+                   (test-validate-538--entry
+                    ":DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-09 Mon 23:59>\n"
+                    (concat "| Section | Due At | Lock At |\n|---+---+---|\n"
+                            "| Group: #1 | <2099-03-20 Fri 23:59> | <2099-03-19 Thu 23:59> |\n")))))
+      (expect unlock-check :to-be 'require-unlock)
+      (expect (mapcar (lambda (b) (list (nth 1 b) (nth 2 b))) brief)
+              :to-equal '((1 date-order) (10 date-order)))))
+
+  (it "lists each check id with what it finds"
+    (expect (mapcar #'car org-canvas--validate-checks)
+            :to-equal '(date-order lock-window require-unlock))
+    (expect (org-canvas--validate-checked 'date-order nil) :to-be nil)))
+
+(describe "VALIDATE_ACCEPT on a heading (issue #538)"
+  (it "takes the finding of the check it names, with the reason"
+    (let* ((org-canvas-validate-lock-after-due-hours 48)
+           (brief (test-validate-538--brief
+                   (test-validate-538--entry
+                    (concat test-validate-538--online
+                            ":VALIDATE_ACCEPT: lock-window In-class exam: locks at the end of class\n")))))
+      (expect (length brief) :to-equal 1)
+      (expect (nth 2 (car brief)) :to-be 'lock-window)
+      (expect (nth 3 (car brief))
+              :to-equal "In-class exam: locks at the end of class")))
+
+  (it "reads each VALIDATE_ACCEPT+ line whole, though Org would split them"
+    (with-temp-org-buffer
+        "* HW\n:PROPERTIES:\n:VALIDATE_ACCEPT: lock-window In class: locks at end\n:POINTS: 5\n:validate_accept+: date-order Extension, see the email\n:END:\n"
+      (org-back-to-heading t)
+      (expect (org-canvas--validate-heading-accepts)
+              :to-equal '("lock-window In class: locks at end"
+                          "date-order Extension, see the email"))))
+
+  (it "takes one check of several, leaving the others' findings"
+    (let* ((org-canvas-validate-lock-after-due-hours 48)
+           (org-canvas-validate-require-unlock t)
+           (brief (test-validate-538--brief
+                   (test-validate-538--entry
+                    (concat ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n"
+                            ":VALIDATE_ACCEPT: require-unlock Opens on the first day\n")))))
+      (expect (mapcar (lambda (b) (list (nth 2 b) (nth 3 b))) brief)
+              :to-equal '((lock-window nil)
+                          (require-unlock "Opens on the first day")))))
+
+  (it "leaves the heading's override rows alone"
+    (let* ((org-canvas-validate-lock-after-due-hours 48)
+           (brief (test-validate-538--brief
+                   (test-validate-538--entry
+                    (concat test-validate-538--online
+                            ":VALIDATE_ACCEPT: lock-window In class\n")
+                    (concat "| Section | Due At |\n|---+---|\n"
+                            "| Group: #1 | <2099-03-12 Thu 23:59> |\n")))))
+      (expect (mapcar (lambda (b) (list (nth 1 b) (nth 3 b))) brief)
+              :to-equal '((1 "In class") (12 nil)))))
+
+  (it "warns of an unknown check id, and of an accept with no reason"
+    (let* ((org-canvas-validate-lock-after-due-hours 48)
+           (issues (test-validate-538--entry
+                    (concat test-validate-538--online
+                            ":VALIDATE_ACCEPT: lock-windw In class\n"
+                            ":VALIDATE_ACCEPT+: lock-window\n")))
+           (brief (test-validate-538--brief issues))
+           (property (plist-get (nth 1 issues) :property)))
+      (expect (mapcar (lambda (b) (list (nth 0 b) (nth 3 b) (nth 4 b))) brief)
+              :to-equal
+              '((warning nil "Lock window missing: due <2099-03-10 Tue 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date")
+                (warning nil "VALIDATE_ACCEPT names 'lock-windw', which is not a check validate knows (date-order, lock-window, require-unlock)")
+                (warning nil "VALIDATE_ACCEPT lock-window gives no reason, so it accepts nothing: write why after the check id")))
+      (expect property :to-equal "VALIDATE_ACCEPT")))
+
+  (it "calls an accept that matched nothing stale, a note"
+    (let ((brief (test-validate-538--brief
+                  (test-validate-538--entry
+                   ":DUE_AT: <2099-03-10 Tue 23:59>\n:VALIDATE_ACCEPT: date-order Fixed last week\n"))))
+      (expect brief :to-equal
+              '((note 1 nil nil "Stale accept: VALIDATE_ACCEPT date-order matched no finding here; remove it (Fixed last week)")))))
+
+  (it "accepts no error, and says so"
+    (let* ((loc '(:file "/f" :line 3 :heading "HW"))
+           (err (org-canvas--validate-checked
+                 'date-order (org-canvas--validate-make-issue 'error loc "DUE_AT" "bad")))
+           (result (org-canvas--validate-apply-accepts
+                    (list err) '("date-order We meant it") loc
+                    (cons "VALIDATE_ACCEPT" "")))
+           (brief (test-validate-538--brief result)))
+      (expect brief :to-equal
+              '((error 3 date-order nil "bad")
+                (warning 3 nil nil "VALIDATE_ACCEPT date-order accepts nothing: the finding is an error, which has to be fixed"))))))
+
+(describe "an Accept cell on an override row (issue #538)"
+  (it "takes the row's findings of the checks it names, separated by ;"
+    (let* ((org-canvas-validate-lock-after-due-hours 48)
+           (brief (test-validate-538--brief
+                   (test-validate-538--entry
+                    (concat test-validate-538--online
+                            ":LOCK_AT: <2099-03-12 Thu 23:59>\n")
+                    (concat "| Section | Due At | Lock At | Accept |\n|---+---+---+---|\n"
+                            "| Group: #1 | <2099-03-20 Fri 23:59> | <2099-03-19 Thu 23:59> | date-order Typo kept for the record; lock-window Debate week |\n"
+                            "| Group: #2 | <2099-03-20 Fri 23:59> | <2099-03-19 Thu 23:59> | |\n"
+                            "| Group: #3 | <2099-03-10 Tue 23:59> | <2099-03-12 Thu 23:59> | lock-window Gone |\n")))))
+      (expect (mapcar (lambda (b) (list (nth 1 b) (nth 2 b) (nth 3 b))) brief)
+              :to-equal '((12 date-order "Typo kept for the record")
+                          (12 lock-window "Debate week")
+                          (13 date-order nil)
+                          (13 lock-window nil)
+                          (14 nil nil)))
+      (expect (nth 4 (car (last brief)))
+              :to-equal "Override row 'Group: #3': Stale accept: Accept lock-window matched no finding here; remove it (Gone)")))
+
+  (it "does not take the heading's findings"
+    (let* ((org-canvas-validate-lock-after-due-hours 48)
+           (brief (test-validate-538--brief
+                   (test-validate-538--entry
+                    test-validate-538--online
+                    (concat "| Section | Due At | Lock At | Accept |\n|---+---+---+---|\n"
+                            "| Group: #1 | <2099-03-10 Tue 23:59> | <2099-03-12 Thu 23:59> | lock-window In class |\n")))))
+      (expect (mapcar (lambda (b) (list (nth 1 b) (nth 3 b) (nth 0 b))) brief)
+              :to-equal '((1 nil warning) (11 nil note)))))
+
+  (it "is left out by the override push, which reads its columns by title"
+    (let ((plain (list '("Section" "Due At" "Lock At")
+                       'hline
+                       '("Group: #1" "<2099-03-10 Tue 23:59>" "<2099-03-12 Thu 23:59>")))
+          (accept (list '("Section" "Accept" "Due At" "Lock At")
+                        'hline
+                        '("Group: #1" "lock-window In class" "<2099-03-10 Tue 23:59>" "<2099-03-12 Thu 23:59>"))))
+      (expect (org-canvas--override-parse-table accept "/c/")
+              :to-equal (org-canvas--override-parse-table plain "/c/")))))
+
+(describe "override row date order on effective dates (issue #538)"
+  (it "warns of a row's due date after the lock it inherits"
+    (let ((brief (test-validate-538--brief
+                  (test-validate-538--entry
+                   ":DUE_AT: <2099-10-05 Mon 23:59>\n:LOCK_AT: <2099-10-07 Wed 23:59>\n"
+                   (concat "| Section | Due At |\n|---+---|\n"
+                           "| Students: #42 | <2099-10-09 Fri 23:59> |\n")))))
+      (expect brief :to-equal
+              '((warning 10 date-order nil "Override row 'Students: #42': Due At is after Lock At (<2099-10-09 Fri 23:59> > <2099-10-07 Wed 23:59> (the assignment's))")))))
+
+  (it "leaves the heading's own order to the heading, once"
+    (let ((brief (test-validate-538--brief
+                  (test-validate-538--entry
+                   ":DUE_AT: <2099-10-09 Fri 23:59>\n:LOCK_AT: <2099-10-07 Wed 23:59>\n"
+                   (concat "| Section | Unlock At |\n|---+---|\n"
+                           "| Group: #1 | <2099-10-01 Thu 00:00> |\n"
+                           "| Group: #2 | <2099-10-02 Fri 00:00> |\n"
+                           "| Group: #3 | <2099-10-03 Sat 00:00> |\n")))))
+      (expect (mapcar #'cadr brief) :to-equal '(1))))
+
+  (it "compares a row's own unlock with the due date it inherits"
+    (let ((brief (test-validate-538--brief
+                  (test-validate-538--entry
+                   ":DUE_AT: <2099-10-05 Mon 23:59>\n"
+                   (concat "| Section | Unlock At |\n|---+---|\n"
+                           "| Group: #1 | <2099-10-06 Tue 00:00> |\n")))))
+      (expect (nth 4 (car brief)) :to-match
+              (regexp-quote "Unlock At is after Due At (<2099-10-06 Tue 00:00> > <2099-10-05 Mon 23:59> (the assignment's))")))))
+
+(defun test-validate-538--write-course (dir)
+  "Write three assignment headings into DIR, two with an accept."
+  (test-validate-create-empty-files dir)
+  (with-temp-file (expand-file-name "assignments.org" dir)
+    (insert "* Exam\n:PROPERTIES:\n:SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n"
+            ":VALIDATE_ACCEPT: lock-window In-class exam\n:NO_MODULE: true\n:END:\n"
+            "* Lab\n:PROPERTIES:\n:SUBMISSION: online_upload\n:DUE_AT: <2099-03-11 Wed 23:59>\n:NO_MODULE: true\n:END:\n"
+            "* Quiz\n:PROPERTIES:\n:SUBMISSION: online_upload\n:DUE_AT: <2099-03-12 Thu 23:59>\n"
+            ":VALIDATE_ACCEPT: lock-window Proctored\n:NO_MODULE: true\n:END:\n")))
+
+(defun test-validate-538--cleanup (dir)
+  "Kill the buffers visiting files in DIR."
+  (dolist (buf (buffer-list))
+    (when (and (buffer-file-name buf)
+               (string-prefix-p (file-truename dir)
+                                (file-truename (buffer-file-name buf))))
+      (with-current-buffer buf (set-buffer-modified-p nil))
+      (kill-buffer buf))))
+
+(describe "accepted findings in the report (issue #538)"
+  (it "takes each heading's finding out of the report, counting it"
+    (with-validate-test-dir dir
+      (test-validate-538--write-course dir)
+      (unwind-protect
+          (let* ((org-canvas-validate-lock-after-due-hours 48)
+                 (org-canvas-read-only nil)
+                 (data (org-canvas--validate-collect))
+                 (stats (plist-get data :stats))
+                 (lock (cl-remove-if-not
+                        (lambda (i) (eq (plist-get i :check) 'lock-window))
+                        (plist-get data :issues))))
+            (expect (mapcar (lambda (i) (plist-get i :heading)) lock)
+                    :to-equal '("Lab"))
+            (expect (mapcar (lambda (i) (list (plist-get i :heading)
+                                              (plist-get i :accepted)))
+                            (plist-get data :accepted))
+                    :to-equal '(("Exam" "In-class exam") ("Quiz" "Proctored")))
+            (expect (plist-get stats :accepted) :to-equal 2))
+        (test-validate-538--cleanup dir))))
+
+  (it "names the count in one line, and lists them with --all"
+    (with-validate-test-dir dir
+      (test-validate-538--write-course dir)
+      (unwind-protect
+          (let ((org-canvas-validate-lock-after-due-hours 48)
+                (org-canvas-read-only nil))
+            (org-canvas-validate)
+            (let ((content (with-current-buffer "*canvas-validate*" (buffer-string))))
+              (expect content :to-match
+                      (concat "^" (regexp-quote "2 finding(s) accepted with a reason (VALIDATE_ACCEPT, Accept cells); M-x org-canvas-validate-all lists them") "$"))
+              (expect content :not :to-match "reason: "))
+            (org-canvas-validate-all)
+            (let ((content (with-current-buffer "*canvas-validate*" (buffer-string))))
+              (expect content :to-match
+                      (regexp-quote "Accepted (2), each with the reason it is kept:"))
+              (expect content :to-match
+                      "assignments.org:1: accepted warning: Lock window missing: .*\n    reason: In-class exam$")
+              (expect content :not :to-match "finding(s) accepted with a reason")))
+        (test-validate-538--cleanup dir))))
+
+  (it "holds a push-only finding back on a read-only course before any accept"
+    (let ((issue (list :severity 'warning :line 1 :push-only t :accepted "Why")))
+      (spy-on 'org-canvas--validate-run-all-specs
+              :and-return-value (list :issues (list issue) :checked 1 :skipped 0))
+      (let* ((org-canvas-read-only t)
+             (stats (plist-get (org-canvas--validate-collect) :stats)))
+        (expect (plist-get stats :suppressed) :to-equal 1)
+        (expect (plist-get stats :accepted) :to-equal 0)))))
+
+(describe "VALIDATE_ACCEPT in the property registry (issue #538)"
+  (it "is a local-only string on each type whose findings carry a check"
+    (dolist (feature '("assignments" "quizzes" "discussions"))
+      (let* ((props (plist-get (gethash feature org-canvas--property-registry)
+                               :properties))
+             (spec (cl-find "VALIDATE_ACCEPT" props
+                            :key (lambda (p) (plist-get p :org-prop))
+                            :test #'equal))
+             ;; Bound outside `expect': Emacs 29's oclosure shadows :type.
+             (spec-type (plist-get spec :type)))
+        (expect (plist-get spec :local-only) :to-be t)
+        (expect spec-type :to-be 'string)
+        (expect (plist-get spec :api-key) :to-be nil))))
+
+  (it "leaves an assignment's payload, and so its PAYLOAD_HASH, as it was"
+    (cl-flet ((payload (props)
+                (with-temp-org-buffer
+                    (format "* HW\n:PROPERTIES:\n:POINTS: 10\n%s:END:\n" props)
+                  (org-back-to-heading t)
+                  (json-encode (org-canvas--assignment-build-payload
+                                (org-canvas--assignment-parse-entry))))))
+      (expect (payload ":VALIDATE_ACCEPT: lock-window In class\n:VALIDATE_ACCEPT+: date-order Kept\n")
+              :to-equal (payload ""))))
+
+  (it "makes no drift row, and a pull leaves it alone"
+    (with-temp-org-buffer
+        "* HW\n:PROPERTIES:\n:VALIDATE_ACCEPT: lock-window In class\n:END:\n"
+      (org-back-to-heading t)
+      (let ((pulled nil))
+        (cl-letf (((symbol-function 'org-canvas--registry-remote-present-p)
+                   (lambda (&rest _) (setq pulled t))))
+          (expect (org-canvas--diff-compare-field
+                   org-canvas--validate-accept-property-spec (point)
+                   '((validate_accept . "something else")))
+                  :to-be nil)
+          (org-canvas--pull-apply-spec
+           org-canvas--validate-accept-property-spec
+           '((validate_accept . "something else")) (point))
+          (expect pulled :to-be nil)
+          (expect (org-entry-get (point) "VALIDATE_ACCEPT")
+                  :to-equal "lock-window In class"))))))
 
 ;;; org-canvas-validate-test.el ends here

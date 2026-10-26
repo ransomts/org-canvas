@@ -53,7 +53,8 @@
 (declare-function org-canvas--override-format-cell "org-canvas-sections"
                   (iso8601))
 (declare-function org-canvas--override-emit-table "org-canvas-sections"
-                  (overrides &optional parent-due parent-unlock parent-lock))
+                  (overrides &optional parent-due parent-unlock parent-lock
+                             accept-fn))
 ;; Whether a heading is what its last push sent, as setting the
 ;; published flag alone decides it (issue #466); `org-canvas' loads it.
 (declare-function org-canvas--publish-heading-clean-p "org-canvas-publish"
