@@ -548,7 +548,8 @@ Other findings (date order, targets) are left out."
               :to-be nil)))
 
   (it "marks the findings push-only once the column is past due, and not before"
-    (let ((org-canvas-validate-require-unlock t))
+    (let ((org-canvas-validate-lock-after-due-hours 48)
+          (org-canvas-validate-require-unlock t))
       (let* ((past (car (org-canvas--validate-late-window
                          "<2020-03-10 Tue 23:59>" nil nil '(:file "/f" :line 1 :heading "HW"))))
              (future (car (org-canvas--validate-late-window
@@ -560,6 +561,24 @@ Other findings (date order, targets) are left out."
         (expect past-push-only :to-be t)
         (expect future :to-be-truthy)
         (expect future-push-only :to-be nil))))
+
+  (it "asks a column for an unlock date only while it is not yet due"
+    (let ((org-canvas-validate-require-unlock t))
+      (expect (org-canvas--validate-late-window
+               "<2020-03-10 Tue 23:59>" nil nil '(:file "/f" :line 1 :heading "HW"))
+              :to-be nil)
+      (expect (length (org-canvas--validate-late-window
+                       "<2099-03-10 Tue 23:59>" nil nil '(:file "/f" :line 1 :heading "HW")))
+              :to-equal 1)))
+
+  (it "rounds the offset and says before when the lock comes first"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (let ((message (plist-get (car (org-canvas--validate-late-window
+                                      "<2099-10-09 Fri 11:02>" "<2099-10-07 Wed 14:16>" nil
+                                      '(:file "/f" :line 1 :heading "HW")))
+                                :message)))
+        (expect message :to-match "locks 44\\.8 hour(s) before the due date (due")
+        (expect message :not :to-match "44\\.76"))))
 
   (it "checks each override row that sets a date, inheriting what it leaves empty"
     (let ((org-canvas-validate-lock-after-due-hours 48)
@@ -575,7 +594,7 @@ Other findings (date order, targets) are left out."
                              ":DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n"))))
         (expect (mapcar (lambda (i) (list (nth 1 i) (nth 3 i))) issues)
                 :to-equal
-                '((13 "Override row 'Group: #2': Lock window mismatch: locks -120 hour(s) after the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-12 Thu 23:59>); the course allows 48 hour(s)")
+                '((13 "Override row 'Group: #2': Lock window mismatch: locks 120 hour(s) before the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-12 Thu 23:59>); the course allows 48 hour(s)")
                   (15 "Override row 'Group: #4': Lock window mismatch: locks 0 hour(s) after the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-17 Tue 23:59>); the course allows 48 hour(s)"))))))
 
   (it "reads a row setting only a lock date against the assignment's due date"

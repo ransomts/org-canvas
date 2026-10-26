@@ -915,9 +915,21 @@ does not parse."
        3600.0)))
 
 (defun org-canvas--validate-format-hours (hours)
-  "Return HOURS, a list of numbers, as text for a message."
-  (concat (mapconcat #'org-canvas--validate-format-weight hours " or ")
+  "Return HOURS, a list of numbers, as text for a message.
+Each is rounded to a tenth of an hour."
+  (concat (mapconcat (lambda (h)
+                       (org-canvas--validate-format-weight
+                        (/ (round (* 10 h)) 10.0)))
+                     hours " or ")
           " hour(s)"))
+
+(defun org-canvas--validate-lock-offset-text (hours)
+  "Return where a lock HOURS after the due date falls, for a message."
+  (if (< hours 0)
+      (format "locks %s before the due date"
+              (org-canvas--validate-format-hours (list (- hours))))
+    (format "locks %s after the due date"
+            (org-canvas--validate-format-hours (list hours)))))
 
 (defun org-canvas--validate-lock-window (due lock loc prefix)
   "Check LOCK against DUE for `org-canvas-validate-lock-after-due-hours'.
@@ -940,8 +952,8 @@ check's to report."
                            allowed)))
         (org-canvas--validate-make-issue
          'warning loc "LOCK_AT"
-         (format "%sLock window mismatch: locks %s after the due date (due %s, lock %s); the course allows %s"
-                 prefix (org-canvas--validate-format-hours (list hours))
+         (format "%sLock window mismatch: %s (due %s, lock %s); the course allows %s"
+                 prefix (org-canvas--validate-lock-offset-text hours)
                  due lock (org-canvas--validate-format-hours allowed))))))))
 
 (defun org-canvas--validate-late-window (due lock unlock loc &optional prefix)
@@ -949,20 +961,24 @@ check's to report."
 DUE, LOCK and UNLOCK are its raw Org timestamps, an absent one nil.
 A column with no due date that parses has no window and is passed
 over.  The findings are warnings (`org-canvas-validate-lock-after-due-hours',
-`org-canvas-validate-require-unlock'), push-only once the column is
-past due, since a column that has closed is a record and not a push
-to come.  LOC locates the column and PREFIX starts each message."
+`org-canvas-validate-require-unlock'), the lock window's push-only
+once the column is past due, since a column that has closed is a
+record and not a push to come; a closed column is not asked for an
+unlock date at all, since it opened as it ran.  LOC locates the
+column and PREFIX starts each message."
   (when-let* ((due-iso (org-canvas--validate-safe-parse-timestamp due)))
     (let* ((prefix (or prefix ""))
+           (past (string< due-iso (org-canvas-current-iso8601-timestamp)))
            (issues (delq nil
                          (list
                           (org-canvas--validate-lock-window due lock loc prefix)
-                          (when (and org-canvas-validate-require-unlock (null unlock))
+                          (when (and org-canvas-validate-require-unlock (null unlock)
+                                     (not past))
                             (org-canvas--validate-make-issue
                              'warning loc "UNLOCK_AT"
                              (format "%sUnlock date missing: the course requires one on every online column"
                                      prefix)))))))
-      (if (string< due-iso (org-canvas-current-iso8601-timestamp))
+      (if past
           (mapcar #'org-canvas--validate-push-only issues)
         issues))))
 
