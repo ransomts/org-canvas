@@ -1401,12 +1401,22 @@ DATES are the due, unlock and lock cells, a nil one left empty."
     (cl-mapc (lambda (col date) (setf (nth col row) (or date ""))) columns dates)
     row))
 
+(defun org-canvas--extend-keep-cells (old new columns)
+  "Return NEW, a replacement for row OLD, with OLD's cells beyond COLUMNS.
+COLUMNS are the due, unlock and lock indexes; every other cell of OLD
+but the first (the target) is kept, so a written reason survives."
+  (cl-loop for cell in new
+           for kept in (append old (make-list (length new) ""))
+           for k from 0
+           collect (if (or (zerop k) (memq k columns)) cell kept)))
+
 (defun org-canvas--extend-rows (rows student dates)
   "Return ROWS, an overrides table, with STUDENT's row set to DATES.
-A row naming STUDENT alone is replaced in place, and otherwise the new
-row goes last; a row naming STUDENT beside others is a `user-error',
-since that override would change for everyone it names.  ROWS nil
-starts a new table."
+A row naming STUDENT alone has its date cells replaced in place,
+keeping its other cells (an Accept cell's reason, issue #538), and
+otherwise the new row goes last; a row naming STUDENT beside others is
+a `user-error', since that override would change for everyone it
+names.  ROWS nil starts a new table."
   (let* ((widened (org-canvas--extend-widen
                    (or rows (list (list "Section" "Due At" "Unlock At" "Lock At")
                                   'hline))))
@@ -1418,7 +1428,8 @@ starts a new table."
                 (lambda (row)
                   (pcase (org-canvas--extend-row-claim
                           (org-canvas--extend-first-cell row) (nth 1 student))
-                    ('exact (setq replaced t) new)
+                    ('exact (setq replaced t)
+                     (org-canvas--extend-keep-cells row new (cdr widened)))
                     ('shared (user-error "%s shares an override row with others; edit that row instead"
                                          (car student)))
                     (_ row)))

@@ -11,7 +11,8 @@
   reason or one naming an error accepts nothing and is a warning; an
   accept that matched nothing is a note.  =VALIDATE_ACCEPT= is never
   sent or pulled, the push ignores the =Accept= column, and a pull of
-  the assignment keeps each Accept cell on its row.
+  the assignment keeps each Accept cell on its row, as =extend= does on the
+  row it gives new dates.
 - #538 =validate --json= adds =accepted= beside =suppressed=, a =check=
   on each finding, and =accepted_findings=, filled under =--all=.
 * Changed
