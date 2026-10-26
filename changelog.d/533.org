@@ -1,0 +1,6 @@
+* Added
+- #533 =org-canvas-submissions-comment-report-ids-only=, a course
+  setting, and =check-comments --ids= on the command line make the
+  comment check name students by user id and Rubric rows by criterion
+  id alone, so no student's name reaches a transcript an agent reads
+  the report into.  The quoted comment text is still printed.

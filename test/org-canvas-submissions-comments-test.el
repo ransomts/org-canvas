@@ -521,6 +521,80 @@
                                               :comment "Short.")))))
               :to-equal '("_1")))))
 
+;;;; Ids-only report (issue #533)
+
+(defmacro test-scom--every-rule (&rest body)
+  "Run BODY with every comment rule on, so each kind of finding appears."
+  (declare (indent 0))
+  `(let ((org-canvas-submissions-comment-flag-regexps '("Second"))
+         (org-canvas-submissions-comment-warn-regexps '("unclear"))
+         (org-canvas-submissions-comment-max-length 50)
+         (org-canvas-submissions-comment-deduction-min-length 60)
+         (org-canvas-submissions-comment-shared-threshold 1))
+     ,@body))
+
+(describe "check-comments naming students and criteria by id (issue #533)"
+  (it "names students by name and criteria by name by default"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-report-ids-only nil))
+        (pcase-let ((`(,findings ,report) (test-scom--check)))
+          (expect (plist-get (car findings) :name) :to-equal "Baker, Bob")
+          (expect report :to-match "^- Baker, Bob (5002) :: Thesis: scored 2 of 5")))))
+
+  (it "names them by id alone when the setting is on"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-report-ids-only t))
+        (pcase-let ((`(,findings ,report) (test-scom--check)))
+          (let ((f (car findings)))
+            (expect (plist-get f :name) :to-equal "5002")
+            (expect (plist-get f :user-id) :to-equal "5002")
+            (expect (plist-get f :where) :to-equal "_1"))
+          (expect report :to-match "^- 5002 :: _1: scored 2 of 5, no comment$")))))
+
+  (it "lets no student or criterion name into any finding or the report"
+    (with-scom-file
+      (test-scom--every-rule
+        (let ((org-canvas-submissions-comment-report-ids-only t))
+          (pcase-let ((`(,findings ,report) (test-scom--check)))
+            (expect (mapcar (lambda (f) (plist-get f :kind)) findings)
+                    :to-contain 'too-long)
+            (expect report :to-match "^- 5001, _1 :: matches =unclear=: Thesis unclear\\.")
+            (expect report :to-match "^- 5001, comment 12 :: matches =Second=")
+            (expect report :to-match "^- 5001, _1 :: 53 characters, over 50: ")
+            (dolist (name '("Adams" "Alice" "Baker" "Bob" "Structure"))
+              (expect report :not :to-match name)
+              (expect (format "%S" findings) :not :to-match name))
+            (expect report :not :to-match "^- [^:]*Thesis"))))))
+
+  (it "takes --ids on the command line for that run only"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-report-ids-only nil)
+            (seen nil) (report nil))
+        (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                  ((symbol-function 'org-canvas--report-display)
+                   (lambda (_name render &optional _mode)
+                     (setq seen org-canvas-submissions-comment-report-ids-only)
+                     (setq report (with-temp-buffer (funcall render) (buffer-string)))))
+                  ((symbol-function 'message) #'ignore))
+          (expect (org-canvas-batch-main '("check-comments" "--ids" "HW")) :to-equal 1))
+        (expect seen :to-be t)
+        (expect report :to-match "^- 5002 :: _1: scored 2 of 5, no comment$")
+        (expect report :not :to-match "Baker")
+        (expect org-canvas-submissions-comment-report-ids-only :to-be nil))))
+
+  (it "keeps the course setting when --ids is absent"
+    (with-scom-file
+      (let ((org-canvas-submissions-comment-report-ids-only t) (seen nil))
+        (cl-letf (((symbol-function 'org-canvas-submissions-check-comments)
+                   (lambda (_f)
+                     (setq seen org-canvas-submissions-comment-report-ids-only)
+                     nil)))
+          (expect (car (test-scom--batch '("check-comments" "HW"))) :to-equal 0))
+        (expect seen :to-be t))))
+
+  (it "refuses --ids without a file"
+    (expect (car (test-scom--batch '("check-comments" "--ids"))) :to-equal 2)))
+
 ;;;; The course settings file (issue #499)
 
 (describe "org-canvas-load-course-config (issue #499)"

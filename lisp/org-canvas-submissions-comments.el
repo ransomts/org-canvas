@@ -89,6 +89,17 @@ Shorter ones (\"Nice work.\") are left out."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-submissions-comment-report-ids-only nil
+  "Non-nil to name students and criteria by id alone in the comment check.
+The report of `org-canvas-submissions-check-comments' then gives each
+student as the USER_ID and each Rubric row as its criterion id, and
+a finding's :name is the USER_ID too, so no student's name reaches a
+transcript the report is read into (issue #533).  The comment text
+itself is still quoted.  The batch command's --ids sets it for a run."
+  :type 'boolean
+  :safe #'booleanp
+  :group 'org-canvas)
+
 (defconst org-canvas--submissions-comments-check-buffer "*canvas-comment-check*"
   "Buffer the comment check's report is rendered into.")
 
@@ -518,16 +529,29 @@ the keys that matched nothing (\"user 5001 criterion _812\");
          (< (string-to-number score) (string-to-number max)))))
 
 (defun org-canvas--submissions-comments-finding (student &rest props)
-  "Return a finding on STUDENT, an exported plist, with PROPS added."
-  (append props (list :user-id (plist-get student :user-id)
-                      :name (plist-get student :name))))
+  "Return a finding on STUDENT, an exported plist, with PROPS added.
+Its :name is the USER_ID under
+`org-canvas-submissions-comment-report-ids-only'."
+  (let ((user-id (plist-get student :user-id)))
+    (append props (list :user-id user-id
+                        :name (if org-canvas-submissions-comment-report-ids-only
+                                  user-id
+                                (plist-get student :name))))))
+
+(defun org-canvas--submissions-comments-where (row)
+  "Return the check's name for ROW, an exported Rubric row.
+That is the criterion's name, else its id; the id alone under
+`org-canvas-submissions-comment-report-ids-only'."
+  (if org-canvas-submissions-comment-report-ids-only
+      (plist-get row :criterion-id)
+    (or (plist-get row :criterion) (plist-get row :criterion-id))))
 
 (defun org-canvas--submissions-comments-missing (student)
   "Return an error for each of STUDENT's deducted rows without a comment."
   (mapcar (lambda (row)
             (org-canvas--submissions-comments-finding
              student :severity 'error :kind 'missing
-             :where (or (plist-get row :criterion) (plist-get row :criterion-id))
+             :where (org-canvas--submissions-comments-where row)
              :text (format "%s of %s" (plist-get row :score) (plist-get row :max))))
           (seq-filter (lambda (row) (and (org-canvas--submissions-comments-deducted-p row)
                                          (null (plist-get row :comment))))
@@ -538,7 +562,7 @@ the keys that matched nothing (\"user 5001 criterion _812\");
   (seq-filter
    #'cdr
    (append (mapcar (lambda (row)
-                     (cons (or (plist-get row :criterion) (plist-get row :criterion-id))
+                     (cons (org-canvas--submissions-comments-where row)
                            (plist-get row :comment)))
                    (plist-get student :rows))
            (list (cons "draft" (plist-get student :draft)))
@@ -584,7 +608,7 @@ a deducted row's comment under
     (when kind
       (org-canvas--submissions-comments-finding
        student :severity 'warning :kind kind
-       :where (or (plist-get row :criterion) (plist-get row :criterion-id))
+       :where (org-canvas--submissions-comments-where row)
        :length n :limit (if (eq kind 'too-long) max min) :text text))))
 
 (defun org-canvas--submissions-comments-lengths (student)
@@ -657,7 +681,10 @@ is nil."
 
 (defun org-canvas--submissions-comments-finding-line (finding)
   "Return the report's item for FINDING."
-  (let ((who (format "%s (%s)" (plist-get finding :name) (plist-get finding :user-id))))
+  (let ((who (if org-canvas-submissions-comment-report-ids-only
+                 (plist-get finding :user-id)
+               (format "%s (%s)" (plist-get finding :name)
+                       (plist-get finding :user-id)))))
     (pcase (plist-get finding :kind)
       ('missing (format "- %s :: %s: scored %s, no comment"
                         who (plist-get finding :where) (plist-get finding :text)))
@@ -707,7 +734,9 @@ is nil."
 FILE is taken as `org-canvas-submissions-export-comments' takes it.
 Students whose grade is posted, and students who left, are not
 checked.  The findings are errors and warnings, each a plist with
-:severity, :kind, :name, :user-id, :where and :text:
+:severity, :kind, :name, :user-id, :where and :text.  Under
+`org-canvas-submissions-comment-report-ids-only' :name is the USER_ID
+and :where a criterion id, and the report names no student:
 
   - error `missing': a Rubric row scored below its max with no comment;
   - error `flagged': a row comment, draft or sent comment matching one
