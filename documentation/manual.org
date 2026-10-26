@@ -89,7 +89,8 @@ The credentials file remains fully supported and is still where =org-canvas-dire
 M-x org-canvas-test-connection
 #+end_src
 
-On failure, specific error messages indicate the cause:
+It reads the user the token belongs to (=users/self=) and the course,
+and names both.  On failure, specific error messages indicate the cause:
 
 | Error               | Meaning                                   |
 |---------------------+-------------------------------------------|
@@ -97,6 +98,26 @@ On failure, specific error messages indicate the cause:
 | HTTP 403            | Token lacks required scope                |
 | HTTP 404            | Course ID not found                       |
 | Network error       | URL wrong or no internet connection       |
+
+From a shell, =scripts/org-canvas check= makes the same two reads and
+prints what they say, never the token (#532):
+
+#+begin_example
+Instance:    https://clemson.instructure.com
+User:        Tim Ransom
+Course:      Ethics in Computing
+Course code: CPSC 3300
+Read-only:   no
+#+end_example
+
+It sends GETs only, so it checks a course marked =org-canvas-read-only=
+as well.  It exits 0 when both reads succeed; 3 on a 401, printing the
+expired-token message, as any command meeting one does (a token not
+configured at all exits 3 too); and 1 on any other failure (a 403 on
+the course, a 404 for a wrong course id, a timeout), naming the
+instance and course id, with a pointer to =org-canvas-course-id= on a
+404.  Run it before a first pull, so a burned token surfaces there and
+not as the first real command's 401, mid-run.
 
 This prints your course name if the connection is successful.
 
@@ -116,7 +137,9 @@ cd ~/courses/ethics
 The course directory is the current one unless =-C DIR= (=--course DIR=)
 names another.  The script runs =emacs --batch --eval '(setq
 load-prefer-newer t)' -l lisp/org-canvas-batch.el -f org-canvas-batch --
-ARGS=, which is also the line to use without it.
+ARGS=, which is also the line to use without it.  =--json= before
+=validate= or =diff= prints one JSON object in place of the report (see
+[[*Machine-Readable Output][Machine-Readable Output]]).
 
 | Command                       | Runs                                               | Exits 1 when       |
 |-------------------------------+----------------------------------------------------+--------------------|
@@ -139,7 +162,7 @@ ARGS=, which is also the line to use without it.
 | =keep FILE USER-ID...= | the same, keeping the typed grade | an id had no heading or no =CONFLICT= |
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
 | =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
-| =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
+| =check-comments [--ids] FILE...= | =org-canvas-submissions-check-comments= for each (=--ids=: students and criteria by id only) | an error was found |
 | =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =verify announcements:TITLE...= | =org-canvas-verify-announcements=, writing nothing (may share a line with columns) | an announcement differs from its heading |
@@ -148,11 +171,12 @@ ARGS=, which is also the line to use without it.
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
-| =diff=                        | =org-canvas-diff=                                  | anything drifted   |
+| =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
-| =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
+| =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back; =--json=: one JSON object) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
+| =check=                       | =org-canvas-connection-info=: reads the token's user and the course, GETs only | a read failed (a 401 exits 3) |
 | =version= (=--version=, =-V=) | the version, commit and directory loaded           |                    |
 
 Two kinds of "pull" are kept apart by name.  =grades= takes assignments,
@@ -279,6 +303,103 @@ one a sync client rolled back, without asking (#121, #249), and a
 blanket =revert-without-query= would reread the rolled-back copy
 silently.
 
+** Machine-Readable Output
+
+=--json=, before the command, makes =validate= and =diff= print one
+JSON object on one line of stdout in place of the report, and nothing
+else there: progress lines go to stderr, as they always do in batch.
+The exit status is the command's own, as the table above gives it.
+Any other command given =--json= is a usage error (exit 2) that names
+the commands taking it (#531):
+
+#+begin_src sh
+scripts/org-canvas --json validate --all | jq '.findings[] | select(.severity == "error")'
+scripts/org-canvas -C ~/courses/ethics --json diff | jq '.counts'
+#+end_src
+
+Keys are snake_case and always present; a value the finding or row
+does not have is =null=, a list it does not have is =[]=, and flags are
+=true= or =false=.  Messages are redacted as everything else printed
+is.
+
+=validate --json= holds what the text report holds: on a course marked
+=org-canvas-read-only= the push-only findings are held back and
+counted in =suppressed=, unless =--all=.  The links whose targets
+merely lack a Canvas id, which the text report folds into one line,
+are listed, marked =pending_sync=.  Errors and warnings come first,
+notes last, each in the order found.
+
+#+begin_src js
+{"command": "validate",
+ "course": "/home/me/courses/ethics/",  // org-canvas-directory
+ "all": false,                          // --all given
+ "counts": {"error": 1, "warning": 3, "note": 2},
+ "files_checked": 12, "files_skipped": 0,
+ "suppressed": 0,                       // push-only findings held back
+ "findings": [
+   {"severity": "error",                // "error", "warning" or "note"
+    "file": "/home/me/courses/ethics/assignments.org",
+    "line": 42,
+    "heading": "Essay 1",               // or null
+    "property": "POINTS",               // or null
+    "message": "...",
+    "pending_sync": false,              // a link target with no Canvas id yet
+    "push_only": false}]}               // protects a push only
+#+end_src
+
+=diff --json= holds the rows the drift report prints, writing nothing,
+in the report's order: per feature, the rows that are drift, then the
+notes, pending creates and relocations, which are not.  =drift= is the
+count of rows that are drift, the number =diff= exits 1 on; =counts=
+names every status, zero or not.
+
+#+begin_src js
+{"command": "diff",
+ "course": "/home/me/courses/ethics/",
+ "course_id": "12345",
+ "drift": 3,
+ "counts": {"changed": 1, "missing": 1, "extra": 1, "stale_ack": 0,
+            "unclaimed": 0, "moved": 0, "relocate": 0, "pending": 2,
+            "note": 0},
+ "acknowledged": 0,                     // extras in org-canvas-diff-known-extras
+ "referenced": 0,                       // unclaimed files course content embeds
+ "features": [
+   {"name": "Assignments",
+    "state": "checked",                 // "checked", "excluded" or "error"
+    "error": null}],                    // why it could not be checked
+ "rows": [
+   {"status": "CHANGED",                // the report's label, below
+    "kind": "modified",                 // the row's internal kind
+    "drift": true,                      // counted in "drift"
+    "feature": "Assignments",
+    "title": "Essay 1",
+    "canvas_id": "2563805",             // a string, or null
+    "container": null,                  // the module, quiz or assignment it sits in
+    "container_kind": null,             // "module", "quiz" or "assignment"
+    "file": null, "line": null,         // the heading, where the row knows it
+    "remote_newer": true,               // Canvas changed it after the last sync
+    "updated_at": "2026-10-01T12:00:00Z",
+    "fields": [{"name": "POINTS", "org": "10", "canvas": "20"}],
+    "message": "CHANGED   Essay 1 (Canvas updated 2026-10-01T12:00:00Z)"}]}
+#+end_src
+
+| =status=    | =drift= | Meaning                                                      |
+|-------------+---------+--------------------------------------------------------------|
+| =CHANGED=   | true    | a property or the body differs, or Canvas changed it since   |
+| =MISSING=   | true    | the heading's Canvas id is gone (or an override row is)      |
+| =EXTRA=     | true    | Canvas holds an item (or an override) no heading claims      |
+| =UNCLAIMED= | true    | such an item shares an unstamped heading's title             |
+| =MOVED=     | true    | a module item an unstamped heading in another module claims  |
+| =STALE-ACK= | true    | an acknowledged extra Canvas no longer holds                 |
+| =NOTE=      | false   | Canvas holds a value no intent property declares             |
+| =PENDING=   | false   | a heading with no Canvas id, which the next sync creates     |
+| =RELOCATE=  | false   | a stamped module item the next sync moves to its heading's module |
+
+An override row has =kind= ="override"= and the status of its state;
+=message= is the first line of the row's text in the report, for a
+reader, and may change wording between versions where the other keys
+do not.
+
 * Course Structure
 
 ** Directory Layout
@@ -286,7 +407,7 @@ silently.
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; API credentials (gitignored)
-├── org-canvas-config.el       ; Optional course settings, no secrets (comment rules)
+├── org-canvas-config.el       ; Optional course settings, no secrets (comment and validate rules)
 ├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
@@ -1679,7 +1800,11 @@ File-type module items should link *directly to the file on disk*
 
 org-canvas resolves the path against the file-heading link targets in
 =files.org= to find the Canvas file ID.  This is also the form
-=org-canvas-pull-modules= writes.
+=org-canvas-pull-modules= writes.  A push skips an item whose path it
+cannot resolve, so =org-canvas-validate= reports, as an error, an item
+linking a path that is neither on disk (relative to =modules.org=, an
+Org file also by its name there) nor the link target of a =files.org=
+heading.
 
 A legacy nested form that searches =files.org= for a heading which is
 itself a link also still resolves on push:
@@ -2228,6 +2353,11 @@ files.  A row that resolves to nothing is skipped with a warning and
 =org-canvas-validate= reports it beforehand.  The date columns are
 found by their headers, so a pulled table that dropped an empty column
 still parses; empty date cells are omitted from the override.
+=org-canvas-validate= checks each row's dates as it checks a heading's,
+reading them as the push does: a row whose Unlock At comes after its
+Due At, or whose Due At comes after its Lock At, is a warning on that
+row, and so is an Unlock At after the Lock At when the row has no Due
+At between them.
 
 Overrides are synced after sections, assignments and the pulled files
 exist.  The sync reconciles the table against Canvas: a section row is
@@ -4215,6 +4345,8 @@ Nothing else in the file moves, and a text equal to the file's is no change, so 
 
 The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence, a reread word and a length are only warnings: a stock line can be meant, and a word or a length needs a person's eyes, not a failed check.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=; a length finding adds =:length= and =:limit=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
 
+When an agent reads the report rather than you, set =org-canvas-submissions-comment-report-ids-only= to =t= (in =org-canvas-config.el=, below), or pass =--ids= (=scripts/org-canvas check-comments --ids FILE...=, for that run only), and no student's name reaches its transcript (#533).  Each student is then named by =USER_ID= alone and each =Rubric= row by its criterion id: =- 5002 :: _1: scored 2 of 5, no comment= in place of =- Baker, Bob (5002) :: Thesis: scored 2 of 5, no comment=, and a finding's =:name= is the =USER_ID= too.  The comment text the check quotes is still printed, since it is your own.
+
 These are a course's own rules, so they belong with the course, not in your init file and not in =org-canvas-credentials.el=, the file that holds the token.  Put them in =org-canvas-config.el= beside it in the course directory:
 
 #+begin_src emacs-lisp
@@ -4222,7 +4354,8 @@ These are a course's own rules, so they belong with the course, not in your init
 (setq org-canvas-submissions-comment-flag-regexps '("—")
       org-canvas-submissions-comment-warn-regexps '("\\badd\\b" "\\brewrite\\b" "\\bAI\\b")
       org-canvas-submissions-comment-max-length 300
-      org-canvas-submissions-comment-deduction-min-length 100)
+      org-canvas-submissions-comment-deduction-min-length 100
+      org-canvas-submissions-comment-report-ids-only t)
 #+end_src
 
 =scripts/org-canvas= (=org-canvas-batch-setup=) and =M-x org-canvas-activate-course= load it after the credentials file, so a setting in both takes its value there; a file that signals while loading is named in the echo area and the run carries on.  It holds nothing secret, so it can be committed beside the course's feedback guide.
@@ -4982,6 +5115,47 @@ always on Canvas and has usually started.
 default), =always= for every heading as before, or =never=.  These warnings
 are push-only advice, so a read-only course holds them back either way.
 
+*** A Course's Late Window
+
+A syllabus late policy is often a rule about dates: online work locks
+48 hours after it is due, and every column opens on a stated day.  Two
+settings, both off by default, have validation check it:
+
+- =org-canvas-validate-lock-after-due-hours=: the hours after its due
+  date an online column must lock, a number or a list of the offsets
+  allowed (=0= locks at the due date, so ='(0 48)= accepts either).
+- =org-canvas-validate-require-unlock=: non-nil when every online
+  column must carry an unlock date.
+
+They apply to assignments whose =SUBMISSION= names an online type
+(=online_upload=, =online_text_entry=, =online_url=,
+=media_recording=) and that have a due date, to the heading and to
+each override row that sets a due or a lock date of its own; a date a
+row leaves empty is the assignment's, as on Canvas.  Hours are counted
+by the clock, so a lock two days after the due date is 48 hours across
+a daylight-saving change too.  The findings are warnings:
+
+#+begin_example
+assignments.org:88: warning: Lock window missing: due <2026-11-06 Fri 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date
+assignments.org:91: warning: Lock window mismatch: locks 24 hour(s) after the due date (due <2026-11-06 Fri 23:59>, lock <2026-11-07 Sat 23:59>); the course allows 48 hour(s)
+assignments.org:97: warning: Override row 'Section 002': Unlock date missing: the course requires one on every online column
+#+end_example
+
+A column already past due is a record rather than a push to come, so
+its lock-window findings are push-only and a read-only course holds
+them back, and it is not asked for an unlock date at all.  A lock
+before the due date, as a row that moves the due date past the
+assignment's lock leaves it, reads "locks 44.8 hour(s) before the due
+date": that student's column closes before it is due.
+These are a course's rules, so they go in its =org-canvas-config.el=
+(see [[*Exporting, Importing and Checking Comments][the comment rules]] for the
+file):
+
+#+begin_src emacs-lisp
+(setq org-canvas-validate-lock-after-due-hours 48
+      org-canvas-validate-require-unlock t)
+#+end_src
+
 ** Forcing a Re-upload
 
 A file sync skips an entry whose =PAYLOAD_HASH= still matches.  That hash
@@ -5428,7 +5602,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 
 | Command                         | Description                                   |
 |---------------------------------+-----------------------------------------------|
-| =org-canvas-test-connection=      | Test API connection (prints course name)      |
+| =org-canvas-test-connection=      | Test API connection (prints course and user)  |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
 | =org-canvas-activate-course=      | Switch to another course in =org-canvas-courses= |
 | =org-canvas-version=              | Show the org-canvas version                   |

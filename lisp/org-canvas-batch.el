@@ -15,7 +15,7 @@
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, pull,
 ;; pull-all, push, publish, delete, diff, adopt, show, validate,
-;; sync ...), which `scripts/org-canvas' wraps:
+;; sync, check ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -35,6 +35,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'json)
 (require 'lisp-mnt)
 (require 'loadhist)
 
@@ -188,7 +189,7 @@ copy silently.  Return the credentials file loaded, or nil."
     ("import-comments" org-canvas-batch--cmd-import-comments 2 3
      "[--posted] FILE IN.json"
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
-    ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
+    ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "[--ids] FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
     ("draft-late-notes" org-canvas-batch--cmd-draft-late-notes 1 nil
      "[--hold ID,ID] FILE..."
@@ -221,30 +222,47 @@ copy silently.  Return the credentials file loaded, or nil."
     ("extend" org-canvas-batch--cmd-extend 3 4 "ASSIGNMENT STUDENT DUE [LOCK]"
      "Give one student a new deadline, sending that override alone (#526).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
-     "Print the drift report; exit 1 on drift.")
+     "Print the drift report; exit 1 on drift." json)
     ("adopt" org-canvas-batch--cmd-adopt 1 nil
      "[--body] [--overrides] --all | FEATURE:TITLE..."
      "Write what CHANGED rows name into Org, nothing sent (#498).")
     ("show" org-canvas-batch--cmd-show 1 nil "FEATURE:TITLE..."
      "Print Canvas's version of named headings; writes nothing (#500).")
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
-     "Validate the Org files offline; exit 1 on errors.")
+     "Validate the Org files offline; exit 1 on errors." json)
     ("sync" org-canvas-batch--cmd-sync 0 0 ""
      "Push every enabled feature; exit 1 if any item failed.")
+    ("check" org-canvas-batch--cmd-check 0 0 ""
+     "Read the token's user and the course; exit 3 on a 401 (#532).")
     ("version" org-canvas-batch--cmd-version 0 0 ""
      "Print the version, commit and directory loaded (also --version)."
      no-course))
-  "The subcommands: (NAME FUNCTION MIN-ARGS MAX-ARGS SYNOPSIS DOC [NO-COURSE]).
+  "The subcommands: (NAME FUNCTION MIN-ARGS MAX-ARGS SYNOPSIS DOC . FLAGS).
 MAX-ARGS nil means any number.  FUNCTION takes the parsed command
-line and returns the exit status.  NO-COURSE non-nil means the
-command runs without a course directory, its credentials unread.")
+line and returns the exit status.  FLAGS are symbols: `no-course'
+means the command runs without a course directory, its credentials
+unread; `json' that it takes the global --json option (issue #531).")
+
+(defun org-canvas-batch--command-flag-p (command flag)
+  "Return non-nil when COMMAND, a table entry, carries FLAG."
+  (memq flag (nthcdr 6 command)))
+
+(defun org-canvas-batch--json-commands ()
+  "Return the names of the commands that take --json, comma-separated."
+  (mapconcat #'car
+             (cl-remove-if-not
+              (lambda (c) (org-canvas-batch--command-flag-p c 'json))
+              org-canvas-batch--commands)
+             ", "))
 
 (defun org-canvas-batch--help-text ()
   "Return the usage text, one line per subcommand."
   (concat
-   "Usage: org-canvas [-C DIR] [--dry-run] COMMAND [ARGS...]\n\n"
+   "Usage: org-canvas [-C DIR] [--dry-run] [--json] COMMAND [ARGS...]\n\n"
    "  -C, --course DIR  course directory (default: the current directory)\n"
    "  -n, --dry-run     push and sync send nothing\n"
+   "      --json        print one JSON object on stdout (for "
+   (org-canvas-batch--json-commands) ")\n"
    "  -h, --help        print this text\n"
    "  -V, --version     print the version and where it was loaded from\n\nCommands:\n"
    (mapconcat (lambda (c)
@@ -268,6 +286,8 @@ Return (PARSED . REST) with any value ARG took consumed from REST."
     (cons (plist-put parsed :directory (substring arg 9)) rest))
    ((member arg '("-n" "--dry-run"))
     (cons (plist-put parsed :dry-run t) rest))
+   ((equal arg "--json")
+    (cons (plist-put parsed :json t) rest))
    ((member arg '("-h" "--help"))
     (cons (plist-put parsed :help t) rest))
    ((member arg '("-V" "--version"))
@@ -276,12 +296,13 @@ Return (PARSED . REST) with any value ARG took consumed from REST."
 
 (defun org-canvas-batch-parse-args (args)
   "Parse ARGS, the words after the program name, into a plist.
-The plist holds :directory, :dry-run, :help, :command (the entry of
-`org-canvas-batch--commands') and :args.  A leading \"--\" is
+The plist holds :directory, :dry-run, :json, :help, :command (the
+entry of `org-canvas-batch--commands') and :args.  A leading \"--\" is
 dropped.  --version stands for the version command, whatever
 follows it; --help, or no command at all, asks for the help.
 Anything malformed signals `org-canvas-batch-usage-error'."
-  (let ((parsed (list :directory nil :dry-run nil :help nil :version nil))
+  (let ((parsed (list :directory nil :dry-run nil :json nil :help nil
+                      :version nil))
         (rest (if (equal (car args) "--") (cdr args) args)))
     (while (and rest (string-prefix-p "-" (car rest)))
       (let ((step (org-canvas-batch--parse-option (car rest) (cdr rest) parsed)))
@@ -294,6 +315,7 @@ Anything malformed signals `org-canvas-batch-usage-error'."
         (unless command
           (org-canvas-batch--usage "Unknown command %s" (car rest)))
         (org-canvas-batch--check-arity command (cdr rest))
+        (org-canvas-batch--check-json parsed command)
         (plist-put (plist-put parsed :command command) :args (cdr rest))))))
 
 (defun org-canvas-batch--check-arity (command args)
@@ -304,6 +326,18 @@ Anything malformed signals `org-canvas-batch-usage-error'."
                                (if (string-empty-p (nth 4 command))
                                    "no arguments"
                                  (nth 4 command))))))
+
+(defun org-canvas-batch--check-json (parsed command)
+  "Signal a usage error if PARSED asks --json of a COMMAND without it."
+  (when (and (plist-get parsed :json)
+             (not (org-canvas-batch--command-flag-p command 'json)))
+    (org-canvas-batch--usage "%s does not take --json; the commands that do: %s"
+                             (car command) (org-canvas-batch--json-commands))))
+
+(defun org-canvas-batch--print-json (object)
+  "Print OBJECT, an alist for `json-encode', as one line on stdout."
+  (princ (json-encode object))
+  (terpri))
 
 (defun org-canvas-batch-heading-entry (arg)
   "Return the heading entry ARG names, for `org-canvas-sync-headings'.
@@ -529,11 +563,20 @@ matched nothing or a change was kept back."
 
 (defun org-canvas-batch--cmd-check-comments (parsed)
   "Check the comments of each grading file PARSED names.
-Return 1 if any check found an error."
-  (let ((errors (mapcar (lambda (file)
-                          (org-canvas-submissions-comment-check-errors
-                           (org-canvas-submissions-check-comments file)))
-                        (plist-get parsed :args))))
+--ids names students and criteria by id alone
+\(`org-canvas-submissions-comment-report-ids-only', #533).  Return 1
+if any check found an error."
+  (let* ((args (plist-get parsed :args))
+         (files (remove "--ids" args))
+         (org-canvas-submissions-comment-report-ids-only
+          (or (and (member "--ids" args) t)
+              org-canvas-submissions-comment-report-ids-only))
+         (errors (mapcar (lambda (file)
+                           (org-canvas-submissions-comment-check-errors
+                            (org-canvas-submissions-check-comments file)))
+                         (or files
+                             (org-canvas-batch--usage
+                              "check-comments takes [--ids] FILE...")))))
     (if (cl-every #'zerop errors) 0 1)))
 
 (defun org-canvas-batch--draft-late-notes-args (args)
@@ -834,9 +877,15 @@ people.org title, or #USER_ID), DUE and an optional LOCK, as
     (if (apply #'org-canvas-extend-student-named (plist-get parsed :args))
         0 1)))
 
-(defun org-canvas-batch--cmd-diff (_parsed)
-  "Print the drift report; return 1 if anything drifted."
-  (if (> (org-canvas-diff) 0) 1 0))
+(defun org-canvas-batch--cmd-diff (parsed)
+  "Print the drift report; return 1 if anything drifted.
+Under PARSED's --json the report is one JSON object
+\(`org-canvas-diff-json-data')."
+  (if (plist-get parsed :json)
+      (let ((data (org-canvas-diff-json-data)))
+        (org-canvas-batch--print-json data)
+        (if (> (alist-get 'drift data) 0) 1 0))
+    (if (> (org-canvas-diff) 0) 1 0)))
 
 (defun org-canvas-batch--adopt-args (args)
   "Read adopt ARGS into (SELECTORS BODY OVERRIDES).
@@ -876,11 +925,17 @@ is ever sent (`org-canvas-diff-adopt-drifts')."
 
 (defun org-canvas-batch--cmd-validate (parsed)
   "Validate the Org files, all findings under --all in PARSED.
-Return 1 if validation found an error."
+Under --json the report is one JSON object
+\(`org-canvas-validate-json-data').  Return 1 if validation found an
+error."
   (let ((args (plist-get parsed :args)))
     (when (and args (not (equal args '("--all"))))
       (org-canvas-batch--usage "validate takes [--all]"))
-    (if (> (org-canvas-validate nil (and args t)) 0) 1 0)))
+    (if (plist-get parsed :json)
+        (let ((data (org-canvas-validate-json-data (and args t))))
+          (org-canvas-batch--print-json data)
+          (if (> (alist-get 'error (alist-get 'counts data)) 0) 1 0))
+      (if (> (org-canvas-validate nil (and args t)) 0) 1 0))))
 
 (defun org-canvas-batch--cmd-sync (parsed)
   "Push every enabled feature, a dry run if PARSED asked for --dry-run.
@@ -889,6 +944,41 @@ Return 1 if any item failed."
                                   (plist-get parsed :dry-run)))
          (counters (org-canvas-sync)))
     (if (> (or (plist-get counters :fail) 0) 0) 1 0)))
+
+;;;; Connection Check
+
+(defun org-canvas-batch-check-text (info)
+  "Return the connection report for INFO, `org-canvas-connection-info''s plist.
+One line each: instance, user, course, course code, read-only."
+  (format "Instance:    %s\nUser:        %s\nCourse:      %s\nCourse code: %s\nRead-only:   %s\n"
+          (plist-get info :instance) (plist-get info :user)
+          (plist-get info :course) (plist-get info :course-code)
+          (if (plist-get info :read-only) "yes" "no")))
+
+(defun org-canvas-batch--check-failed (err)
+  "Report ERR, a failed connection check, redacted; return 1.
+A 404 names the course id, the usual culprit."
+  (org-canvas--user-message "Connection check failed on %s, course %s: %s"
+                            org-canvas-base-url org-canvas-course-id
+                            (error-message-string err))
+  (when (org-canvas--api-not-found-p err)
+    (message "Check org-canvas-course-id in %s" org-canvas-batch-credentials-file))
+  1)
+
+(defun org-canvas-batch--cmd-check (_parsed)
+  "Read the token's user and the course, and print what they say.
+GETs only, so a read-only course is checked too.  Return 0 when both
+reads succeed and 1 when either fails: a 403, a wrong course id's
+404, a timeout.  A 401, or a token not configured at all, is let
+through to `org-canvas-batch-main', which prints the expired-token
+message and exits 3, as any command meeting it does (issue #532)."
+  (condition-case err
+      (progn (princ (org-canvas-batch-check-text (org-canvas-connection-info)))
+             0)
+    ;; A 403 is a credentials error too; it is a refusal, not a bad token.
+    (org-canvas-permission-error (org-canvas-batch--check-failed err))
+    (org-canvas-credentials-error (signal (car err) (cdr err)))
+    (error (org-canvas-batch--check-failed err))))
 
 ;;;; Version
 
@@ -941,7 +1031,7 @@ the repository it links into."
   (let ((command (plist-get parsed :command)))
     (if (plist-get parsed :help)
         (progn (princ (org-canvas-batch--help-text)) 0)
-      (unless (nth 6 command)
+      (unless (org-canvas-batch--command-flag-p command 'no-course)
         (org-canvas-batch-setup (plist-get parsed :directory)))
       (funcall (nth 1 command) parsed))))
 

@@ -915,18 +915,38 @@ Returns the course name as a string.  Signals an error if the request fails."
 	 (response (org-canvas-api-request 'GET endpoint)))
     (alist-get 'name response)))
 
+(defun org-canvas-connection-info ()
+  "Read the token's user and the configured course from Canvas.
+Two GETs, users/self and the course, so a read-only course answers
+too.  Return a plist: :instance (`org-canvas-base-url', trailing
+slash trimmed), :user (the token owner's name), :course and
+:course-code (the course's name and code), and :read-only (non-nil
+when `org-canvas-read-only' is on).  Nothing in it derives from the
+token.  A failed read signals as `org-canvas-api-request' does: an
+expired token as `org-canvas-credentials-error' (issue #532)."
+  (let ((user (org-canvas-api-request 'GET (org-canvas--api-users-self-url)))
+        (course (org-canvas-api-request 'GET (org-canvas-api-course-endpoint ""))))
+    (list :instance (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)
+          :user (alist-get 'name user)
+          :course (alist-get 'name course)
+          :course-code (alist-get 'course_code course)
+          :read-only (and org-canvas-read-only t))))
+
 ;;;###autoload
 (defun org-canvas-test-connection ()
-  "Interactive command to test the Canvas API connection."
+  "Test the Canvas API connection: read the token's user and the course.
+`scripts/org-canvas check' is the batch twin (issue #532)."
   (interactive)
   (org-canvas-clear-log)
   (org-canvas--log-info org-canvas--logger "Testing connection to %s (Course ID: %s)..."
     org-canvas-base-url org-canvas-course-id)
 
   (condition-case err
-      (let ((name (org-canvas-get-course-name)))
+      (let* ((info (org-canvas-connection-info))
+             (name (plist-get info :course)))
 	(org-canvas--log-info org-canvas--logger "Success! Connected to course: %s" name)
-	(message "Success! Connected to course: %s" name))
+	(message "Success! Connected to course: %s as %s"
+                 name (plist-get info :user)))
     (error
      (let ((msg (error-message-string err)))
        (org-canvas--log-error org-canvas--logger "Connection Failed: %s" msg)

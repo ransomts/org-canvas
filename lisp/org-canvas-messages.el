@@ -130,9 +130,7 @@ The heading is searched in the file VAR names, under MATCH."
 (defun org-canvas--message-self-id ()
   "Return the token owner's user id as a string, fetching it once per run."
   (or org-canvas--message-self-id
-      (let ((me (org-canvas-api-request
-                 'GET (format "%s/api/v1/users/self"
-                              (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)))))
+      (let ((me (org-canvas-api-request 'GET (org-canvas--api-users-self-url))))
         (setq org-canvas--message-self-id
               (and (alist-get 'id me) (format "%s" (alist-get 'id me)))))))
 

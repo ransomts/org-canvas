@@ -820,6 +820,347 @@
         (expect (test-batch--run '("extend" "Lab 1" "#1")) :to-equal 2))
       (expect (car messages) :to-match "extend takes ASSIGNMENT STUDENT DUE"))))
 
+;;;; --json (issue #531)
+
+(defvar test-batch--json-output nil
+  "What `test-batch--run-json' last printed.")
+
+(defun test-batch--run-json (args)
+  "Return the exit status of ARGS, keeping their stdout in a variable.
+The course setup is mocked away and messages are dropped."
+  (let (status)
+    (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+              ((symbol-function 'message) #'ignore))
+      (setq test-batch--json-output
+            (with-output-to-string
+              (setq status (org-canvas-batch-main args)))))
+    status))
+
+(defun test-batch--json-read ()
+  "Return the one JSON object the last run printed, as an alist.
+Fail unless stdout held exactly one line."
+  (let ((lines (split-string test-batch--json-output "\n" t)))
+    (unless (= (length lines) 1)
+      (error "Expected one line of JSON, got %S" test-batch--json-output))
+    (let ((json-object-type 'alist) (json-array-type 'vector)
+          (json-key-type 'symbol) (json-false :false))
+      (json-read-from-string (car lines)))))
+
+(defun test-batch--json-keys (object)
+  "Return the keys of OBJECT, a JSON object alist, in order."
+  (mapcar #'car object))
+
+(defconst test-batch--validate-issues
+  (list (list :severity 'note :file "/c/modules.org" :line 3 :heading "Lab 1"
+              :property nil :message "Lab 1 is in no module")
+        (list :severity 'error :file "/c/assignments.org" :line 7
+              :heading "Essay 1" :property "POINTS"
+              :message "POINTS is not a number")
+        (list :severity 'warning :file "/c/assignments.org" :line 9
+              :heading "Essay 2" :property "DUE_AT"
+              :message "DUE_AT is in the past" :push-only t)
+        (list :severity 'warning :file "/c/pages.org" :line 2 :heading "Home"
+              :property nil :message "link target has no CANVAS_ID yet"
+              :pending-sync t))
+  "Findings the validate --json specs run on: one of each kind.")
+
+(describe "--json (issue #531)"
+  (it "is read as a global option"
+    (expect (plist-get (org-canvas-batch-parse-args '("--json" "diff")) :json)
+            :to-be t)
+    (expect (plist-get (org-canvas-batch-parse-args '("diff")) :json)
+            :to-be nil))
+
+  (it "is a usage error on a command without it, naming those that take it"
+    (let ((messages nil) (called nil))
+      (test-batch--quietly messages
+        (cl-letf (((symbol-function 'org-canvas-submissions-status)
+                   (lambda () (setq called t))))
+          (expect (test-batch--run '("--json" "status")) :to-equal 2)))
+      (expect called :to-be nil)
+      (expect (car messages)
+              :to-match (regexp-quote "status does not take --json; the commands that do: diff, validate"))))
+
+  (it "is marked by a flag on the command table, which the help text names"
+    (expect (org-canvas-batch--json-commands) :to-equal "diff, validate")
+    (expect (org-canvas-batch--help-text)
+            :to-match (regexp-quote "--json        print one JSON object on stdout (for diff, validate)")))
+
+  (it "keeps no-course a flag among others"
+    (expect (org-canvas-batch--command-flag-p
+             (assoc "version" org-canvas-batch--commands) 'no-course)
+            :to-be-truthy)
+    (expect (org-canvas-batch--command-flag-p
+             (assoc "diff" org-canvas-batch--commands) 'no-course)
+            :to-be nil)))
+
+(describe "validate --json (issue #531)"
+  (before-each
+    (spy-on 'org-canvas--validate-run-all-specs
+            :and-call-fake (lambda ()
+                             (list :issues (copy-tree test-batch--validate-issues)
+                                   :checked 4 :skipped 1)))
+    (spy-on 'org-canvas-validate :and-throw-error 'error))
+
+  (it "prints one object of the documented schema and exits 1 on an error"
+    (let ((org-canvas-directory "/c/") (org-canvas-read-only nil))
+      (expect (test-batch--run-json '("--json" "validate")) :to-equal 1))
+    (let* ((data (test-batch--json-read))
+           (findings (alist-get 'findings data)))
+      (expect (test-batch--json-keys data)
+              :to-equal '(command course all counts files_checked files_skipped
+                                  suppressed findings))
+      (expect (alist-get 'command data) :to-equal "validate")
+      (expect (alist-get 'course data) :to-equal "/c/")
+      (expect (alist-get 'all data) :to-be :false)
+      (expect (alist-get 'counts data)
+              :to-equal '((error . 1) (warning . 2) (note . 1)))
+      (expect (alist-get 'files_checked data) :to-equal 4)
+      (expect (alist-get 'files_skipped data) :to-equal 1)
+      (expect (alist-get 'suppressed data) :to-equal 0)
+      (expect (length findings) :to-equal 4)
+      (expect (aref findings 0)
+              :to-equal '((severity . "error") (file . "/c/assignments.org")
+                          (line . 7) (heading . "Essay 1") (property . "POINTS")
+                          (message . "POINTS is not a number")
+                          (pending_sync . :false) (push_only . :false)))
+      ;; Notes come last, as in the text report.
+      (expect (alist-get 'severity (aref findings 3)) :to-equal "note")
+      (expect (alist-get 'property (aref findings 3)) :to-be nil)
+      ;; A pending-first-sync link is listed, and marked.
+      (expect (alist-get 'pending_sync (aref findings 2)) :to-be t)
+      (expect (alist-get 'push_only (aref findings 1)) :to-be t)))
+
+  (it "holds push-only findings back on a read-only course unless --all"
+    (let ((org-canvas-directory "/c/") (org-canvas-read-only t))
+      (expect (test-batch--run-json '("--json" "validate")) :to-equal 1)
+      (let ((data (test-batch--json-read)))
+        (expect (alist-get 'suppressed data) :to-equal 1)
+        (expect (length (alist-get 'findings data)) :to-equal 3)
+        (expect (alist-get 'warning (alist-get 'counts data)) :to-equal 1))
+      (expect (test-batch--run-json '("--json" "validate" "--all"))
+              :to-equal 1)
+      (let ((data (test-batch--json-read)))
+        (expect (alist-get 'all data) :to-be t)
+        (expect (alist-get 'suppressed data) :to-equal 0)
+        (expect (length (alist-get 'findings data)) :to-equal 4))))
+
+  (it "exits 0 when nothing is an error, and redacts a message"
+    (spy-on 'org-canvas--validate-run-all-specs
+            :and-return-value
+            (list :issues (list (list :severity 'warning :file "/c/x.org"
+                                      :line 1 :heading "X" :property nil
+                                      :message "Authorization: Bearer sekrit123456"))
+                  :checked 1 :skipped 0))
+    (let ((org-canvas-directory "/c/") (org-canvas-read-only nil))
+      (expect (test-batch--run-json '("--json" "validate")) :to-equal 0))
+    (let ((finding (aref (alist-get 'findings (test-batch--json-read)) 0)))
+      (expect (alist-get 'message finding) :not :to-match "sekrit123456"))))
+
+(defconst test-batch--diff-results
+  (list (list :name "Assignments"
+              :divergences
+              (list (list :kind 'modified :title "Essay 1" :id 101
+                          :updated "2026-10-01T12:00:00Z" :remote-newer t
+                          :fields '(("POINTS" "10" "20")))
+                    (list :kind 'missing :title "Essay 2" :id "102"))
+              :extra (list (list :kind 'extra :title "Old Lab" :id "103"))
+              :pending (list (list :kind 'pending :title "Essay 3"
+                                   :heading "Essay 3" :file "/c/assignments.org"
+                                   :line 40 :property "CANVAS_ID"))
+              :acknowledged 2)
+        (list :name "Module Items"
+              :extra (list (list :kind 'moved :title "Reading" :id "7"
+                                 :where "Week 1" :to "Week 2"
+                                 :file "/c/modules.org" :line 12))
+              :relocate (list (list :kind 'relocate :title "Quiz" :id "8"
+                                    :where "Week 3" :to "Week 4"
+                                    :file "/c/modules.org" :line 20)))
+        (list :name "Assignment Overrides"
+              :divergences (list (list :kind 'override :state 'missing
+                                       :title "Section 2" :where "Essay 1"
+                                       :container "assignment" :dates ""
+                                       :file "/c/assignments.org" :line 5)))
+        (list :name "Pages" :excluded t)
+        (list :name "Quizzes"
+              :error "Failed: Authorization: Bearer sekrit123456"))
+  "Results the diff --json specs run on: a row of most kinds.")
+
+(describe "diff --json (issue #531)"
+  (before-each
+    (spy-on 'org-canvas--preflight-check)
+    (spy-on 'org-canvas-diff :and-throw-error 'error))
+
+  (it "prints one object of the documented schema and exits 1 on drift"
+    (spy-on 'org-canvas--diff-collect-results
+            :and-return-value (copy-tree test-batch--diff-results))
+    (let ((org-canvas-directory "/c/") (org-canvas-course-id "42"))
+      (expect (test-batch--run-json '("--json" "diff")) :to-equal 1))
+    (let* ((data (test-batch--json-read))
+           (rows (alist-get 'rows data))
+           (changed (aref rows 0)))
+      (expect (test-batch--json-keys data)
+              :to-equal '(command course course_id drift counts acknowledged
+                                  referenced features rows))
+      (expect (alist-get 'command data) :to-equal "diff")
+      (expect (alist-get 'course data) :to-equal "/c/")
+      (expect (alist-get 'course_id data) :to-equal "42")
+      (expect (alist-get 'drift data) :to-equal 5)
+      (expect (alist-get 'counts data)
+              :to-equal '((changed . 1) (missing . 2) (extra . 1)
+                          (stale_ack . 0) (unclaimed . 0) (moved . 1)
+                          (relocate . 1) (pending . 1) (note . 0)))
+      (expect (alist-get 'acknowledged data) :to-equal 2)
+      (expect (alist-get 'referenced data) :to-equal 0)
+      (expect (test-batch--json-keys changed)
+              :to-equal '(status kind drift feature title canvas_id container
+                                 container_kind file line remote_newer
+                                 updated_at fields message))
+      (expect (alist-get 'status changed) :to-equal "CHANGED")
+      (expect (alist-get 'kind changed) :to-equal "modified")
+      (expect (alist-get 'drift changed) :to-be t)
+      (expect (alist-get 'feature changed) :to-equal "Assignments")
+      (expect (alist-get 'title changed) :to-equal "Essay 1")
+      (expect (alist-get 'canvas_id changed) :to-equal "101")
+      (expect (alist-get 'container changed) :to-be nil)
+      (expect (alist-get 'file changed) :to-be nil)
+      (expect (alist-get 'remote_newer changed) :to-be t)
+      (expect (alist-get 'updated_at changed)
+              :to-equal "2026-10-01T12:00:00Z")
+      (expect (alist-get 'fields changed)
+              :to-equal [((name . "POINTS") (org . "10") (canvas . "20"))])
+      (expect (alist-get 'message changed)
+              :to-equal "CHANGED   Essay 1 (Canvas updated 2026-10-01T12:00:00Z)")
+      ;; Rows in report order: drift first, then the rest, per feature.
+      (expect (mapcar (lambda (r) (alist-get 'status r)) rows)
+              :to-equal '("CHANGED" "MISSING" "EXTRA" "PENDING" "MOVED"
+                          "RELOCATE" "MISSING"))
+      (let ((pending (aref rows 3)) (moved (aref rows 4))
+            (override (aref rows 6)))
+        (expect (alist-get 'drift pending) :to-be :false)
+        (expect (alist-get 'remote_newer pending) :to-be :false)
+        (expect (alist-get 'file pending) :to-equal "/c/assignments.org")
+        (expect (alist-get 'line pending) :to-equal 40)
+        (expect (alist-get 'fields pending) :to-equal [])
+        (expect (alist-get 'container moved) :to-equal "Week 1")
+        (expect (alist-get 'container_kind moved) :to-equal "module")
+        (expect (alist-get 'kind override) :to-equal "override")
+        (expect (alist-get 'container_kind override) :to-equal "assignment"))
+      (expect (alist-get 'features data)
+              :to-equal [((name . "Assignments") (state . "checked") (error))
+                         ((name . "Module Items") (state . "checked") (error))
+                         ((name . "Assignment Overrides") (state . "checked")
+                          (error))
+                         ((name . "Pages") (state . "excluded") (error))
+                         ((name . "Quizzes") (state . "error")
+                          (error . "Failed: Authorization: Bearer ***MASKED***"))])))
+
+  (it "exits 0 when nothing drifted, pending creates aside"
+    (spy-on 'org-canvas--diff-collect-results
+            :and-return-value
+            (list (list :name "Pages"
+                        :pending (list (list :kind 'pending :title "New page"
+                                             :file "/c/pages.org" :line 3)))))
+    (let ((org-canvas-directory "/c/") (org-canvas-course-id "42"))
+      (expect (test-batch--run-json '("--json" "diff")) :to-equal 0))
+    (let ((data (test-batch--json-read)))
+      (expect (alist-get 'drift data) :to-equal 0)
+      (expect (alist-get 'pending (alist-get 'counts data)) :to-equal 1))))
+
+;;;; Connection check
+
+(defun test-batch--check (answer)
+  "Run the check command against a Canvas answering ANSWER.
+ANSWER is a function of the URL returning the reply or signalling.
+Return (STATUS OUTPUT MESSAGES URLS), URLS the requests made."
+  (let ((urls nil) (messages nil) (status nil) (out nil))
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _)
+                   (push (cons method url) urls)
+                   (funcall answer url))))
+        (test-batch--quietly messages
+          (setq out (with-output-to-string
+                      (setq status (org-canvas-batch-main '("check"))))))))
+    (list status out (reverse messages) (reverse urls))))
+
+(defun test-batch--canvas (course-error)
+  "Return a Canvas answer whose course read signals COURSE-ERROR, if non-nil."
+  (lambda (url)
+    (cond ((string-suffix-p "/users/self" url) '((id . 7) (name . "Tim Ransom")))
+          (course-error (signal (car course-error) (cdr course-error)))
+          (t '((name . "Ethics") (course_code . "CPSC 3300"))))))
+
+(describe "the check command (issue #532)"
+  (it "prints the instance, user, course and read-only flag, and exits 0"
+    (let ((result (test-batch--check (test-batch--canvas nil))))
+      (expect (nth 0 result) :to-equal 0)
+      (expect (nth 1 result)
+              :to-equal (concat "Instance:    https://test.canvas.example.com\n"
+                                "User:        Tim Ransom\n"
+                                "Course:      Ethics\n"
+                                "Course code: CPSC 3300\n"
+                                "Read-only:   no\n"))
+      (expect (nth 1 result) :not :to-match test-org-canvas-api-token)
+      (expect (nth 3 result)
+              :to-equal '((GET . "https://test.canvas.example.com/api/v1/users/self")
+                          (GET . "https://test.canvas.example.com/api/v1/courses/99999/")))))
+
+  (it "names a read-only course"
+    (let ((info (list :instance "https://c.example.com" :user "U"
+                      :course "C" :course-code "K" :read-only t)))
+      (expect (org-canvas-batch-check-text info) :to-match "^Read-only:   yes$")))
+
+  (it "exits 3 with the expired-token message on a 401"
+    (let ((result (test-batch--check
+                   (lambda (_url)
+                     (signal 'org-canvas-credentials-error
+                             (list "Authentication failed (HTTP 401). Your API token may have expired."))))))
+      (expect (nth 0 result) :to-equal 3)
+      (expect (nth 1 result) :to-equal "")
+      (expect (car (nth 2 result)) :to-match "Your API token may have expired")))
+
+  (it "exits 1 on a 403 from the course, naming the refusal"
+    (let ((result (test-batch--check
+                   (test-batch--canvas
+                    '(org-canvas-permission-error
+                      "Permission denied (HTTP 403) reading course")))))
+      (expect (nth 0 result) :to-equal 1)
+      (expect (nth 1 result) :to-equal "")
+      (expect (car (nth 2 result))
+              :to-match "Connection check failed on https://test.canvas.example.com, course 99999: .*HTTP 403")))
+
+  (it "exits 1 on a 404 for a wrong course id, pointing at the id"
+    (let ((result (test-batch--check
+                   (test-batch--canvas
+                    '(org-canvas-api-error "The specified resource does not exist. (HTTP 404)")))))
+      (expect (nth 0 result) :to-equal 1)
+      (expect (car (nth 2 result))
+              :to-match "\\`Connection check failed on https://test.canvas.example.com, course 99999: .*(HTTP 404)")
+      (expect (cadr (nth 2 result))
+              :to-equal "Check org-canvas-course-id in org-canvas-credentials.el")))
+
+  (it "exits 1 on a timeout, with no course-id hint"
+    (let ((result (test-batch--check
+                   (test-batch--canvas
+                    '(org-canvas-timeout-error "Request timed out after 30s")))))
+      (expect (nth 0 result) :to-equal 1)
+      (expect (length (nth 2 result)) :to-equal 1)))
+
+  (it "runs on a read-only course, sending GETs only"
+    (let ((org-canvas-read-only t) (methods nil))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _)
+                   (org-canvas--check-writable method)
+                   (push method methods)
+                   (funcall (test-batch--canvas nil) url))))
+        (let ((out (with-output-to-string
+                     (expect (org-canvas-batch-main '("check")) :to-equal 0))))
+          (expect out :to-match "^Read-only:   yes$")))
+      (expect methods :to-equal '(GET GET)))))
+
 ;;;; Entry point
 
 (describe "org-canvas-batch"

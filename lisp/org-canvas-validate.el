@@ -234,33 +234,45 @@ LOC is a (:file :line :heading) plist."
                  (org-canvas-org-parse-timestamp value)
                (error nil))))
 
+(defun org-canvas--validate-date-sequence (dates loc &optional prefix)
+  "Warn where DATES run out of order; return the list of issues.
+DATES is a list of (NAME VALUE ISO) in the order they must run, ISO
+nil for a date that is absent or does not parse.  Those are passed
+over, so each date that is there is compared with the next one that
+is: an unlock after the lock warns when there is no due date between
+them.  LOC is a (:file :line :heading) plist and PREFIX, when given,
+starts each message.  Shared by headings and override rows (issue
+#534), which is what keeps the two in agreement."
+  (let ((present (cl-remove-if-not (lambda (date) (nth 2 date)) dates))
+        (issues nil))
+    (cl-loop for (a b) on present
+             while b
+             when (string> (nth 2 a) (nth 2 b))
+             do (push (org-canvas--validate-make-issue
+                       'warning loc (car a)
+                       (format "%s%s is after %s (%s > %s)"
+                               (or prefix "") (car a) (car b)
+                               (nth 1 a) (nth 1 b)))
+                      issues))
+    (nreverse issues)))
+
 (defun org-canvas--validate-check-date-order (date-triples loc)
   "Check chronological ordering for DATE-TRIPLES.
 Each triple is (PROP1 PROP2 PROP3) where values should be ordered.
-LOC is a (:file :line :heading) plist.
+LOC is a (:file :line :heading) plist.  Two triples sharing their
+ends can find the same pair out of order; it is reported once.
 Returns a list of warning issues."
-  (let ((issues nil))
-    (dolist (triple date-triples)
-      (let* ((p1 (nth 0 triple))
-             (p2 (nth 1 triple))
-             (p3 (nth 2 triple))
-             (v1 (org-entry-get (point) p1))
-             (v2 (org-entry-get (point) p2))
-             (v3 (org-entry-get (point) p3))
-             (iso1 (org-canvas--validate-safe-parse-timestamp v1))
-             (iso2 (org-canvas--validate-safe-parse-timestamp v2))
-             (iso3 (org-canvas--validate-safe-parse-timestamp v3)))
-        (when (and iso1 iso2 (string> iso1 iso2))
-          (push (org-canvas--validate-make-issue
-                 'warning loc p1
-                 (format "%s is after %s (%s > %s)" p1 p2 v1 v2))
-                issues))
-        (when (and iso2 iso3 (string> iso2 iso3))
-          (push (org-canvas--validate-make-issue
-                 'warning loc p2
-                 (format "%s is after %s (%s > %s)" p2 p3 v2 v3))
-                issues))))
-    (nreverse issues)))
+  (cl-remove-duplicates
+   (mapcan (lambda (triple)
+             (org-canvas--validate-date-sequence
+              (mapcar (lambda (prop)
+                        (let ((value (org-entry-get (point) prop)))
+                          (list prop value
+                                (org-canvas--validate-safe-parse-timestamp value))))
+                      triple)
+              loc))
+           date-triples)
+   :test #'equal :from-end t))
 
 ;;;; 4. Validation Specs
 ;;
@@ -724,29 +736,260 @@ checked (issue #402)."
                "LEVEL=1" 'file))))))
     (nreverse issues)))
 
-(cl-defun org-canvas--validate-assignment-structure (loc)
+(defun org-canvas--validate-assignment-structure (loc)
   "Check the LTI tool, grading period, posting schedule and override table.
 LOC is a (:file :line :heading) plist."
-  (let ((issues (nconc (org-canvas--validate-external-tool loc)
-                       (org-canvas--validate-due-in-grading-period loc)
-                       (org-canvas--validate-post-schedule loc)))
-        (end (save-excursion (org-end-of-subtree t) (point))))
+  (let ((late-window (org-canvas--validate-late-window-defaults)))
+    (nconc (org-canvas--validate-external-tool loc)
+           (org-canvas--validate-due-in-grading-period loc)
+           (org-canvas--validate-post-schedule loc)
+           (org-canvas--validate-heading-late-window loc late-window)
+           (org-canvas--validate-override-table loc late-window))))
+
+(cl-defun org-canvas--validate-override-table (loc &optional late-window)
+  "Check the `#+NAME: overrides' table under the assignment at point.
+Each row is checked for who it is for, for a section link's id, for
+the order of its dates and, given LATE-WINDOW (the assignment's dates
+when the course's late-window rule applies), against that rule.  LOC
+is a (:file :line :heading) plist.  Nil without a table."
+  (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
-        (cl-return-from org-canvas--validate-assignment-structure issues))
+        (cl-return-from org-canvas--validate-override-table nil))
       (forward-line 1)
       (unless (looking-at "^|")
-        (cl-return-from org-canvas--validate-assignment-structure issues))
-      (forward-line 1)
-      (when (looking-at "^|-")
-        (forward-line 1))
-      (let* ((save-pos (point))
-             (file (plist-get loc :file))
-             (heading (plist-get loc :heading))
-             (row-issues (org-canvas--validate-override-rows file heading)))
-        (goto-char save-pos)
-        (let ((id-issues (org-canvas--validate-override-section-ids file heading)))
-          (nconc issues row-issues id-issues))))))
+        (cl-return-from org-canvas--validate-override-table nil))
+      (let ((header-pos (point))
+            (file (plist-get loc :file))
+            (heading (plist-get loc :heading)))
+        (forward-line 1)
+        (when (looking-at "^|-")
+          (forward-line 1))
+        (let* ((rows-pos (point))
+               (row-issues (org-canvas--validate-override-rows file heading))
+               (id-issues (progn (goto-char rows-pos)
+                                 (org-canvas--validate-override-section-ids
+                                  file heading))))
+          (goto-char header-pos)
+          (nconc row-issues id-issues
+                 (org-canvas--validate-override-row-dates loc late-window)))))))
+
+(declare-function org-canvas--override-date-columns "org-canvas-sections" (header))
+(declare-function org-canvas--override-parse-timestamp-cell "org-canvas-sections" (cell))
+
+(defun org-canvas--validate-override-cell (row column)
+  "Return (VALUE . ISO) for the date cell at COLUMN of override ROW.
+VALUE is the trimmed text, nil when the cell is empty or absent; ISO
+is what the override push reads it as
+\(`org-canvas--override-parse-timestamp-cell', in the course zone), nil
+when it reads nothing."
+  (let ((text (string-trim (or (and column (nth column row)) ""))))
+    (unless (string-empty-p text)
+      (cons text (ignore-errors
+                   (org-canvas--override-parse-timestamp-cell text))))))
+
+(defun org-canvas--validate-override-row-label (row)
+  "Return the first cell of override ROW, a link shown as its description."
+  (org-link-display-format (string-trim (or (nth 0 row) ""))))
+
+(defun org-canvas--validate-override-row-date-order (row columns row-loc)
+  "Check that ROW's Unlock At, Due At and Lock At run in that order.
+COLUMNS are the due, unlock and lock indexes
+\(`org-canvas--override-date-columns').  Each date is optional; those
+present are compared as a heading's are (issue #534).  ROW-LOC
+locates the row."
+  (let ((cells (mapcar (lambda (column)
+                         (org-canvas--validate-override-cell row column))
+                       columns)))
+    (org-canvas--validate-date-sequence
+     (cl-mapcar (lambda (name cell) (list name (car cell) (cdr cell)))
+                '("Unlock At" "Due At" "Lock At")
+                (list (nth 1 cells) (nth 0 cells) (nth 2 cells)))
+     row-loc
+     (format "Override row '%s': "
+             (org-canvas--validate-override-row-label row)))))
+
+(defun org-canvas--validate-override-row-late-window (row columns row-loc defaults)
+  "Apply the course's late-window rule to override ROW, or return nil.
+COLUMNS are the due, unlock and lock indexes.  DEFAULTS is the
+assignment's own (:due :unlock :lock), from
+`org-canvas--validate-late-window-defaults', nil when the rule does
+not apply.  A row is checked only when it sets a due or a lock date of
+its own; a date it leaves empty, or one the push cannot read, is the
+assignment's, as on Canvas, where an override not setting a date
+keeps the assignment's (issue #536).  ROW-LOC locates the row."
+  (when defaults
+    (let* ((dates (mapcar (lambda (column)
+                            (let ((cell (org-canvas--validate-override-cell row column)))
+                              (and (cdr cell) (car cell))))
+                          columns))
+           (due (nth 0 dates))
+           (lock (nth 2 dates)))
+      (when (or due lock)
+        (org-canvas--validate-late-window
+         (or due (plist-get defaults :due))
+         (or lock (plist-get defaults :lock))
+         (or (nth 1 dates) (plist-get defaults :unlock))
+         row-loc
+         (format "Override row '%s': "
+                 (org-canvas--validate-override-row-label row)))))))
+
+(defun org-canvas--validate-override-row-dates (loc &optional defaults)
+  "Check the dates of each row of the override table at point.
+Point is on the table's first line, its header, which names the date
+columns as the push reads them.  LOC is the assignment's
+\(:file :line :heading) plist; each issue carries its row's line.
+DEFAULTS, when the course's late-window rule applies to the
+assignment, are its own dates (see
+`org-canvas--validate-override-row-late-window')."
+  (let* ((start (line-number-at-pos))
+         (table (org-table-to-lisp))
+         (columns (org-canvas--override-date-columns (car table))))
+    (cl-loop for row in (cdr table)
+             for line from (1+ start)
+             for row-loc = (list :file (plist-get loc :file) :line line
+                                 :heading (plist-get loc :heading))
+             unless (eq row 'hline)
+             nconc (nconc (org-canvas--validate-override-row-date-order
+                           row columns row-loc)
+                          (org-canvas--validate-override-row-late-window
+                           row columns row-loc defaults)))))
+
+;;;; 5a-1c. A Course's Late Window (issue #536)
+
+(defcustom org-canvas-validate-lock-after-due-hours nil
+  "Hours after its due date an online column must lock, or nil for no rule.
+A number, or a list of the offsets allowed, 0 meaning a lock at the
+due date: \\='(0 48) accepts either.  `org-canvas-validate' warns
+about a dated online column (SUBMISSION names an online type) with no
+lock date, or one locking at another offset, on the assignment heading
+and on each override row.  Hours are counted by the clock, as the
+dates are written.  A course rule: set it in the course's
+`org-canvas-course-config-file', beside its syllabus late policy."
+  :type '(choice (const :tag "Off" nil)
+                 (number :tag "Hours")
+                 (repeat :tag "Any of these hours" number))
+  :group 'org-canvas)
+
+(defcustom org-canvas-validate-require-unlock nil
+  "Non-nil when every dated online column must carry an unlock date.
+`org-canvas-validate' warns about an assignment heading or override
+row with a due date and no unlock date.  A course rule: set it in the
+course's `org-canvas-course-config-file'."
+  :type 'boolean
+  :group 'org-canvas)
+
+(defconst org-canvas--validate-online-submission-types
+  '("online_upload" "online_url" "online_text_entry" "media_recording")
+  "Submission types Canvas groups as Online, which the late window covers.")
+
+(defun org-canvas--validate-late-window-defaults ()
+  "Return the assignment's dates for the late-window rule, or nil.
+Nil unless a rule is set and the assignment at point takes an online
+submission; otherwise its (:due :unlock :lock), raw Org timestamps."
+  (when (and (or org-canvas-validate-lock-after-due-hours
+                 org-canvas-validate-require-unlock)
+             (cl-intersection
+              (split-string (or (org-entry-get (point) "SUBMISSION") "")
+                            "," t "[ \t]+")
+              org-canvas--validate-online-submission-types
+              :test #'string=))
+    (list :due (org-entry-get (point) "DUE_AT")
+          :unlock (org-entry-get (point) "UNLOCK_AT")
+          :lock (org-entry-get (point) "LOCK_AT"))))
+
+(defun org-canvas--validate-wall-seconds (timestamp)
+  "Return Org TIMESTAMP as seconds, read as written in no zone."
+  (let ((decoded (org-parse-time-string timestamp)))
+    (setf (nth 8 decoded) 0)
+    (float-time (encode-time decoded))))
+
+(defun org-canvas--validate-wall-hours (from to)
+  "Return the hours from Org timestamp FROM to TO by the clock, or nil.
+Both are read as written, in no zone, so a lock two days after a due
+date is 48 hours across a daylight-saving change too.  Nil when either
+does not parse."
+  (ignore-errors
+    (/ (- (org-canvas--validate-wall-seconds to)
+          (org-canvas--validate-wall-seconds from))
+       3600.0)))
+
+(defun org-canvas--validate-format-hours (hours)
+  "Return HOURS, a list of numbers, as text for a message.
+Each is rounded to a tenth of an hour."
+  (concat (mapconcat (lambda (h)
+                       (org-canvas--validate-format-weight
+                        (/ (round (* 10 h)) 10.0)))
+                     hours " or ")
+          " hour(s)"))
+
+(defun org-canvas--validate-lock-offset-text (hours)
+  "Return where a lock HOURS after the due date falls, for a message."
+  (if (< hours 0)
+      (format "locks %s before the due date"
+              (org-canvas--validate-format-hours (list (- hours))))
+    (format "locks %s after the due date"
+            (org-canvas--validate-format-hours (list hours)))))
+
+(defun org-canvas--validate-lock-window (due lock loc prefix)
+  "Check LOCK against DUE for `org-canvas-validate-lock-after-due-hours'.
+DUE and LOCK are raw Org timestamps, LOCK nil when the column has
+none.  LOC locates the column and PREFIX starts the message.  Returns
+an issue or nil; a lock date that does not parse is the timestamp
+check's to report."
+  (when-let* ((allowed (if (numberp org-canvas-validate-lock-after-due-hours)
+                           (list org-canvas-validate-lock-after-due-hours)
+                         org-canvas-validate-lock-after-due-hours)))
+    (let ((hours (and lock (org-canvas--validate-wall-hours due lock))))
+      (cond
+       ((null lock)
+        (org-canvas--validate-make-issue
+         'warning loc "LOCK_AT"
+         (format "%sLock window missing: due %s with no lock date; the course locks online columns %s after the due date"
+                 prefix due (org-canvas--validate-format-hours allowed))))
+       ((and hours
+             (not (cl-some (lambda (h) (= (round (* 60 h)) (round (* 60 hours))))
+                           allowed)))
+        (org-canvas--validate-make-issue
+         'warning loc "LOCK_AT"
+         (format "%sLock window mismatch: %s (due %s, lock %s); the course allows %s"
+                 prefix (org-canvas--validate-lock-offset-text hours)
+                 due lock (org-canvas--validate-format-hours allowed))))))))
+
+(defun org-canvas--validate-late-window (due lock unlock loc &optional prefix)
+  "Check one online column against the course's late-window rule.
+DUE, LOCK and UNLOCK are its raw Org timestamps, an absent one nil.
+A column with no due date that parses has no window and is passed
+over.  The findings are warnings (`org-canvas-validate-lock-after-due-hours',
+`org-canvas-validate-require-unlock'), the lock window's push-only
+once the column is past due, since a column that has closed is a
+record and not a push to come; a closed column is not asked for an
+unlock date at all, since it opened as it ran.  LOC locates the
+column and PREFIX starts each message."
+  (when-let* ((due-iso (org-canvas--validate-safe-parse-timestamp due)))
+    (let* ((prefix (or prefix ""))
+           (past (string< due-iso (org-canvas-current-iso8601-timestamp)))
+           (issues (delq nil
+                         (list
+                          (org-canvas--validate-lock-window due lock loc prefix)
+                          (when (and org-canvas-validate-require-unlock (null unlock)
+                                     (not past))
+                            (org-canvas--validate-make-issue
+                             'warning loc "UNLOCK_AT"
+                             (format "%sUnlock date missing: the course requires one on every online column"
+                                     prefix)))))))
+      (if past
+          (mapcar #'org-canvas--validate-push-only issues)
+        issues))))
+
+(defun org-canvas--validate-heading-late-window (loc defaults)
+  "Check the assignment heading at LOC against the course's late window.
+DEFAULTS are its dates from `org-canvas--validate-late-window-defaults',
+nil when the rule does not apply."
+  (when defaults
+    (org-canvas--validate-late-window
+     (plist-get defaults :due) (plist-get defaults :lock)
+     (plist-get defaults :unlock) loc)))
 
 ;; Messages (issue #232): the resolver lives in the messages module,
 ;; named here rather than required, as the grading-scheme helpers are.
@@ -832,38 +1075,67 @@ Returns a list of issues."
                          clean-heading)
                  t))))))))
 
-(cl-defun org-canvas--validate-module-item-link (loc)
+(defun org-canvas--validate-module-heading-link (raw-heading loc)
+  "Check the `file:X.org::*Heading' link in RAW-HEADING, or return nil.
+Nil too when RAW-HEADING holds no such link.  LOC is a
+\(:file :line :heading) plist."
+  ;; Greedy `.+' for the heading group so a target heading that is
+  ;; itself a file link (nested brackets) is captured whole;
+  ;; backtracking lands on the last `][' boundary.  A `[^]]'-based
+  ;; group truncates at the first nested `]' (false "missing
+  ;; heading" on links to files.org headings).
+  (when (string-match "\\[\\[file:\\([^]]+\\)::\\*\\(.+\\)\\]\\[" raw-heading)
+    (let* ((file-path (match-string 1 raw-heading))
+           (source-dir (file-name-directory (plist-get loc :file)))
+           (abs-path (expand-file-name file-path source-dir)))
+      (if (not (file-exists-p abs-path))
+          (list (org-canvas--validate-make-issue
+                 'error loc nil
+                 (format "Module item links to missing file: %s" file-path)))
+        (let ((clean-heading (replace-regexp-in-string
+                              "\\\\[][]"
+                              (lambda (m) (substring m 1))
+                              (match-string 2 raw-heading))))
+          (org-canvas--validate-module-item-target
+           abs-path clean-heading file-path loc))))))
+
+(declare-function org-canvas--module-resolve-file-path "org-canvas-modules"
+                  (file modules-file-dir))
+(declare-function org-canvas--module-content-target "org-canvas-modules"
+                  (rel-path modules-file-dir))
+
+(defun org-canvas--validate-module-file-link (raw-heading loc)
+  "Check the bare `file:PATH' link in RAW-HEADING, or return nil.
+A module item linking straight at a file is resolved by the push
+against the `files.org' heading whose link target is the same path
+\(`org-canvas--module-content-target'), and an Org file is found on
+disk relative to the modules file, by its basename as a fallback
+\(`org-canvas--module-resolve-file-path').  A path neither finds is an
+error, as a missing heading is: the push skips the item (issue #535).
+LOC is a (:file :line :heading) plist."
+  (when (string-match "\\[\\[file:\\([^]]+\\)\\]\\[" raw-heading)
+    (let ((path (match-string 1 raw-heading))
+          (dir (file-name-directory (plist-get loc :file))))
+      (unless (or (string-match-p "::" path)
+                  (org-canvas--module-resolve-file-path path dir)
+                  (org-canvas--module-content-target path dir))
+        (list (org-canvas--validate-make-issue
+               'error loc nil
+               (format "Module item links to missing file: %s (not on disk, and no files.org heading links to it)"
+                       path)))))))
+
+(defun org-canvas--validate-module-item-link (loc)
   "Check that module item link at point resolves to a synced heading.
 LOC is a (:file :line :heading) plist.
 Skips items with EXTERNAL_URL property or plain-text SubHeaders."
-  (when (org-entry-get (point) "EXTERNAL_URL")
-    (cl-return-from org-canvas--validate-module-item-link nil))
-  (let ((raw-heading (save-excursion
-                       (org-back-to-heading t)
-                       (looking-at org-complex-heading-regexp)
-                       (match-string-no-properties 4))))
-    (when (and raw-heading
-               ;; Greedy `.+' for the heading group so a target heading that is
-               ;; itself a file link (nested brackets) is captured whole;
-               ;; backtracking lands on the last `][' boundary.  A `[^]]'-based
-               ;; group truncates at the first nested `]' (false "missing
-               ;; heading" on links to files.org headings).
-               (string-match
-                "\\[\\[file:\\([^]]+\\)::\\*\\(.+\\)\\]\\["
-                raw-heading))
-      (let* ((file-path (match-string 1 raw-heading))
-             (source-dir (file-name-directory (plist-get loc :file)))
-             (abs-path (expand-file-name file-path source-dir)))
-        (if (not (file-exists-p abs-path))
-            (list (org-canvas--validate-make-issue
-                   'error loc nil
-                   (format "Module item links to missing file: %s" file-path)))
-          (let ((clean-heading (replace-regexp-in-string
-                                "\\\\[][]"
-                                (lambda (m) (substring m 1))
-                                (match-string 2 raw-heading))))
-            (org-canvas--validate-module-item-target
-             abs-path clean-heading file-path loc)))))))
+  (unless (org-entry-get (point) "EXTERNAL_URL")
+    (when-let* ((raw-heading (save-excursion
+                               (org-back-to-heading t)
+                               (looking-at org-complex-heading-regexp)
+                               (match-string-no-properties 4))))
+      (if (string-match-p "\\[\\[file:[^]]+::\\*" raw-heading)
+          (org-canvas--validate-module-heading-link raw-heading loc)
+        (org-canvas--validate-module-file-link raw-heading loc)))))
 
 (defun org-canvas--validate-quiz-question-points (pos)
   "Return the point value for the question at POS.
@@ -2036,6 +2308,72 @@ course-copy residue (issue #172)."
     (insert (format " (%d file(s) not found, skipped)" (plist-get stats :skipped))))
   (insert "\n"))
 
+;;;;; Findings as Data (issue #531)
+
+(defun org-canvas--validate-collect (&optional all)
+  "Run every check and return the findings of a validation report, as data.
+A plist (:issues ISSUES :stats STATS).  ISSUES are the findings the
+report lists, pending-first-sync links among them; on a course marked
+`org-canvas-read-only' the push-only ones are held back unless ALL.
+STATS is (:errors :warnings :notes :checked :skipped :suppressed), the
+counts taken over ISSUES.  The read behind `org-canvas-validate' and
+`org-canvas-validate-json-data'."
+  (let* ((result (org-canvas--validate-run-all-specs))
+         (found (plist-get result :issues))
+         (issues (if (and org-canvas-read-only (not all))
+                     (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
+                   found)))
+    (list :issues issues
+          :stats (list :errors (cl-count 'error issues
+                                         :key #'org-canvas--validate-severity)
+                       :warnings (cl-count 'warning issues
+                                           :key #'org-canvas--validate-severity)
+                       :notes (cl-count 'note issues
+                                        :key #'org-canvas--validate-severity)
+                       :checked (plist-get result :checked)
+                       :skipped (plist-get result :skipped)
+                       :suppressed (- (length found) (length issues))))))
+
+(defun org-canvas--validate-json-bool (value)
+  "Return VALUE as `json-encode' writes a boolean."
+  (if value t :json-false))
+
+(defun org-canvas--validate-json-finding (issue)
+  "Return ISSUE, a finding plist, as a JSON object alist."
+  (list (cons 'severity (symbol-name (plist-get issue :severity)))
+        (cons 'file (plist-get issue :file))
+        (cons 'line (plist-get issue :line))
+        (cons 'heading (plist-get issue :heading))
+        (cons 'property (plist-get issue :property))
+        (cons 'message (org-canvas--log-redact
+                        (format "%s" (plist-get issue :message))))
+        (cons 'pending_sync (org-canvas--validate-json-bool
+                             (plist-get issue :pending-sync)))
+        (cons 'push_only (org-canvas--validate-json-bool
+                          (plist-get issue :push-only)))))
+
+(defun org-canvas-validate-json-data (&optional all)
+  "Return the validation report as an alist for `json-encode'.
+The findings `org-canvas-validate' would report, ALL as there, notes
+last, every pending-first-sync link listed and marked; the counts are
+the report's.  Nothing is displayed.  The schema is the manual's
+\"Machine-Readable Output\" (issue #531)."
+  (let* ((data (org-canvas--validate-collect all))
+         (stats (plist-get data :stats)))
+    (list (cons 'command "validate")
+          (cons 'course org-canvas-directory)
+          (cons 'all (org-canvas--validate-json-bool all))
+          (cons 'counts (list (cons 'error (plist-get stats :errors))
+                              (cons 'warning (plist-get stats :warnings))
+                              (cons 'note (plist-get stats :notes))))
+          (cons 'files_checked (plist-get stats :checked))
+          (cons 'files_skipped (plist-get stats :skipped))
+          (cons 'suppressed (plist-get stats :suppressed))
+          (cons 'findings
+                (vconcat (mapcar #'org-canvas--validate-json-finding
+                                 (org-canvas--validate-notes-last
+                                  (plist-get data :issues))))))))
+
 ;;;###autoload
 (defun org-canvas-validate (&optional verbose all)
   "Validate all course org files without contacting the Canvas API.
@@ -2060,24 +2398,16 @@ keeps them, which is what `org-canvas-validate-all' passes (issue
 Returns the number of errors reported, so a batch caller can act on
 it; see `org-canvas-validate-batch'."
   (interactive "P")
-  (let* ((result (org-canvas--validate-run-all-specs))
-         (found (plist-get result :issues))
-         (suppress (and org-canvas-read-only (not all)))
-         (all-issues (if suppress
-                         (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
-                       found))
-         (suppressed-count (- (length found) (length all-issues)))
+  (let* ((data (org-canvas--validate-collect all))
+         (all-issues (plist-get data :issues))
          (pending-issues (cl-remove-if-not
                           (lambda (i) (plist-get i :pending-sync)) all-issues))
          (listed-issues (cl-remove-if
                          (lambda (i) (plist-get i :pending-sync)) all-issues))
-         (error-count (cl-count 'error all-issues :key #'org-canvas--validate-severity))
-         (warning-count (cl-count 'warning all-issues :key #'org-canvas--validate-severity))
-         (note-count (cl-count 'note all-issues :key #'org-canvas--validate-severity))
-         (stats (list :errors error-count :warnings warning-count :notes note-count
-                      :checked (plist-get result :checked)
-                      :skipped (plist-get result :skipped)
-                      :suppressed suppressed-count)))
+         (stats (plist-get data :stats))
+         (error-count (plist-get stats :errors))
+         (warning-count (plist-get stats :warnings))
+         (note-count (plist-get stats :notes)))
     (org-canvas--report-display
      "*canvas-validate*"
      (lambda ()
