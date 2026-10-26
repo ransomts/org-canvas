@@ -189,7 +189,7 @@ copy silently.  Return the credentials file loaded, or nil."
     ("import-comments" org-canvas-batch--cmd-import-comments 2 3
      "[--posted] FILE IN.json"
      "Write IN.json's comment text into a grading file; exit 1 on a miss.")
-    ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "FILE..."
+    ("check-comments" org-canvas-batch--cmd-check-comments 1 nil "[--ids] FILE..."
      "Check grading files' comments; exit 1 on errors (#438).")
     ("draft-late-notes" org-canvas-batch--cmd-draft-late-notes 1 nil
      "[--hold ID,ID] FILE..."
@@ -563,11 +563,20 @@ matched nothing or a change was kept back."
 
 (defun org-canvas-batch--cmd-check-comments (parsed)
   "Check the comments of each grading file PARSED names.
-Return 1 if any check found an error."
-  (let ((errors (mapcar (lambda (file)
-                          (org-canvas-submissions-comment-check-errors
-                           (org-canvas-submissions-check-comments file)))
-                        (plist-get parsed :args))))
+--ids names students and criteria by id alone
+\(`org-canvas-submissions-comment-report-ids-only', #533).  Return 1
+if any check found an error."
+  (let* ((args (plist-get parsed :args))
+         (files (remove "--ids" args))
+         (org-canvas-submissions-comment-report-ids-only
+          (or (and (member "--ids" args) t)
+              org-canvas-submissions-comment-report-ids-only))
+         (errors (mapcar (lambda (file)
+                           (org-canvas-submissions-comment-check-errors
+                            (org-canvas-submissions-check-comments file)))
+                         (or files
+                             (org-canvas-batch--usage
+                              "check-comments takes [--ids] FILE...")))))
     (if (cl-every #'zerop errors) 0 1)))
 
 (defun org-canvas-batch--draft-late-notes-args (args)

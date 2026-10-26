@@ -162,7 +162,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =keep FILE USER-ID...= | the same, keeping the typed grade | an id had no heading or no =CONFLICT= |
 | =export-comments FILE [OUT]=  | =org-canvas-submissions-export-comments= (JSON to OUT or stdout) |   |
 | =import-comments [--posted] FILE IN= | =org-canvas-submissions-import-comments= (=-n=: a dry run) | a key matched nothing or a change was kept back |
-| =check-comments FILE...=      | =org-canvas-submissions-check-comments= for each   | an error was found |
+| =check-comments [--ids] FILE...= | =org-canvas-submissions-check-comments= for each (=--ids=: students and criteria by id only) | an error was found |
 | =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =verify announcements:TITLE...= | =org-canvas-verify-announcements=, writing nothing (may share a line with columns) | an announcement differs from its heading |
@@ -4336,6 +4336,8 @@ Nothing else in the file moves, and a text equal to the file's is no change, so 
 
 The report prints to standard output in batch, and =scripts/org-canvas check-comments FILE...= exits 1 when any file has an error.  A shared sentence, a reread word and a length are only warnings: a stock line can be meant, and a word or a length needs a person's eyes, not a failed check.  From Lisp the command returns the findings as plists (=:severity=, =:kind=, =:name=, =:user-id=, =:where=, =:text=; a length finding adds =:length= and =:limit=), and =org-canvas-submissions-comment-check-errors= counts the errors among them.
 
+When an agent reads the report rather than you, set =org-canvas-submissions-comment-report-ids-only= to =t= (in =org-canvas-config.el=, below), or pass =--ids= (=scripts/org-canvas check-comments --ids FILE...=, for that run only), and no student's name reaches its transcript (#533).  Each student is then named by =USER_ID= alone and each =Rubric= row by its criterion id: =- 5002 :: _1: scored 2 of 5, no comment= in place of =- Baker, Bob (5002) :: Thesis: scored 2 of 5, no comment=, and a finding's =:name= is the =USER_ID= too.  The comment text the check quotes is still printed, since it is your own.
+
 These are a course's own rules, so they belong with the course, not in your init file and not in =org-canvas-credentials.el=, the file that holds the token.  Put them in =org-canvas-config.el= beside it in the course directory:
 
 #+begin_src emacs-lisp
@@ -4343,7 +4345,8 @@ These are a course's own rules, so they belong with the course, not in your init
 (setq org-canvas-submissions-comment-flag-regexps '("—")
       org-canvas-submissions-comment-warn-regexps '("\\badd\\b" "\\brewrite\\b" "\\bAI\\b")
       org-canvas-submissions-comment-max-length 300
-      org-canvas-submissions-comment-deduction-min-length 100)
+      org-canvas-submissions-comment-deduction-min-length 100
+      org-canvas-submissions-comment-report-ids-only t)
 #+end_src
 
 =scripts/org-canvas= (=org-canvas-batch-setup=) and =M-x org-canvas-activate-course= load it after the credentials file, so a setting in both takes its value there; a file that signals while loading is named in the echo area and the run carries on.  It holds nothing secret, so it can be committed beside the course's feedback guide.
