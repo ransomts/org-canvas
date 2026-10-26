@@ -327,7 +327,11 @@ is.
 counted in =suppressed=, unless =--all=.  The links whose targets
 merely lack a Canvas id, which the text report folds into one line,
 are listed, marked =pending_sync=.  Errors and warnings come first,
-notes last, each in the order found.
+notes last, each in the order found.  A finding a heading or an
+override row accepts (see [[*Accepting a Finding With a Reason][Accepting
+a Finding With a Reason]]) leaves =findings= and is counted in
+=accepted=; =accepted_findings= lists them, each with its =reason=,
+under =--all= and is =[]= otherwise (#538).
 
 #+begin_src js
 {"command": "validate",
@@ -336,6 +340,7 @@ notes last, each in the order found.
  "counts": {"error": 1, "warning": 3, "note": 2},
  "files_checked": 12, "files_skipped": 0,
  "suppressed": 0,                       // push-only findings held back
+ "accepted": 1,                         // findings an accept took out
  "findings": [
    {"severity": "error",                // "error", "warning" or "note"
     "file": "/home/me/courses/ethics/assignments.org",
@@ -344,7 +349,14 @@ notes last, each in the order found.
     "property": "POINTS",               // or null
     "message": "...",
     "pending_sync": false,              // a link target with no Canvas id yet
-    "push_only": false}]}               // protects a push only
+    "push_only": false,                 // protects a push only
+    "check": null}],                    // the check id an accept names, or null
+ "accepted_findings": [                 // only with --all, else []
+   {"severity": "warning", "file": "...", "line": 88,
+    "heading": "Midterm", "property": "LOCK_AT", "message": "...",
+    "pending_sync": false, "push_only": false,
+    "check": "lock-window",
+    "reason": "In-class exam: locks at the end of class"}]}
 #+end_src
 
 =diff --json= holds the rows the drift report prints, writing nothing,
@@ -2357,7 +2369,18 @@ still parses; empty date cells are omitted from the override.
 reading them as the push does: a row whose Unlock At comes after its
 Due At, or whose Due At comes after its Lock At, is a warning on that
 row, and so is an Unlock At after the Lock At when the row has no Due
-At between them.
+At between them.  A date the row leaves empty is the assignment's, as
+on Canvas, where an override that omits a date does not override it:
+an extension row moving the due date past the assignment's Lock At,
+with no Lock At of its own, warns that its student's column locks
+before it is due (#538).  A pair of two dates the row inherits is the
+heading's to report, and is not repeated on every row.
+
+An optional =Accept= column holds what validation accepts on the row,
+=<check-id> <reason>=, several separated by =;=; see
+[[*Accepting a Finding With a Reason][Accepting a Finding With a
+Reason]].  The push ignores it, and a pull keeps each cell on its
+row.
 
 Overrides are synced after sections, assignments and the pulled files
 exist.  The sync reconciles the table against Canvas: a section row is
@@ -5156,6 +5179,90 @@ file):
       org-canvas-validate-require-unlock t)
 #+end_src
 
+A column that breaks the rule on purpose (an in-class exam that locks
+when class ends) says so on its heading or its override row; see the
+next section.
+
+*** Accepting a Finding With a Reason
+
+A course rule is worth turning on only if each finding is either fixed
+or carries a written reason.  Some findings carry the id of the check
+that made them, and a heading can accept that check, with the reason
+it is kept (#538):
+
+#+begin_src org
+,* Midterm, Part 1
+:PROPERTIES:
+:SUBMISSION: online_upload
+:DUE_AT:   <2026-10-14 Wed 11:00>
+:LOCK_AT:  <2026-10-14 Wed 11:00>
+:VALIDATE_ACCEPT: lock-window In-class exam: locks at the end of class
+:VALIDATE_ACCEPT+: require-unlock Opens in the room, not before
+:END:
+#+end_src
+
+The first word names the check, the rest is the reason; several are
+written as =VALIDATE_ACCEPT+= lines, one check each, and each line is
+read whole.  The checks that can be accepted:
+
+| Id               | Finds                                                                  |
+|------------------+------------------------------------------------------------------------|
+| =date-order=     | dates out of order: unlock, due, lock (a heading's or a row's)         |
+| =lock-window=    | a lock date missing, or off =org-canvas-validate-lock-after-due-hours= |
+| =require-unlock= | no unlock date where =org-canvas-validate-require-unlock= asks for one |
+
+An accept covers that check on that heading only: any other finding
+on the heading still prints, and so does the same check on the
+heading's override rows.  A row accepts in an =Accept= column of the
+overrides table, same text, several separated by =;=:
+
+#+begin_example
+,#+NAME: overrides
+| Section     | Due At                 | Lock At                | Accept                                 |
+|-------------+------------------------+------------------------+----------------------------------------|
+| Section 002 | <2026-10-14 Wed 11:00> | <2026-10-17 Sat 23:59> | lock-window Debate week: longer window |
+#+end_example
+
+The push reads the table's columns by their titles and never this
+one, and a pull of the assignment writes each Accept cell back on the
+row of the override it was written for (matched by the row's first
+cell as the pull writes it, else by the section, group or students it
+names).  A row Canvas no longer holds is dropped as before, and its
+Accept cell is logged as a warning, since the file no longer has a
+place for it; a row a pull would otherwise leave out for repeating
+the assignment's dates is kept while it holds an Accept cell.
+=VALIDATE_ACCEPT= is the file's own: never sent, never pulled, and no
+part of =PAYLOAD_HASH= or the drift report.
+
+An accepted finding leaves the report.  Without =--all= one line counts
+them; =M-x org-canvas-validate-all= (or =validate --all=) lists them
+with their reasons after the other findings, a log of the decisions
+the course has made:
+
+#+begin_example
+2 finding(s) accepted with a reason (VALIDATE_ACCEPT, Accept cells); M-x org-canvas-validate-all lists them
+#+end_example
+
+#+begin_example
+Accepted (2), each with the reason it is kept:
+assignments.org:88: accepted warning: Lock window mismatch: locks 0 hour(s) after the due date (...)
+    reason: In-class exam: locks at the end of class
+#+end_example
+
+An accept that does not take a finding says so:
+
+- a check id validate does not know is a warning;
+- an accept with no reason accepts nothing and is a warning;
+- only warnings and notes can be accepted: an accept whose check found
+  an error accepts nothing and is a warning, since the error has to be
+  fixed;
+- an accept that matched no finding is a note (=Stale accept=), so an
+  old reason does not outlive the fix it stood for.
+
+On a course marked read-only, the push-only findings are held back
+first, so an accepted finding that is also push-only is counted as
+suppressed.
+
 ** Forcing a Re-upload
 
 A file sync skips an entry whose =PAYLOAD_HASH= still matches.  That hash
@@ -6144,6 +6251,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
 | =POST_POLICY= | enum | automatic, manual |  | Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit |
 | =POST_GRADES_AT= | timestamp |  |  | When Canvas posts the grades (needs POST_COMMENTS_AT and manual posting); omit to keep Canvas's schedule |
 | =POST_COMMENTS_AT= | timestamp |  |  | When Canvas posts the comments, no later than POST_GRADES_AT; omit to keep Canvas's schedule |
@@ -6204,6 +6312,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether the discussion is visible to students (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
 | =DISCUSSION_TYPE= | enum | side_comment, threaded |  | side_comment, threaded |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | points, percent (for graded) |
 | =POINTS= | number |  |  | Points possible (for graded) |
@@ -6404,6 +6513,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  | The kind of quiz |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
 | =ALLOWED_ATTEMPTS= | number |  |  | Max attempts (-1 = unlimited) |

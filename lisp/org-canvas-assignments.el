@@ -51,7 +51,13 @@
 (defvar org-canvas-sections-file)
 (declare-function org-canvas--override-fetch "org-canvas-sections" (assignment-id))
 (declare-function org-canvas--override-emit-table "org-canvas-sections"
-                  (overrides &optional parent-due parent-unlock parent-lock))
+                  (overrides &optional parent-due parent-unlock parent-lock
+                             accept-fn))
+(declare-function org-canvas--override-read-accepts "org-canvas-sections" ())
+(declare-function org-canvas--override-match-accepts "org-canvas-sections"
+                  (overrides entries source-dir))
+(declare-function org-canvas--override-warn-unclaimed-accepts
+                  "org-canvas-sections" (entries title))
 (declare-function org-canvas--validate-assignment-structure "org-canvas-validate")
 (declare-function org-canvas--override-sync-entry "org-canvas-sections"
                   (pom &optional source-dir options))
@@ -215,6 +221,7 @@ the conflict stands."
     (:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether item is visible (default: true)")
     ,org-canvas--no-module-property-spec
+    ,org-canvas--validate-accept-property-spec
     (:org-prop "POST_POLICY" :data-key :post_policy :type enum
      :values ,org-canvas--valid-post-policies
      :remote-fn org-canvas--assignment-remote-post-policy
@@ -1264,13 +1271,21 @@ property comes from the registry (issue #135), so a field the push
 side reads is a field the pull writes — PUBLISHED, SUBMISSION, the LTI
 tool attributes — and nothing outside the schema lands in the drawer.
 A table the entry already holds is removed first, so a pull over a
-heading writes one table, Canvas's (issue #411)."
+heading writes one table, Canvas's (issue #411), save for its Accept
+cells: each goes back on the row of the override it was written for,
+and one whose override Canvas no longer holds is logged (issue #538)."
   (org-with-point-at pos
     (org-canvas--pull-insert-body (alist-get 'description item)))
-  (save-excursion
-    (goto-char pos)
-    (org-canvas--assignment-remove-overrides-table))
-  (let ((overrides (org-canvas--override-fetch (alist-get 'id item))))
+  (let* ((accepts (save-excursion
+                    (goto-char pos)
+                    (org-canvas--override-read-accepts)))
+         (overrides (progn
+                      (save-excursion
+                        (goto-char pos)
+                        (org-canvas--assignment-remove-overrides-table))
+                      (org-canvas--override-fetch (alist-get 'id item))))
+         (matched (org-canvas--override-match-accepts
+                   overrides accepts default-directory)))
     (when overrides
       (save-excursion
         (goto-char pos)
@@ -1280,7 +1295,11 @@ heading writes one table, Canvas's (issue #411)."
          overrides
          (alist-get 'due_at item)
          (alist-get 'unlock_at item)
-         (alist-get 'lock_at item))))))
+         (alist-get 'lock_at item)
+         (and (car matched)
+              (lambda (ov) (cdr (assq ov (car matched))))))))
+    (org-canvas--override-warn-unclaimed-accepts
+     (cdr matched) (alist-get 'name item))))
 
 (org-canvas-define-pull-item assignment
   :registry-key "assignments"

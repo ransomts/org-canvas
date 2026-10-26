@@ -909,7 +909,8 @@ Fail unless stdout held exactly one line."
            (findings (alist-get 'findings data)))
       (expect (test-batch--json-keys data)
               :to-equal '(command course all counts files_checked files_skipped
-                                  suppressed findings))
+                                  suppressed accepted findings
+                                  accepted_findings))
       (expect (alist-get 'command data) :to-equal "validate")
       (expect (alist-get 'course data) :to-equal "/c/")
       (expect (alist-get 'all data) :to-be :false)
@@ -923,7 +924,8 @@ Fail unless stdout held exactly one line."
               :to-equal '((severity . "error") (file . "/c/assignments.org")
                           (line . 7) (heading . "Essay 1") (property . "POINTS")
                           (message . "POINTS is not a number")
-                          (pending_sync . :false) (push_only . :false)))
+                          (pending_sync . :false) (push_only . :false)
+                          (check)))
       ;; Notes come last, as in the text report.
       (expect (alist-get 'severity (aref findings 3)) :to-equal "note")
       (expect (alist-get 'property (aref findings 3)) :to-be nil)
@@ -956,6 +958,44 @@ Fail unless stdout held exactly one line."
       (expect (test-batch--run-json '("--json" "validate")) :to-equal 0))
     (let ((finding (aref (alist-get 'findings (test-batch--json-read)) 0)))
       (expect (alist-get 'message finding) :not :to-match "sekrit123456"))))
+
+(describe "validate --json accepted findings (issue #538)"
+  (before-each
+    (spy-on 'org-canvas--validate-run-all-specs
+            :and-return-value
+            (list :issues
+                  (list (list :severity 'warning :file "/c/assignments.org"
+                              :line 4 :heading "Exam" :property "LOCK_AT"
+                              :message "Lock window missing" :check 'lock-window
+                              :accepted "In-class exam")
+                        (list :severity 'warning :file "/c/assignments.org"
+                              :line 9 :heading "Lab" :property "DUE_AT"
+                              :message "DUE_AT is after LOCK_AT" :check 'date-order))
+                  :checked 1 :skipped 0)))
+
+  (it "counts them beside suppressed and names each finding's check"
+    (let ((org-canvas-directory "/c/") (org-canvas-read-only nil))
+      (expect (test-batch--run-json '("--json" "validate")) :to-equal 0))
+    (let* ((data (test-batch--json-read))
+           (finding (aref (alist-get 'findings data) 0)))
+      (expect (alist-get 'accepted data) :to-equal 1)
+      (expect (alist-get 'warning (alist-get 'counts data)) :to-equal 1)
+      (expect (length (alist-get 'findings data)) :to-equal 1)
+      (expect (alist-get 'check finding) :to-equal "date-order")
+      (expect (alist-get 'accepted_findings data) :to-equal [])))
+
+  (it "lists them with their reasons under --all"
+    (let ((org-canvas-directory "/c/") (org-canvas-read-only nil))
+      (expect (test-batch--run-json '("--json" "validate" "--all"))
+              :to-equal 0))
+    (let ((accepted (alist-get 'accepted_findings (test-batch--json-read))))
+      (expect (length accepted) :to-equal 1)
+      (expect (aref accepted 0)
+              :to-equal '((severity . "warning") (file . "/c/assignments.org")
+                          (line . 4) (heading . "Exam") (property . "LOCK_AT")
+                          (message . "Lock window missing")
+                          (pending_sync . :false) (push_only . :false)
+                          (check . "lock-window") (reason . "In-class exam"))))))
 
 (defconst test-batch--diff-results
   (list (list :name "Assignments"

@@ -31,6 +31,10 @@
 ;;   note    - nothing breaks and no value is wrong, but the course may
 ;;             not be laid out as a student needs (an item in no module)
 ;; Only errors fail `org-canvas-validate-batch'.
+;;
+;; Optional keys: :pending-sync, :push-only, :check (the id of the
+;; check that made it, issue #538) and :accepted (the reason an accept
+;; gave for keeping it).
 
 (defun org-canvas--validate-format-issue (issue)
   "Format ISSUE plist as a `compilation-mode' compatible string."
@@ -69,6 +73,122 @@ that describes the course itself is never marked: a title collision, a
 broken link or a malformed drawer is true whatever you intend to do
 next.  Nil ISSUE passes through, so a check can wrap its result."
   (and issue (append issue (list :push-only t))))
+
+;;;;; Check Ids and Accepts (issue #538)
+;;
+;; A finding a course may decide to keep carries the id of the check
+;; that made it (`:check').  A heading names one in VALIDATE_ACCEPT,
+;; an override row in its Accept cell, each with the reason it is
+;; kept, and the finding leaves the report for a count and, with
+;; --all, a list of what was accepted and why.  A check opts in by
+;; joining `org-canvas--validate-checks' and marking its findings with
+;; `org-canvas--validate-checked'; a finding without an id cannot be
+;; accepted.
+
+(defconst org-canvas--validate-checks
+  '((date-order . "dates out of order (unlock, due, lock)")
+    (lock-window . "a lock date missing or off the course's late window")
+    (require-unlock . "an unlock date missing where the course requires one"))
+  "Checks a course may accept the findings of, by id, each with its subject.")
+
+(defconst org-canvas--validate-accept-property "VALIDATE_ACCEPT"
+  "Heading property naming a check to accept there, and why.")
+
+(defun org-canvas--validate-checked (check issue)
+  "Return ISSUE marked as found by CHECK, an `org-canvas--validate-checks' id.
+Nil ISSUE passes through, so a check can wrap its result."
+  (and issue (append issue (list :check check))))
+
+(defun org-canvas--validate-parse-accept (text)
+  "Split accept TEXT into (NAME . REASON), REASON nil when absent.
+NAME is the check id as written, the first word; REASON the rest."
+  (let ((text (string-trim text)))
+    (string-match "\\`\\(\\S-+\\)\\(?:[ \t]+\\(.+\\)\\)?\\'" text)
+    (cons (match-string 1 text) (match-string 2 text))))
+
+(defun org-canvas--validate-accept-issue (severity loc where format-string
+                                                   &rest args)
+  "Return a finding about an accept, of SEVERITY at LOC.
+WHERE is (PROPERTY . PREFIX): the property the accept is written in,
+nil on an override row, and the text starting the message.  The
+message is FORMAT-STRING applied to ARGS."
+  (org-canvas--validate-make-issue
+   severity loc (car where)
+   (concat (cdr where) (apply #'format format-string args))))
+
+(defun org-canvas--validate-accept-matches (issues check line)
+  "Return the findings of ISSUES that CHECK made at LINE."
+  (cl-remove-if-not (lambda (issue)
+                      (and (eq (plist-get issue :check) check)
+                           (eql (plist-get issue :line) line)))
+                    issues))
+
+(defun org-canvas--validate-accept-refusal (parsed matched loc where)
+  "Return why accept PARSED may take none of MATCHED, as a finding, or nil.
+PARSED is (NAME . REASON).  LOC and WHERE are as for
+`org-canvas--validate-accept-issue'."
+  (let ((label (if (car where) (car where) "Accept")))
+    (cond
+     ((not (assq (intern (car parsed)) org-canvas--validate-checks))
+      (org-canvas--validate-accept-issue
+       'warning loc where "%s names '%s', which is not a check validate knows (%s)"
+       label (car parsed)
+       (mapconcat (lambda (c) (symbol-name (car c))) org-canvas--validate-checks ", ")))
+     ((null (cdr parsed))
+      (org-canvas--validate-accept-issue
+       'warning loc where "%s %s gives no reason, so it accepts nothing: write why after the check id"
+       label (car parsed)))
+     ((cl-find 'error matched :key #'org-canvas--validate-severity)
+      (org-canvas--validate-accept-issue
+       'warning loc where "%s %s accepts nothing: the finding is an error, which has to be fixed"
+       label (car parsed)))
+     ((null matched)
+      (org-canvas--validate-accept-issue
+       'note loc where "Stale accept: %s %s matched no finding here; remove it (%s)"
+       label (car parsed) (cdr parsed))))))
+
+(defun org-canvas--validate-apply-accepts (issues accepts loc where)
+  "Mark the findings of ISSUES that ACCEPTS take, and return the list.
+ACCEPTS are texts, each a check id and the reason it is kept.  An
+accept covers the findings its check made at LOC's line, never one
+on another line: a heading's accept leaves its override rows alone.
+It marks each with `:accepted' and the reason.  An accept that takes
+nothing (an unknown id, no reason, an error, nothing found) adds a
+finding saying so, after ISSUES.  WHERE is as for
+`org-canvas--validate-accept-issue'."
+  (let ((own nil))
+    (dolist (text accepts)
+      (let* ((parsed (org-canvas--validate-parse-accept text))
+             (matched (org-canvas--validate-accept-matches
+                       issues (intern (car parsed)) (plist-get loc :line)))
+             (refusal (org-canvas--validate-accept-refusal
+                       parsed matched loc where)))
+        (if refusal
+            (push refusal own)
+          (setq issues (mapcar (lambda (issue)
+                                 (if (and (memq issue matched)
+                                          (not (plist-get issue :accepted)))
+                                     (append issue (list :accepted (cdr parsed)))
+                                   issue))
+                               issues)))))
+    (nconc issues (nreverse own))))
+
+(defun org-canvas--validate-heading-accepts ()
+  "Return the VALIDATE_ACCEPT values of the heading at point, each whole.
+Org joins a property's `+' lines with spaces and splits them at every
+space (`org-entry-get', `org-entry-get-multivalued-property'), where
+a reason has spaces in it; so each drawer line is read as one value."
+  (when-let* ((block (org-get-property-block)))
+    (save-excursion
+      (goto-char (car block))
+      (let ((case-fold-search t)
+            (re (format "^[ \t]*:%s\\+?:[ \t]*\\(.*?\\)[ \t]*$"
+                        org-canvas--validate-accept-property))
+            (values nil))
+        (while (re-search-forward re (cdr block) t)
+          (unless (string-empty-p (match-string-no-properties 1))
+            (push (match-string-no-properties 1) values)))
+        (nreverse values)))))
 
 ;;;; 2. Type-Specific Validators
 ;;
@@ -236,23 +356,29 @@ LOC is a (:file :line :heading) plist."
 
 (defun org-canvas--validate-date-sequence (dates loc &optional prefix)
   "Warn where DATES run out of order; return the list of issues.
-DATES is a list of (NAME VALUE ISO) in the order they must run, ISO
-nil for a date that is absent or does not parse.  Those are passed
-over, so each date that is there is compared with the next one that
-is: an unlock after the lock warns when there is no due date between
-them.  LOC is a (:file :line :heading) plist and PREFIX, when given,
-starts each message.  Shared by headings and override rows (issue
-#534), which is what keeps the two in agreement."
+DATES is a list of (NAME VALUE ISO INHERITED) in the order they must
+run, ISO nil for a date that is absent or does not parse.  Those are
+passed over, so each date that is there is compared with the next one
+that is: an unlock after the lock warns when there is no due date
+between them.  A pair of two INHERITED dates is not reported: an
+override row inherits the assignment's dates, and their order is the
+heading's to report (issue #538).  LOC is a (:file :line :heading)
+plist and PREFIX, when given, starts each message.  Shared by headings
+and override rows (issue #534), which is what keeps the two in
+agreement.  The findings are check `date-order'."
   (let ((present (cl-remove-if-not (lambda (date) (nth 2 date)) dates))
         (issues nil))
     (cl-loop for (a b) on present
              while b
-             when (string> (nth 2 a) (nth 2 b))
-             do (push (org-canvas--validate-make-issue
-                       'warning loc (car a)
-                       (format "%s%s is after %s (%s > %s)"
-                               (or prefix "") (car a) (car b)
-                               (nth 1 a) (nth 1 b)))
+             when (and (string> (nth 2 a) (nth 2 b))
+                       (not (and (nth 3 a) (nth 3 b))))
+             do (push (org-canvas--validate-checked
+                       'date-order
+                       (org-canvas--validate-make-issue
+                        'warning loc (car a)
+                        (format "%s%s is after %s (%s > %s)"
+                                (or prefix "") (car a) (car b)
+                                (nth 1 a) (nth 1 b))))
                       issues))
     (nreverse issues)))
 
@@ -752,7 +878,8 @@ Each row is checked for who it is for, for a section link's id, for
 the order of its dates and, given LATE-WINDOW (the assignment's dates
 when the course's late-window rule applies), against that rule.  LOC
 is a (:file :line :heading) plist.  Nil without a table."
-  (let ((end (save-excursion (org-end-of-subtree t) (point))))
+  (let ((end (save-excursion (org-end-of-subtree t) (point)))
+        (dates (org-canvas--validate-heading-dates)))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
         (cl-return-from org-canvas--validate-override-table nil))
@@ -772,10 +899,18 @@ is a (:file :line :heading) plist.  Nil without a table."
                                   file heading))))
           (goto-char header-pos)
           (nconc row-issues id-issues
-                 (org-canvas--validate-override-row-dates loc late-window)))))))
+                 (org-canvas--validate-override-row-dates
+                  loc late-window dates)))))))
+
+(defun org-canvas--validate-heading-dates ()
+  "Return the assignment's (:due :unlock :lock) at point, raw Org timestamps."
+  (list :due (org-entry-get (point) "DUE_AT")
+        :unlock (org-entry-get (point) "UNLOCK_AT")
+        :lock (org-entry-get (point) "LOCK_AT")))
 
 (declare-function org-canvas--override-date-columns "org-canvas-sections" (header))
 (declare-function org-canvas--override-parse-timestamp-cell "org-canvas-sections" (cell))
+(declare-function org-canvas--override-accept-column "org-canvas-sections" (header))
 
 (defun org-canvas--validate-override-cell (row column)
   "Return (VALUE . ISO) for the date cell at COLUMN of override ROW.
@@ -792,22 +927,38 @@ when it reads nothing."
   "Return the first cell of override ROW, a link shown as its description."
   (org-link-display-format (string-trim (or (nth 0 row) ""))))
 
-(defun org-canvas--validate-override-row-date-order (row columns row-loc)
+(defun org-canvas--validate-override-row-date (row column inherited)
+  "Return the (NAME VALUE ISO INHERITED) date of override ROW at COLUMN.
+The row's own date when the push reads one there, else INHERITED, the
+assignment's raw timestamp, marked as inherited: Canvas reads an
+override that omits a date as not overriding it, so the assignment's
+applies (issue #538)."
+  (let ((cell (org-canvas--validate-override-cell row column)))
+    (if (cdr cell)
+        (list (car cell) (cdr cell) nil)
+      (list (and inherited (format "%s (the assignment's)" inherited))
+            (org-canvas--validate-safe-parse-timestamp inherited)
+            t))))
+
+(defun org-canvas--validate-override-row-date-order (row columns row-loc
+                                                         &optional dates)
   "Check that ROW's Unlock At, Due At and Lock At run in that order.
 COLUMNS are the due, unlock and lock indexes
-\(`org-canvas--override-date-columns').  Each date is optional; those
-present are compared as a heading's are (issue #534).  ROW-LOC
-locates the row."
-  (let ((cells (mapcar (lambda (column)
-                         (org-canvas--validate-override-cell row column))
-                       columns)))
-    (org-canvas--validate-date-sequence
-     (cl-mapcar (lambda (name cell) (list name (car cell) (cdr cell)))
-                '("Unlock At" "Due At" "Lock At")
-                (list (nth 1 cells) (nth 0 cells) (nth 2 cells)))
-     row-loc
-     (format "Override row '%s': "
-             (org-canvas--validate-override-row-label row)))))
+\(`org-canvas--override-date-columns').  A date the row leaves empty,
+or the push cannot read, is the assignment's, from DATES
+\(:due :unlock :lock); a pair is reported only when the row sets at
+least one of its two dates, since the assignment's own order is its
+heading's to report (issues #534, #538).  ROW-LOC locates the row."
+  (org-canvas--validate-date-sequence
+   (cl-mapcar (lambda (name column key)
+                (cons name (org-canvas--validate-override-row-date
+                            row column (plist-get dates key))))
+              '("Unlock At" "Due At" "Lock At")
+              (list (nth 1 columns) (nth 0 columns) (nth 2 columns))
+              '(:unlock :due :lock))
+   row-loc
+   (format "Override row '%s': "
+           (org-canvas--validate-override-row-label row))))
 
 (defun org-canvas--validate-override-row-late-window (row columns row-loc defaults)
   "Apply the course's late-window rule to override ROW, or return nil.
@@ -834,26 +985,44 @@ keeps the assignment's (issue #536).  ROW-LOC locates the row."
          (format "Override row '%s': "
                  (org-canvas--validate-override-row-label row)))))))
 
-(defun org-canvas--validate-override-row-dates (loc &optional defaults)
+(defun org-canvas--validate-override-row-accepts (issues row column row-loc)
+  "Apply the Accept cell of override ROW, at COLUMN, to ISSUES.
+The cell holds accepts separated by `;', each a check id and the
+reason (issue #538).  ROW-LOC locates the row."
+  (let ((accepts (and column
+                      (split-string (or (nth column row) "") ";" t "[ \t]+"))))
+    (if accepts
+        (org-canvas--validate-apply-accepts
+         issues accepts row-loc
+         (cons nil (format "Override row '%s': "
+                           (org-canvas--validate-override-row-label row))))
+      issues)))
+
+(defun org-canvas--validate-override-row-dates (loc &optional defaults dates)
   "Check the dates of each row of the override table at point.
 Point is on the table's first line, its header, which names the date
 columns as the push reads them.  LOC is the assignment's
 \(:file :line :heading) plist; each issue carries its row's line.
 DEFAULTS, when the course's late-window rule applies to the
 assignment, are its own dates (see
-`org-canvas--validate-override-row-late-window')."
+`org-canvas--validate-override-row-late-window'); DATES are its dates
+whether or not it does, which a row's date order inherits.  A row's
+Accept cell applies to its findings (issue #538)."
   (let* ((start (line-number-at-pos))
          (table (org-table-to-lisp))
-         (columns (org-canvas--override-date-columns (car table))))
+         (columns (org-canvas--override-date-columns (car table)))
+         (accept (org-canvas--override-accept-column (car table))))
     (cl-loop for row in (cdr table)
              for line from (1+ start)
              for row-loc = (list :file (plist-get loc :file) :line line
                                  :heading (plist-get loc :heading))
              unless (eq row 'hline)
-             nconc (nconc (org-canvas--validate-override-row-date-order
-                           row columns row-loc)
-                          (org-canvas--validate-override-row-late-window
-                           row columns row-loc defaults)))))
+             nconc (org-canvas--validate-override-row-accepts
+                    (nconc (org-canvas--validate-override-row-date-order
+                            row columns row-loc dates)
+                           (org-canvas--validate-override-row-late-window
+                            row columns row-loc defaults))
+                    row accept row-loc))))
 
 ;;;; 5a-1c. A Course's Late Window (issue #536)
 
@@ -894,9 +1063,7 @@ submission; otherwise its (:due :unlock :lock), raw Org timestamps."
                             "," t "[ \t]+")
               org-canvas--validate-online-submission-types
               :test #'string=))
-    (list :due (org-entry-get (point) "DUE_AT")
-          :unlock (org-entry-get (point) "UNLOCK_AT")
-          :lock (org-entry-get (point) "LOCK_AT"))))
+    (org-canvas--validate-heading-dates)))
 
 (defun org-canvas--validate-wall-seconds (timestamp)
   "Return Org TIMESTAMP as seconds, read as written in no zone."
@@ -935,26 +1102,28 @@ Each is rounded to a tenth of an hour."
   "Check LOCK against DUE for `org-canvas-validate-lock-after-due-hours'.
 DUE and LOCK are raw Org timestamps, LOCK nil when the column has
 none.  LOC locates the column and PREFIX starts the message.  Returns
-an issue or nil; a lock date that does not parse is the timestamp
-check's to report."
+an issue or nil, check `lock-window'; a lock date that does not parse
+is the timestamp check's to report."
   (when-let* ((allowed (if (numberp org-canvas-validate-lock-after-due-hours)
                            (list org-canvas-validate-lock-after-due-hours)
                          org-canvas-validate-lock-after-due-hours)))
     (let ((hours (and lock (org-canvas--validate-wall-hours due lock))))
-      (cond
-       ((null lock)
-        (org-canvas--validate-make-issue
-         'warning loc "LOCK_AT"
-         (format "%sLock window missing: due %s with no lock date; the course locks online columns %s after the due date"
-                 prefix due (org-canvas--validate-format-hours allowed))))
-       ((and hours
-             (not (cl-some (lambda (h) (= (round (* 60 h)) (round (* 60 hours))))
-                           allowed)))
-        (org-canvas--validate-make-issue
-         'warning loc "LOCK_AT"
-         (format "%sLock window mismatch: %s (due %s, lock %s); the course allows %s"
-                 prefix (org-canvas--validate-lock-offset-text hours)
-                 due lock (org-canvas--validate-format-hours allowed))))))))
+      (org-canvas--validate-checked
+       'lock-window
+       (cond
+        ((null lock)
+         (org-canvas--validate-make-issue
+          'warning loc "LOCK_AT"
+          (format "%sLock window missing: due %s with no lock date; the course locks online columns %s after the due date"
+                  prefix due (org-canvas--validate-format-hours allowed))))
+        ((and hours
+              (not (cl-some (lambda (h) (= (round (* 60 h)) (round (* 60 hours))))
+                            allowed)))
+         (org-canvas--validate-make-issue
+          'warning loc "LOCK_AT"
+          (format "%sLock window mismatch: %s (due %s, lock %s); the course allows %s"
+                  prefix (org-canvas--validate-lock-offset-text hours)
+                  due lock (org-canvas--validate-format-hours allowed)))))))))
 
 (defun org-canvas--validate-late-window (due lock unlock loc &optional prefix)
   "Check one online column against the course's late-window rule.
@@ -974,10 +1143,12 @@ column and PREFIX starts each message."
                           (org-canvas--validate-lock-window due lock loc prefix)
                           (when (and org-canvas-validate-require-unlock (null unlock)
                                      (not past))
-                            (org-canvas--validate-make-issue
-                             'warning loc "UNLOCK_AT"
-                             (format "%sUnlock date missing: the course requires one on every online column"
-                                     prefix)))))))
+                            (org-canvas--validate-checked
+                             'require-unlock
+                             (org-canvas--validate-make-issue
+                              'warning loc "UNLOCK_AT"
+                              (format "%sUnlock date missing: the course requires one on every online column"
+                                      prefix))))))))
       (if past
           (mapcar #'org-canvas--validate-push-only issues)
         issues))))
@@ -2110,10 +2281,13 @@ so a read-only course hears it too."
 
 (defun org-canvas--validate-entry-at-marker (props date-order structural-fn file)
   "Validate the entry at point using PROPS, DATE-ORDER, and STRUCTURAL-FN.
-FILE identifies the source file.  Returns a list of issues."
+FILE identifies the source file.  The heading's VALIDATE_ACCEPT
+values apply to the findings on its own line (issue #538).  Returns a
+list of issues."
   (let* ((line (line-number-at-pos))
          (heading (org-get-heading t t t t))
          (loc (list :file file :line line :heading heading))
+         (accepts (org-canvas--validate-heading-accepts))
          (issues (delq nil (list (org-canvas--validate-canvas-deleted loc)))))
     (when props
       (setq issues (nconc issues
@@ -2126,7 +2300,10 @@ FILE identifies the source file.  Returns a list of issues."
       (let ((structural-issues (funcall structural-fn loc)))
         (when structural-issues
           (setq issues (nconc issues structural-issues)))))
-    issues))
+    (if accepts
+        (org-canvas--validate-apply-accepts
+         issues accepts loc (cons org-canvas--validate-accept-property ""))
+      issues)))
 
 (defun org-canvas--validate-spec (spec)
   "Run validation for a single SPEC.
@@ -2260,14 +2437,36 @@ Each group keeps the order its findings were made in."
   (let ((note-p (lambda (i) (eq (org-canvas--validate-severity i) 'note))))
     (append (cl-remove-if note-p issues) (cl-remove-if-not note-p issues))))
 
-(defun org-canvas--validate-insert-report (listed pending verbose stats)
+(defun org-canvas--validate-insert-accepted (accepted count)
+  "Insert the accepted findings: ACCEPTED listed with reasons, else COUNT.
+ACCEPTED is nil unless the report shows everything; then each is
+listed with its reason under a heading of its own.  Otherwise a
+positive COUNT is named in one line (issue #538).  An accepted line
+does not read as a `compilation-mode' error, warning or note."
+  (cond
+   (accepted
+    (insert (format "\nAccepted (%d), each with the reason it is kept:\n"
+                    (length accepted)))
+    (dolist (issue accepted)
+      (insert (format "%s:%d: accepted %s: %s\n    reason: %s\n"
+                      (plist-get issue :file) (plist-get issue :line)
+                      (plist-get issue :severity) (plist-get issue :message)
+                      (plist-get issue :accepted)))))
+   ((> count 0)
+    (insert (format "%d finding(s) accepted with a reason (VALIDATE_ACCEPT, Accept cells); M-x org-canvas-validate-all lists them\n"
+                    count)))))
+
+(defun org-canvas--validate-insert-report (listed pending verbose stats
+                                                  &optional accepted)
   "Insert the validation report into the current buffer.
 LISTED are the issues printed individually, PENDING the pre-first-sync
 link warnings, collapsed into one line unless VERBOSE.  Notes are
 listed after the errors and warnings.  STATS is a plist (:errors
-:warnings :notes :checked :skipped :suppressed); a non-zero
+:warnings :notes :checked :skipped :suppressed :accepted); a non-zero
 :suppressed count is named in a line of its own, so that holding push-only
 findings back on a read-only course is visible rather than silent.
+ACCEPTED, given when the report shows everything, lists the accepted
+findings; otherwise only their count is named (issue #538).
 Cross-course links are listed individually and then grouped by the
 shell they point at, which is the question worth answering about
 course-copy residue (issue #172)."
@@ -2295,6 +2494,7 @@ course-copy residue (issue #172)."
   (when (> (plist-get stats :suppressed) 0)
     (insert (format "%d push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them\n"
                     (plist-get stats :suppressed))))
+  (org-canvas--validate-insert-accepted accepted (or (plist-get stats :accepted) 0))
   (insert "\n")
   (insert (make-string 60 ?=))
   (insert "\n")
@@ -2312,18 +2512,24 @@ course-copy residue (issue #172)."
 
 (defun org-canvas--validate-collect (&optional all)
   "Run every check and return the findings of a validation report, as data.
-A plist (:issues ISSUES :stats STATS).  ISSUES are the findings the
-report lists, pending-first-sync links among them; on a course marked
-`org-canvas-read-only' the push-only ones are held back unless ALL.
-STATS is (:errors :warnings :notes :checked :skipped :suppressed), the
-counts taken over ISSUES.  The read behind `org-canvas-validate' and
-`org-canvas-validate-json-data'."
+A plist (:issues ISSUES :accepted ACCEPTED :stats STATS).  ISSUES are
+the findings the report lists, pending-first-sync links among them; on
+a course marked `org-canvas-read-only' the push-only ones are held
+back unless ALL.  ACCEPTED are the findings a VALIDATE_ACCEPT or an
+Accept cell took out of ISSUES (issue #538), each with its `:accepted'
+reason.  STATS is (:errors :warnings :notes :checked :skipped
+:suppressed :accepted), the severity counts taken over ISSUES.  The
+read behind `org-canvas-validate' and `org-canvas-validate-json-data'."
   (let* ((result (org-canvas--validate-run-all-specs))
          (found (plist-get result :issues))
-         (issues (if (and org-canvas-read-only (not all))
-                     (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
-                   found)))
+         (kept (if (and org-canvas-read-only (not all))
+                   (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
+                 found))
+         (accepted-p (lambda (i) (plist-get i :accepted)))
+         (accepted (cl-remove-if-not accepted-p kept))
+         (issues (cl-remove-if accepted-p kept)))
     (list :issues issues
+          :accepted accepted
           :stats (list :errors (cl-count 'error issues
                                          :key #'org-canvas--validate-severity)
                        :warnings (cl-count 'warning issues
@@ -2332,7 +2538,8 @@ counts taken over ISSUES.  The read behind `org-canvas-validate' and
                                         :key #'org-canvas--validate-severity)
                        :checked (plist-get result :checked)
                        :skipped (plist-get result :skipped)
-                       :suppressed (- (length found) (length issues))))))
+                       :suppressed (- (length found) (length kept))
+                       :accepted (length accepted)))))
 
 (defun org-canvas--validate-json-bool (value)
   "Return VALUE as `json-encode' writes a boolean."
@@ -2350,13 +2557,22 @@ counts taken over ISSUES.  The read behind `org-canvas-validate' and
         (cons 'pending_sync (org-canvas--validate-json-bool
                              (plist-get issue :pending-sync)))
         (cons 'push_only (org-canvas--validate-json-bool
-                          (plist-get issue :push-only)))))
+                          (plist-get issue :push-only)))
+        (cons 'check (and (plist-get issue :check)
+                          (symbol-name (plist-get issue :check))))))
+
+(defun org-canvas--validate-json-accepted (issue)
+  "Return ISSUE, an accepted finding, as a JSON object alist with its reason."
+  (append (org-canvas--validate-json-finding issue)
+          (list (cons 'reason (plist-get issue :accepted)))))
 
 (defun org-canvas-validate-json-data (&optional all)
   "Return the validation report as an alist for `json-encode'.
 The findings `org-canvas-validate' would report, ALL as there, notes
 last, every pending-first-sync link listed and marked; the counts are
-the report's.  Nothing is displayed.  The schema is the manual's
+the report's.  The accepted findings are counted, and listed under
+`accepted_findings' only with ALL, an empty list otherwise (issue
+#538).  Nothing is displayed.  The schema is the manual's
 \"Machine-Readable Output\" (issue #531)."
   (let* ((data (org-canvas--validate-collect all))
          (stats (plist-get data :stats)))
@@ -2369,10 +2585,15 @@ the report's.  Nothing is displayed.  The schema is the manual's
           (cons 'files_checked (plist-get stats :checked))
           (cons 'files_skipped (plist-get stats :skipped))
           (cons 'suppressed (plist-get stats :suppressed))
+          (cons 'accepted (plist-get stats :accepted))
           (cons 'findings
                 (vconcat (mapcar #'org-canvas--validate-json-finding
                                  (org-canvas--validate-notes-last
-                                  (plist-get data :issues))))))))
+                                  (plist-get data :issues)))))
+          (cons 'accepted_findings
+                (vconcat (and all
+                              (mapcar #'org-canvas--validate-json-accepted
+                                      (plist-get data :accepted))))))))
 
 ;;;###autoload
 (defun org-canvas-validate (&optional verbose all)
@@ -2412,7 +2633,8 @@ it; see `org-canvas-validate-batch'."
      "*canvas-validate*"
      (lambda ()
        (org-canvas--validate-insert-report
-        listed-issues pending-issues verbose stats))
+        listed-issues pending-issues verbose stats
+        (and all (plist-get data :accepted))))
      #'org-canvas-validate-mode)
     (message "%s" (org-canvas--validate-format-summary
                    error-count warning-count note-count))

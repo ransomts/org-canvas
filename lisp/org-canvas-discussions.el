@@ -88,6 +88,7 @@
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether the discussion is visible to students (default: true)")
     ,org-canvas--no-module-property-spec
+    ,org-canvas--validate-accept-property-spec
     (:org-prop "DISCUSSION_TYPE" :data-key :discussion_type :type enum
      :values ,org-canvas--valid-discussion-types
      :doc "side_comment, threaded")

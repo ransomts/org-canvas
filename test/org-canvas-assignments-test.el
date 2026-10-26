@@ -3300,6 +3300,78 @@ TEXT is the file afterwards, CALLS the API calls made."
       (expect text :to-match "Hi")
       (expect text :to-match "| S777 "))))
 
+;;; A pull keeps the Accept cells (issue #538)
+
+(describe "org-canvas--assignment-pull-after keeps Accept cells (issue #538)"
+  (defun test-asg538-pull (content overrides)
+    "Pull OVERRIDES over CONTENT's first heading.
+Return (TEXT WARNINGS): the buffer text and the warnings logged."
+    (let ((warnings nil))
+      (with-org-canvas-test-config
+        (with-temp-org-buffer content
+          (cl-letf (((symbol-function 'org-canvas--override-fetch)
+                     (lambda (_) overrides))
+                    ((symbol-function 'org-canvas--section-link-by-id)
+                     (lambda (id) (format "S%s" id)))
+                    ((symbol-function 'org-canvas--override-resolve-section-id)
+                     (lambda (cell _dir)
+                       (and (string-match "\\`Sec \\([0-9]+\\)\\'" cell)
+                            (match-string 1 cell))))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (org-canvas--assignment-pull-after
+             '((id . 456) (name . "Debate") (description . "")
+               (due_at . "2099-03-10T23:59:00Z"))
+             (point-min))
+            (list (buffer-string) (nreverse warnings)))))))
+
+  (defconst test-asg538-table
+    (concat "* Debate\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n\n"
+            "#+NAME: overrides\n| Section | Due At | Accept |\n|---+---+---|\n"
+            "| S1 | <2099-03-12 Thu 23:59> | lock-window Longer debate week |\n"
+            "| Sec 2 | <2099-03-13 Fri 23:59> | date-order Kept; lock-window Also |\n"
+            "| S3 | <2099-03-14 Sat 23:59> | |\n"
+            "| S9 | <2099-03-15 Sun 23:59> | lock-window Section merged |\n")
+    "An overrides table with Accept cells on three of four rows.")
+
+  (it "writes each row's Accept cell back on the override it was for"
+    (let* ((result (test-asg538-pull
+                    test-asg538-table
+                    '(((id . 1) (course_section_id . 1) (due_at . "2099-03-12T23:59:00Z"))
+                      ((id . 2) (course_section_id . 2) (due_at . "2099-03-13T23:59:00Z"))
+                      ((id . 3) (course_section_id . 3) (due_at . "2099-03-14T23:59:00Z")))))
+           (rows (cl-remove-if-not (lambda (l) (string-match-p "\\`| S[0-9]" l))
+                                   (split-string (car result) "\n"))))
+      (expect (car result) :to-match "^| Section | Due At | Accept |$")
+      (expect (mapcar (lambda (l) (string-trim (car (last (split-string l "|" t)))))
+                      rows)
+              :to-equal '("lock-window Longer debate week"
+                          "date-order Kept; lock-window Also"
+                          ""))
+      ;; The hand-written `Sec 2' row matched by the section it names.
+      (expect (cadr rows) :to-match "\\`| S2 ")
+      (expect (car (last (cadr result)))
+              :to-equal "[Override] Pull of 'Debate' dropped row 'S9' (Canvas holds no such override); its Accept cell was: lock-window Section merged")))
+
+  (it "keeps a row redundant with the assignment when it holds an Accept cell"
+    (let ((text (car (test-asg538-pull
+                      (concat "* Debate\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n\n"
+                              "#+NAME: overrides\n| Section | Accept |\n|---+---|\n"
+                              "| S1 | date-order Same as everyone |\n")
+                      '(((id . 1) (course_section_id . 1) (due_at . "2099-03-10T23:59:00Z"))
+                        ((id . 2) (course_section_id . 2) (due_at . "2099-03-10T23:59:00Z")))))))
+      (expect text :to-match "^| S1 | <2099-03-10 [A-Za-z]+ [0-9:]+> | date-order Same as everyone |$")
+      (expect text :not :to-match "| S2 ")))
+
+  (it "writes no Accept column where the old table had none"
+    (let ((text (car (test-asg538-pull
+                      (concat "* Debate\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n\n"
+                              "#+NAME: overrides\n| Section | Due At |\n|---+---|\n"
+                              "| S1 | <2099-03-12 Thu 23:59> |\n")
+                      '(((id . 1) (course_section_id . 1) (due_at . "2099-03-12T23:59:00Z")))))))
+      (expect text :not :to-match "Accept"))))
+
 ;;; Scheduled dates explain an updated_at bump (issue #453)
 
 (describe "org-canvas--assignment-scheduled-dates (issue #453)"

@@ -1,0 +1,22 @@
+* Added
+- #538 =org-canvas-validate= accepts a finding a course means to keep,
+  with the reason written beside it.  =:VALIDATE_ACCEPT: lock-window
+  In-class exam: locks at the end of class= on a heading accepts that
+  check there (several as =VALIDATE_ACCEPT+= lines); an =Accept= column
+  in the overrides table does the same for a row, several separated by
+  =;=.  The checks that can be accepted are =date-order=, =lock-window=
+  and =require-unlock=.  An accepted finding leaves the report and is
+  counted in one line; =org-canvas-validate-all= and =validate --all=
+  list them with their reasons.  An unknown check, an accept with no
+  reason or one naming an error accepts nothing and is a warning; an
+  accept that matched nothing is a note.  =VALIDATE_ACCEPT= is never
+  sent or pulled, the push ignores the =Accept= column, and a pull of
+  the assignment keeps each Accept cell on its row.
+- #538 =validate --json= adds =accepted= beside =suppressed=, a =check=
+  on each finding, and =accepted_findings=, filled under =--all=.
+* Changed
+- #538 Validate reads an override row's dates as Canvas does: a date the
+  row leaves empty is the assignment's.  A row moving the due date past
+  the assignment's lock date, with no lock date of its own, is now a
+  date-order warning; a pair of dates the row inherits is left to the
+  heading.

@@ -2059,4 +2059,26 @@ nil, and the API calls made."
                      "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
                     :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1))))))))
 
+(describe "org-canvas--override-match-accepts (issue #538)"
+  (it "pairs a group or students row by whom it names, in any order"
+    (cl-letf (((symbol-function 'org-canvas--override-target-cell)
+               (lambda (_ov) "as the pull writes it"))
+              ((symbol-function 'org-canvas--override-resolve-group-id)
+               (lambda (text) (and (equal text "Team A") "55")))
+              ((symbol-function 'org-canvas--override-resolve-student-id)
+               (lambda (text) (cdr (assoc text '(("Adams" . "7") ("Beta" . "12")))))))
+      (let* ((group '((id . 1) (group_id . 55)))
+             (students '((id . 2) (student_ids . [12 7])))
+             (everyone '((id . 3)))
+             (result (org-canvas--override-match-accepts
+                      (list group students everyone)
+                      '(("Students: Adams; Beta" "date-order Extension")
+                        ("Group: Team A" "lock-window Team week")
+                        ("Group: Team B" "lock-window Gone"))
+                      "/c/")))
+        (expect (cdr (assq group (car result))) :to-equal "lock-window Team week")
+        (expect (cdr (assq students (car result))) :to-equal "date-order Extension")
+        (expect (assq everyone (car result)) :to-be nil)
+        (expect (cdr result) :to-equal '(("Group: Team B" "lock-window Gone")))))))
+
 ;;; org-canvas-sections-test.el ends here

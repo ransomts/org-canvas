@@ -435,8 +435,28 @@ section link, `Group: ...' or `Students: ...' cell."
         (org-canvas--override-format-cell (alist-get 'unlock_at ov))
         (org-canvas--override-format-cell (alist-get 'lock_at   ov))))
 
+(defconst org-canvas--override-emit-columns
+  '(("Due At" "--------" 1) ("Unlock At" "-----------" 2)
+    ("Lock At" "---------" 3) ("Accept" "--------" 4))
+  "The columns a pulled table may carry after Section: title, rule, cell.
+The cell is the index in a row of `org-canvas--override-emit-row'.")
+
+(defun org-canvas--override-emit-row (ov parent-due parent-unlock parent-lock
+                                         accept-fn)
+  "Return the cells of a pulled row for override OV, or nil to leave it out.
+The four of `org-canvas--override-build-row', then the Accept cell
+ACCEPT-FN returns for OV (empty when it is nil or returns nil).  A
+row redundant against PARENT-DUE, PARENT-UNLOCK and PARENT-LOCK is
+left out unless it keeps an Accept cell, which a pull never drops
+\(issue #538)."
+  (let ((accept (or (and accept-fn (funcall accept-fn ov)) "")))
+    (unless (and (string-empty-p accept)
+                 (org-canvas--override-row-redundant-p
+                  ov parent-due parent-unlock parent-lock))
+      (append (org-canvas--override-build-row ov) (list accept)))))
+
 (defun org-canvas--override-emit-table
-    (overrides &optional parent-due parent-unlock parent-lock)
+    (overrides &optional parent-due parent-unlock parent-lock accept-fn)
   "Emit a `#+NAME: overrides' table for OVERRIDES (list of API alists).
 Inserts at point.  Does nothing when OVERRIDES is nil/empty or when
 every override is redundant against the parent dates.
@@ -444,39 +464,128 @@ every override is redundant against the parent dates.
 PARENT-DUE, PARENT-UNLOCK, PARENT-LOCK are the parent assignment's
 ISO8601 strings (or nil); rows whose every populated date matches the
 parent are dropped (see `org-canvas--override-row-redundant-p').
+ACCEPT-FN, when given, returns the Accept cell to keep for an
+override, which the table the pull replaces held
+\(`org-canvas--override-match-accepts', issue #538).
 Columns whose every cell is empty are dropped from the emitted table.
 Section column renders as \"All Sections\" when `course_section_id'
 is nil, otherwise as a `[[file:sections.org::*Name][Name]]' link."
   (when (and overrides (> (length overrides) 0))
-    (let* ((kept-overrides
-            (cl-remove-if (lambda (ov)
-                            (org-canvas--override-row-redundant-p
-                             ov parent-due parent-unlock parent-lock))
-                          overrides))
-           (rows (mapcar #'org-canvas--override-build-row kept-overrides))
-           (keep-due    (cl-some (lambda (r) (not (string-empty-p (nth 1 r)))) rows))
-           (keep-unlock (cl-some (lambda (r) (not (string-empty-p (nth 2 r)))) rows))
-           (keep-lock   (cl-some (lambda (r) (not (string-empty-p (nth 3 r)))) rows)))
+    (let* ((rows (delq nil (mapcar (lambda (ov)
+                                     (org-canvas--override-emit-row
+                                      ov parent-due parent-unlock parent-lock
+                                      accept-fn))
+                                   overrides)))
+           (columns (cl-remove-if-not
+                     (lambda (column)
+                       (cl-some (lambda (r) (not (string-empty-p (nth (nth 2 column) r))))
+                                rows))
+                     org-canvas--override-emit-columns)))
       (when rows
-        (let ((headers (cons "Section"
-                             (delq nil (list (and keep-due    "Due At")
-                                             (and keep-unlock "Unlock At")
-                                             (and keep-lock   "Lock At")))))
-              (seps (cons "---------"
-                          (delq nil (list (and keep-due    "--------")
-                                          (and keep-unlock "-----------")
-                                          (and keep-lock   "---------"))))))
-          (insert "#+NAME: overrides\n")
-          (insert (concat "| " (mapconcat #'identity headers " | ") " |\n"))
-          (insert (concat "|" (mapconcat #'identity seps "+") "|\n"))
-          (dolist (r rows)
-            (let ((cells (cons (nth 0 r)
-                               (delq nil
-                                     (list (and keep-due    (nth 1 r))
-                                           (and keep-unlock (nth 2 r))
-                                           (and keep-lock   (nth 3 r)))))))
-              (insert (concat "| " (mapconcat #'identity cells " | ") " |\n"))))
-          (insert "\n"))))))
+        (insert "#+NAME: overrides\n")
+        (insert (concat "| " (mapconcat #'identity
+                                        (cons "Section" (mapcar #'car columns))
+                                        " | ")
+                        " |\n"))
+        (insert (concat "|" (mapconcat #'identity
+                                       (cons "---------" (mapcar #'cadr columns))
+                                       "+")
+                        "|\n"))
+        (dolist (r rows)
+          (insert (concat "| "
+                          (mapconcat #'identity
+                                     (cons (car r)
+                                           (mapcar (lambda (column)
+                                                     (nth (nth 2 column) r))
+                                                   columns))
+                                     " | ")
+                          " |\n")))
+        (insert "\n")))))
+
+;;;; Accept Cells Survive a Pull (issue #538)
+
+(defun org-canvas--override-accept-column (header)
+  "Return the index of HEADER's Accept column, or nil without one.
+The cell holds what `org-canvas-validate' accepts on the row; the
+push reads its columns by title and never this one."
+  (cl-position "accept" header
+               :test (lambda (title cell)
+                       (string= title (downcase (string-trim cell))))))
+
+(defun org-canvas--override-normalize-target (target)
+  "Return TARGET, a (KEY ID-OR-IDS) list, its ids as sorted strings."
+  (when target
+    (let ((ids (cadr target)))
+      (list (car target)
+            (if (listp ids)
+                (sort (mapcar (lambda (id) (format "%s" id)) ids) #'string<)
+              (format "%s" ids))))))
+
+(defun org-canvas--override-ov-key (ov)
+  "Return who override OV is for, as a key the table's rows resolve to."
+  (let ((students (append (alist-get 'student_ids ov) nil)))
+    (org-canvas--override-normalize-target
+     (cond
+      ((alist-get 'course_section_id ov)
+       (list :section-id (alist-get 'course_section_id ov)))
+      ((alist-get 'group_id ov) (list :group-id (alist-get 'group_id ov)))
+      (students (list :student-ids students))))))
+
+(defun org-canvas--override-row-accept (row column)
+  "Return (TARGET ACCEPT) for override ROW with text at COLUMN, else nil.
+TARGET is its first cell as written and ACCEPT the cell's text."
+  (when (listp row)
+    (let ((accept (string-trim (or (nth column row) ""))))
+      (unless (string-empty-p accept)
+        (list (string-trim (or (nth 0 row) "")) accept)))))
+
+(defun org-canvas--override-read-accepts ()
+  "Return the Accept cells of the overrides table under the heading at point.
+A list of (TARGET ACCEPT), one per row whose Accept cell holds text
+\(`org-canvas--override-row-accept'); nil without such a column."
+  (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+         (table (org-canvas--override-find-table end))
+         (column (and table (org-canvas--override-accept-column (car table)))))
+    (when column
+      (delq nil (mapcar (lambda (row) (org-canvas--override-row-accept row column))
+                        (cdr table))))))
+
+(defun org-canvas--override-match-accepts (overrides entries source-dir)
+  "Pair OVERRIDES with ENTRIES, the Accept cells of the table a pull rewrote.
+Return (PAIRS . LEFT): PAIRS an alist of (OVERRIDE . ACCEPT), LEFT the
+entries no override claimed.  An entry is claimed first by its row's
+first cell as the pull writes it, then, for those left, by whom that
+cell resolves to against SOURCE-DIR, so a row written by hand keeps
+its reason too (issue #538)."
+  (let ((left entries) (pairs nil) (unmatched nil))
+    (dolist (ov overrides)
+      (if-let* ((entry (assoc (org-canvas--override-target-cell ov) left)))
+          (progn (push (cons ov (cadr entry)) pairs)
+                 (setq left (delq entry left)))
+        (push ov unmatched)))
+    (when (and unmatched left)
+      (let ((keyed (mapcar (lambda (entry)
+                             (cons (org-canvas--override-normalize-target
+                                    (org-canvas--override-parse-target
+                                     (car entry) source-dir))
+                                   entry))
+                           left)))
+        (dolist (ov (nreverse unmatched))
+          (when-let* ((key (org-canvas--override-ov-key ov))
+                      (hit (assoc key keyed)))
+            (push (cons ov (cadr (cdr hit))) pairs)
+            (setq keyed (delq hit keyed)
+                  left (delq (cdr hit) left))))))
+    (cons pairs left)))
+
+(defun org-canvas--override-warn-unclaimed-accepts (entries title)
+  "Log each of ENTRIES, Accept cells no pulled override of TITLE claimed.
+Their rows are gone because Canvas no longer holds the override; the
+log keeps the reason, which the file no longer can."
+  (dolist (entry entries)
+    (org-canvas--log-warning org-canvas--logger
+      "[Override] Pull of '%s' dropped row '%s' (Canvas holds no such override); its Accept cell was: %s"
+      title (car entry) (cadr entry))))
 
 (defun org-canvas--override-parse-timestamp-cell (cell)
   "Parse a table CELL containing an Org timestamp.
