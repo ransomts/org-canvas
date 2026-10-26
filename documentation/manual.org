@@ -116,7 +116,9 @@ cd ~/courses/ethics
 The course directory is the current one unless =-C DIR= (=--course DIR=)
 names another.  The script runs =emacs --batch --eval '(setq
 load-prefer-newer t)' -l lisp/org-canvas-batch.el -f org-canvas-batch --
-ARGS=, which is also the line to use without it.
+ARGS=, which is also the line to use without it.  =--json= before
+=validate= or =diff= prints one JSON object in place of the report (see
+[[*Machine-Readable Output][Machine-Readable Output]]).
 
 | Command                       | Runs                                               | Exits 1 when       |
 |-------------------------------+----------------------------------------------------+--------------------|
@@ -148,10 +150,10 @@ ARGS=, which is also the line to use without it.
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
-| =diff=                        | =org-canvas-diff=                                  | anything drifted   |
+| =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
-| =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
+| =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back; =--json=: one JSON object) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
 | =version= (=--version=, =-V=) | the version, commit and directory loaded           |                    |
 
@@ -278,6 +280,103 @@ own guard, which in batch rereads a file changed on disk or restores
 one a sync client rolled back, without asking (#121, #249), and a
 blanket =revert-without-query= would reread the rolled-back copy
 silently.
+
+** Machine-Readable Output
+
+=--json=, before the command, makes =validate= and =diff= print one
+JSON object on one line of stdout in place of the report, and nothing
+else there: progress lines go to stderr, as they always do in batch.
+The exit status is the command's own, as the table above gives it.
+Any other command given =--json= is a usage error (exit 2) that names
+the commands taking it (#531):
+
+#+begin_src sh
+scripts/org-canvas --json validate --all | jq '.findings[] | select(.severity == "error")'
+scripts/org-canvas -C ~/courses/ethics --json diff | jq '.counts'
+#+end_src
+
+Keys are snake_case and always present; a value the finding or row
+does not have is =null=, a list it does not have is =[]=, and flags are
+=true= or =false=.  Messages are redacted as everything else printed
+is.
+
+=validate --json= holds what the text report holds: on a course marked
+=org-canvas-read-only= the push-only findings are held back and
+counted in =suppressed=, unless =--all=.  The links whose targets
+merely lack a Canvas id, which the text report folds into one line,
+are listed, marked =pending_sync=.  Errors and warnings come first,
+notes last, each in the order found.
+
+#+begin_src js
+{"command": "validate",
+ "course": "/home/me/courses/ethics/",  // org-canvas-directory
+ "all": false,                          // --all given
+ "counts": {"error": 1, "warning": 3, "note": 2},
+ "files_checked": 12, "files_skipped": 0,
+ "suppressed": 0,                       // push-only findings held back
+ "findings": [
+   {"severity": "error",                // "error", "warning" or "note"
+    "file": "/home/me/courses/ethics/assignments.org",
+    "line": 42,
+    "heading": "Essay 1",               // or null
+    "property": "POINTS",               // or null
+    "message": "...",
+    "pending_sync": false,              // a link target with no Canvas id yet
+    "push_only": false}]}               // protects a push only
+#+end_src
+
+=diff --json= holds the rows the drift report prints, writing nothing,
+in the report's order: per feature, the rows that are drift, then the
+notes, pending creates and relocations, which are not.  =drift= is the
+count of rows that are drift, the number =diff= exits 1 on; =counts=
+names every status, zero or not.
+
+#+begin_src js
+{"command": "diff",
+ "course": "/home/me/courses/ethics/",
+ "course_id": "12345",
+ "drift": 3,
+ "counts": {"changed": 1, "missing": 1, "extra": 1, "stale_ack": 0,
+            "unclaimed": 0, "moved": 0, "relocate": 0, "pending": 2,
+            "note": 0},
+ "acknowledged": 0,                     // extras in org-canvas-diff-known-extras
+ "referenced": 0,                       // unclaimed files course content embeds
+ "features": [
+   {"name": "Assignments",
+    "state": "checked",                 // "checked", "excluded" or "error"
+    "error": null}],                    // why it could not be checked
+ "rows": [
+   {"status": "CHANGED",                // the report's label, below
+    "kind": "modified",                 // the row's internal kind
+    "drift": true,                      // counted in "drift"
+    "feature": "Assignments",
+    "title": "Essay 1",
+    "canvas_id": "2563805",             // a string, or null
+    "container": null,                  // the module, quiz or assignment it sits in
+    "container_kind": null,             // "module", "quiz" or "assignment"
+    "file": null, "line": null,         // the heading, where the row knows it
+    "remote_newer": true,               // Canvas changed it after the last sync
+    "updated_at": "2026-10-01T12:00:00Z",
+    "fields": [{"name": "POINTS", "org": "10", "canvas": "20"}],
+    "message": "CHANGED   Essay 1 (Canvas updated 2026-10-01T12:00:00Z)"}]}
+#+end_src
+
+| =status=    | =drift= | Meaning                                                      |
+|-------------+---------+--------------------------------------------------------------|
+| =CHANGED=   | true    | a property or the body differs, or Canvas changed it since   |
+| =MISSING=   | true    | the heading's Canvas id is gone (or an override row is)      |
+| =EXTRA=     | true    | Canvas holds an item (or an override) no heading claims      |
+| =UNCLAIMED= | true    | such an item shares an unstamped heading's title             |
+| =MOVED=     | true    | a module item an unstamped heading in another module claims  |
+| =STALE-ACK= | true    | an acknowledged extra Canvas no longer holds                 |
+| =NOTE=      | false   | Canvas holds a value no intent property declares             |
+| =PENDING=   | false   | a heading with no Canvas id, which the next sync creates     |
+| =RELOCATE=  | false   | a stamped module item the next sync moves to its heading's module |
+
+An override row has =kind= ="override"= and the status of its state;
+=message= is the first line of the row's text in the report, for a
+reader, and may change wording between versions where the other keys
+do not.
 
 * Course Structure
 

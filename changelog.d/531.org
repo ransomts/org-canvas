@@ -1,0 +1,7 @@
+* Added
+- #531 =scripts/org-canvas --json validate= and =--json diff= print one
+  JSON object on stdout in place of the report: the findings or drift
+  rows with their counts, under a schema the manual documents
+  ("Machine-Readable Output"), and the same exit status.  An agent or a
+  script no longer scrapes the text report.  Another command given
+  =--json= is a usage error naming the commands that take it.

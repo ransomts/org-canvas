@@ -1,7 +1,7 @@
 #!/bin/sh
 # org-canvas --- run an org-canvas command against a course from the shell
 #
-#   scripts/org-canvas [-C DIR] [--dry-run] COMMAND [ARGS...]
+#   scripts/org-canvas [-C DIR] [--dry-run] [--json] COMMAND [ARGS...]
 #   scripts/org-canvas --help | --version
 #   scripts/org-canvas push [--conflict push|pull|skip] FEATURE:TITLE...
 #   scripts/org-canvas delete --yes | --dry-run FEATURE:TITLE...
@@ -9,6 +9,7 @@
 # --help lists every command.  push's --conflict sets
 # org-canvas-conflict-strategy for that run (issue #470).  delete's
 # --yes answers the delete confirmation and nothing else (issue #525).
+# --json makes validate and diff print one JSON object (issue #531).
 #
 # The course directory defaults to the current one; its
 # org-canvas-credentials.el is loaded.  EMACS names the Emacs to run

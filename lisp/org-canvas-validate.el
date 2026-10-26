@@ -2036,6 +2036,72 @@ course-copy residue (issue #172)."
     (insert (format " (%d file(s) not found, skipped)" (plist-get stats :skipped))))
   (insert "\n"))
 
+;;;;; Findings as Data (issue #531)
+
+(defun org-canvas--validate-collect (&optional all)
+  "Run every check and return the findings of a validation report, as data.
+A plist (:issues ISSUES :stats STATS).  ISSUES are the findings the
+report lists, pending-first-sync links among them; on a course marked
+`org-canvas-read-only' the push-only ones are held back unless ALL.
+STATS is (:errors :warnings :notes :checked :skipped :suppressed), the
+counts taken over ISSUES.  The read behind `org-canvas-validate' and
+`org-canvas-validate-json-data'."
+  (let* ((result (org-canvas--validate-run-all-specs))
+         (found (plist-get result :issues))
+         (issues (if (and org-canvas-read-only (not all))
+                     (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
+                   found)))
+    (list :issues issues
+          :stats (list :errors (cl-count 'error issues
+                                         :key #'org-canvas--validate-severity)
+                       :warnings (cl-count 'warning issues
+                                           :key #'org-canvas--validate-severity)
+                       :notes (cl-count 'note issues
+                                        :key #'org-canvas--validate-severity)
+                       :checked (plist-get result :checked)
+                       :skipped (plist-get result :skipped)
+                       :suppressed (- (length found) (length issues))))))
+
+(defun org-canvas--validate-json-bool (value)
+  "Return VALUE as `json-encode' writes a boolean."
+  (if value t :json-false))
+
+(defun org-canvas--validate-json-finding (issue)
+  "Return ISSUE, a finding plist, as a JSON object alist."
+  (list (cons 'severity (symbol-name (plist-get issue :severity)))
+        (cons 'file (plist-get issue :file))
+        (cons 'line (plist-get issue :line))
+        (cons 'heading (plist-get issue :heading))
+        (cons 'property (plist-get issue :property))
+        (cons 'message (org-canvas--log-redact
+                        (format "%s" (plist-get issue :message))))
+        (cons 'pending_sync (org-canvas--validate-json-bool
+                             (plist-get issue :pending-sync)))
+        (cons 'push_only (org-canvas--validate-json-bool
+                          (plist-get issue :push-only)))))
+
+(defun org-canvas-validate-json-data (&optional all)
+  "Return the validation report as an alist for `json-encode'.
+The findings `org-canvas-validate' would report, ALL as there, notes
+last, every pending-first-sync link listed and marked; the counts are
+the report's.  Nothing is displayed.  The schema is the manual's
+\"Machine-Readable Output\" (issue #531)."
+  (let* ((data (org-canvas--validate-collect all))
+         (stats (plist-get data :stats)))
+    (list (cons 'command "validate")
+          (cons 'course org-canvas-directory)
+          (cons 'all (org-canvas--validate-json-bool all))
+          (cons 'counts (list (cons 'error (plist-get stats :errors))
+                              (cons 'warning (plist-get stats :warnings))
+                              (cons 'note (plist-get stats :notes))))
+          (cons 'files_checked (plist-get stats :checked))
+          (cons 'files_skipped (plist-get stats :skipped))
+          (cons 'suppressed (plist-get stats :suppressed))
+          (cons 'findings
+                (vconcat (mapcar #'org-canvas--validate-json-finding
+                                 (org-canvas--validate-notes-last
+                                  (plist-get data :issues))))))))
+
 ;;;###autoload
 (defun org-canvas-validate (&optional verbose all)
   "Validate all course org files without contacting the Canvas API.
@@ -2060,24 +2126,16 @@ keeps them, which is what `org-canvas-validate-all' passes (issue
 Returns the number of errors reported, so a batch caller can act on
 it; see `org-canvas-validate-batch'."
   (interactive "P")
-  (let* ((result (org-canvas--validate-run-all-specs))
-         (found (plist-get result :issues))
-         (suppress (and org-canvas-read-only (not all)))
-         (all-issues (if suppress
-                         (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
-                       found))
-         (suppressed-count (- (length found) (length all-issues)))
+  (let* ((data (org-canvas--validate-collect all))
+         (all-issues (plist-get data :issues))
          (pending-issues (cl-remove-if-not
                           (lambda (i) (plist-get i :pending-sync)) all-issues))
          (listed-issues (cl-remove-if
                          (lambda (i) (plist-get i :pending-sync)) all-issues))
-         (error-count (cl-count 'error all-issues :key #'org-canvas--validate-severity))
-         (warning-count (cl-count 'warning all-issues :key #'org-canvas--validate-severity))
-         (note-count (cl-count 'note all-issues :key #'org-canvas--validate-severity))
-         (stats (list :errors error-count :warnings warning-count :notes note-count
-                      :checked (plist-get result :checked)
-                      :skipped (plist-get result :skipped)
-                      :suppressed suppressed-count)))
+         (stats (plist-get data :stats))
+         (error-count (plist-get stats :errors))
+         (warning-count (plist-get stats :warnings))
+         (note-count (plist-get stats :notes)))
     (org-canvas--report-display
      "*canvas-validate*"
      (lambda ()

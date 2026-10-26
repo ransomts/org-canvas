@@ -3549,6 +3549,127 @@ the Assignments extras.  The read behind `org-canvas-diff',
      (org-canvas--diff-apply-extra-details
       (org-canvas--diff-apply-references (nreverse results))))))
 
+(defun org-canvas--diff-read ()
+  "Check the course is ready, then return the drift results, writing nothing.
+The preflight check and the operation-start hook, then
+`org-canvas--diff-collect-results'.  The read behind `org-canvas-diff'
+and `org-canvas-diff-json-data'."
+  (org-canvas--preflight-check)
+  (run-hooks 'org-canvas--operation-start-hook)
+  (org-canvas--diff-collect-results))
+
+;;;;; Rows as Data (issue #531)
+
+(defconst org-canvas--diff-json-statuses
+  '((modified . "CHANGED") (missing . "MISSING") (extra . "EXTRA")
+    (stale-ack . "STALE-ACK") (unclaimed . "UNCLAIMED") (moved . "MOVED")
+    (relocate . "RELOCATE") (pending . "PENDING") (note . "NOTE"))
+  "The status of each row kind, as the report labels it.
+An override row takes its status from its :state instead.")
+
+(defun org-canvas--diff-json-status (entry)
+  "Return the status of ENTRY, the label its report row opens with."
+  (if (eq (plist-get entry :kind) 'override)
+      (pcase (plist-get entry :state)
+        ('extra "EXTRA")
+        ('missing "MISSING")
+        (_ "CHANGED"))
+    (alist-get (plist-get entry :kind) org-canvas--diff-json-statuses)))
+
+(defun org-canvas--diff-json-count-key (status)
+  "Return the counts key of STATUS: \"STALE-ACK\" becomes `stale_ack'."
+  (intern (replace-regexp-in-string "-" "_" (downcase status))))
+
+(defun org-canvas--diff-json-text (value)
+  "Return VALUE as a string, or nil for nil."
+  (and value (format "%s" value)))
+
+(defun org-canvas--diff-json-message (entry)
+  "Return the first line of ENTRY's report row, trimmed and redacted."
+  (let ((text (with-temp-buffer
+                (org-canvas--diff-insert-entry entry)
+                (buffer-string))))
+    (org-canvas--log-redact
+     (string-trim (car (split-string text "\n"))))))
+
+(defun org-canvas--diff-json-row (feature entry drift)
+  "Return ENTRY of FEATURE's section as a JSON object alist.
+DRIFT is non-nil when the row counts as drift."
+  (list (cons 'status (org-canvas--diff-json-status entry))
+        (cons 'kind (symbol-name (plist-get entry :kind)))
+        (cons 'drift (if drift t :json-false))
+        (cons 'feature feature)
+        (cons 'title (org-canvas--diff-json-text (plist-get entry :title)))
+        (cons 'canvas_id (org-canvas--diff-json-text (plist-get entry :id)))
+        (cons 'container (plist-get entry :where))
+        (cons 'container_kind (and (plist-get entry :where)
+                                   (or (plist-get entry :container) "module")))
+        (cons 'file (plist-get entry :file))
+        (cons 'line (plist-get entry :line))
+        (cons 'remote_newer (if (plist-get entry :remote-newer) t :json-false))
+        (cons 'updated_at (org-canvas--diff-json-text (plist-get entry :updated)))
+        (cons 'fields
+              (vconcat (mapcar (lambda (f)
+                                 (list (cons 'name (org-canvas--diff-json-text (nth 0 f)))
+                                       (cons 'org (org-canvas--diff-json-text (nth 1 f)))
+                                       (cons 'canvas (org-canvas--diff-json-text (nth 2 f)))))
+                               (plist-get entry :fields))))
+        (cons 'message (org-canvas--diff-json-message entry))))
+
+(defun org-canvas--diff-json-rows (result)
+  "Return the rows of one feature RESULT as JSON object alists.
+In the report's order: divergences and extras, which are drift, then
+notes, pending creates and relocations, which are not."
+  (let ((name (plist-get result :name)))
+    (append
+     (mapcar (lambda (e) (org-canvas--diff-json-row name e t))
+             (append (plist-get result :divergences) (plist-get result :extra)))
+     (mapcar (lambda (e) (org-canvas--diff-json-row name e nil))
+             (append (plist-get result :notes) (plist-get result :pending)
+                     (plist-get result :relocate))))))
+
+(defun org-canvas--diff-json-feature (result)
+  "Return how one feature RESULT was checked, as a JSON object alist."
+  (let ((err (plist-get result :error)))
+    (list (cons 'name (plist-get result :name))
+          (cons 'state (cond ((plist-get result :excluded) "excluded")
+                             (err "error")
+                             (t "checked")))
+          (cons 'error (and err (org-canvas--log-redact (format "%s" err)))))))
+
+(defun org-canvas--diff-json-counts (rows)
+  "Return the count of ROWS of each status, every status named."
+  (mapcar (lambda (pair)
+            (let ((status (cdr pair)))
+              (cons (org-canvas--diff-json-count-key status)
+                    (cl-count status rows
+                              :key (lambda (r) (alist-get 'status r))
+                              :test #'equal))))
+          org-canvas--diff-json-statuses))
+
+(defun org-canvas--diff-json-total (results key)
+  "Return the sum of KEY, a count, over RESULTS."
+  (apply #'+ (mapcar (lambda (r) (or (plist-get r key) 0)) results)))
+
+(defun org-canvas-diff-json-data ()
+  "Return the drift report as an alist for `json-encode', writing nothing.
+The rows `org-canvas-diff' would print, each with its status and
+whether it counts as drift, the per-status counts and the drift total
+`org-canvas-diff' returns.  Nothing is displayed or written (hard
+rule 19).  The schema is the manual's \"Machine-Readable Output\"
+\(issue #531)."
+  (let* ((results (org-canvas--diff-read))
+         (rows (mapcan #'org-canvas--diff-json-rows results)))
+    (list (cons 'command "diff")
+          (cons 'course org-canvas-directory)
+          (cons 'course_id (org-canvas--diff-json-text org-canvas-course-id))
+          (cons 'drift (org-canvas--diff-count results))
+          (cons 'counts (org-canvas--diff-json-counts rows))
+          (cons 'acknowledged (org-canvas--diff-json-total results :acknowledged))
+          (cons 'referenced (org-canvas--diff-json-total results :referenced))
+          (cons 'features (vconcat (mapcar #'org-canvas--diff-json-feature results)))
+          (cons 'rows (vconcat rows)))))
+
 ;;;###autoload
 (defun org-canvas-diff ()
   "Report how Canvas differs from the Org files, without changing anything.
@@ -3565,9 +3686,7 @@ apart (issue #294).  Returns the number of divergences found, pending
 creates not included, so a batch caller can act on it; see
 `org-canvas-diff-batch'."
   (interactive)
-  (org-canvas--preflight-check)
-  (run-hooks 'org-canvas--operation-start-hook)
-  (let ((results (org-canvas--diff-collect-results)))
+  (let ((results (org-canvas--diff-read)))
     (let ((report (org-canvas--diff-render results))
           (total (org-canvas--diff-count results)))
       (if noninteractive
