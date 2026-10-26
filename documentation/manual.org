@@ -5018,7 +5018,11 @@ assignments.org:97: warning: Override row 'Section 002': Unlock date missing: th
 #+end_example
 
 A column already past due is a record rather than a push to come, so
-its findings are push-only and a read-only course holds them back.
+its lock-window findings are push-only and a read-only course holds
+them back, and it is not asked for an unlock date at all.  A lock
+before the due date, as a row that moves the due date past the
+assignment's lock leaves it, reads "locks 44.8 hour(s) before the due
+date": that student's column closes before it is due.
 These are a course's rules, so they go in its =org-canvas-config.el=
 (see [[*Exporting, Importing and Checking Comments][the comment rules]] for the
 file):
