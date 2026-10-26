@@ -1,0 +1,11 @@
+* Added
+- #534 =org-canvas-validate= checks the dates of each row of an
+  assignment's =#+NAME: overrides= table as it checks a heading's: a
+  warning when a row's Unlock At comes after its Due At, or its Due At
+  after its Lock At.  Each date is optional, and the cells are read as
+  the override push reads them, in the course time zone.
+* Changed
+- #534 Date-order warnings compare the dates that are there: a heading
+  whose =UNLOCK_AT= comes after its =LOCK_AT= warns when it has no
+  =DUE_AT= between them, and a pair two of a discussion's date
+  sequences share is reported once.
