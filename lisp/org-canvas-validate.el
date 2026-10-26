@@ -234,33 +234,45 @@ LOC is a (:file :line :heading) plist."
                  (org-canvas-org-parse-timestamp value)
                (error nil))))
 
+(defun org-canvas--validate-date-sequence (dates loc &optional prefix)
+  "Warn where DATES run out of order; return the list of issues.
+DATES is a list of (NAME VALUE ISO) in the order they must run, ISO
+nil for a date that is absent or does not parse.  Those are passed
+over, so each date that is there is compared with the next one that
+is: an unlock after the lock warns when there is no due date between
+them.  LOC is a (:file :line :heading) plist and PREFIX, when given,
+starts each message.  Shared by headings and override rows (issue
+#534), which is what keeps the two in agreement."
+  (let ((present (cl-remove-if-not (lambda (date) (nth 2 date)) dates))
+        (issues nil))
+    (cl-loop for (a b) on present
+             while b
+             when (string> (nth 2 a) (nth 2 b))
+             do (push (org-canvas--validate-make-issue
+                       'warning loc (car a)
+                       (format "%s%s is after %s (%s > %s)"
+                               (or prefix "") (car a) (car b)
+                               (nth 1 a) (nth 1 b)))
+                      issues))
+    (nreverse issues)))
+
 (defun org-canvas--validate-check-date-order (date-triples loc)
   "Check chronological ordering for DATE-TRIPLES.
 Each triple is (PROP1 PROP2 PROP3) where values should be ordered.
-LOC is a (:file :line :heading) plist.
+LOC is a (:file :line :heading) plist.  Two triples sharing their
+ends can find the same pair out of order; it is reported once.
 Returns a list of warning issues."
-  (let ((issues nil))
-    (dolist (triple date-triples)
-      (let* ((p1 (nth 0 triple))
-             (p2 (nth 1 triple))
-             (p3 (nth 2 triple))
-             (v1 (org-entry-get (point) p1))
-             (v2 (org-entry-get (point) p2))
-             (v3 (org-entry-get (point) p3))
-             (iso1 (org-canvas--validate-safe-parse-timestamp v1))
-             (iso2 (org-canvas--validate-safe-parse-timestamp v2))
-             (iso3 (org-canvas--validate-safe-parse-timestamp v3)))
-        (when (and iso1 iso2 (string> iso1 iso2))
-          (push (org-canvas--validate-make-issue
-                 'warning loc p1
-                 (format "%s is after %s (%s > %s)" p1 p2 v1 v2))
-                issues))
-        (when (and iso2 iso3 (string> iso2 iso3))
-          (push (org-canvas--validate-make-issue
-                 'warning loc p2
-                 (format "%s is after %s (%s > %s)" p2 p3 v2 v3))
-                issues))))
-    (nreverse issues)))
+  (cl-remove-duplicates
+   (mapcan (lambda (triple)
+             (org-canvas--validate-date-sequence
+              (mapcar (lambda (prop)
+                        (let ((value (org-entry-get (point) prop)))
+                          (list prop value
+                                (org-canvas--validate-safe-parse-timestamp value))))
+                      triple)
+              loc))
+           date-triples)
+   :test #'equal :from-end t))
 
 ;;;; 4. Validation Specs
 ;;
@@ -724,29 +736,91 @@ checked (issue #402)."
                "LEVEL=1" 'file))))))
     (nreverse issues)))
 
-(cl-defun org-canvas--validate-assignment-structure (loc)
+(defun org-canvas--validate-assignment-structure (loc)
   "Check the LTI tool, grading period, posting schedule and override table.
 LOC is a (:file :line :heading) plist."
-  (let ((issues (nconc (org-canvas--validate-external-tool loc)
-                       (org-canvas--validate-due-in-grading-period loc)
-                       (org-canvas--validate-post-schedule loc)))
-        (end (save-excursion (org-end-of-subtree t) (point))))
+  (nconc (org-canvas--validate-external-tool loc)
+         (org-canvas--validate-due-in-grading-period loc)
+         (org-canvas--validate-post-schedule loc)
+         (org-canvas--validate-override-table loc)))
+
+(cl-defun org-canvas--validate-override-table (loc)
+  "Check the `#+NAME: overrides' table under the assignment at point.
+Each row is checked for who it is for, for a section link's id, and
+for the order of its dates.  LOC is a (:file :line :heading) plist.
+Nil without a table."
+  (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
-        (cl-return-from org-canvas--validate-assignment-structure issues))
+        (cl-return-from org-canvas--validate-override-table nil))
       (forward-line 1)
       (unless (looking-at "^|")
-        (cl-return-from org-canvas--validate-assignment-structure issues))
-      (forward-line 1)
-      (when (looking-at "^|-")
-        (forward-line 1))
-      (let* ((save-pos (point))
-             (file (plist-get loc :file))
-             (heading (plist-get loc :heading))
-             (row-issues (org-canvas--validate-override-rows file heading)))
-        (goto-char save-pos)
-        (let ((id-issues (org-canvas--validate-override-section-ids file heading)))
-          (nconc issues row-issues id-issues))))))
+        (cl-return-from org-canvas--validate-override-table nil))
+      (let ((header-pos (point))
+            (file (plist-get loc :file))
+            (heading (plist-get loc :heading)))
+        (forward-line 1)
+        (when (looking-at "^|-")
+          (forward-line 1))
+        (let* ((rows-pos (point))
+               (row-issues (org-canvas--validate-override-rows file heading))
+               (id-issues (progn (goto-char rows-pos)
+                                 (org-canvas--validate-override-section-ids
+                                  file heading))))
+          (goto-char header-pos)
+          (nconc row-issues id-issues
+                 (org-canvas--validate-override-row-dates loc)))))))
+
+(declare-function org-canvas--override-date-columns "org-canvas-sections" (header))
+(declare-function org-canvas--override-parse-timestamp-cell "org-canvas-sections" (cell))
+
+(defun org-canvas--validate-override-cell (row column)
+  "Return (VALUE . ISO) for the date cell at COLUMN of override ROW.
+VALUE is the trimmed text, nil when the cell is empty or absent; ISO
+is what the override push reads it as
+\(`org-canvas--override-parse-timestamp-cell', in the course zone), nil
+when it reads nothing."
+  (let ((text (string-trim (or (and column (nth column row)) ""))))
+    (unless (string-empty-p text)
+      (cons text (ignore-errors
+                   (org-canvas--override-parse-timestamp-cell text))))))
+
+(defun org-canvas--validate-override-row-label (row)
+  "Return the first cell of override ROW, a link shown as its description."
+  (org-link-display-format (string-trim (or (nth 0 row) ""))))
+
+(defun org-canvas--validate-override-row-date-order (row columns row-loc)
+  "Check that ROW's Unlock At, Due At and Lock At run in that order.
+COLUMNS are the due, unlock and lock indexes
+\(`org-canvas--override-date-columns').  Each date is optional; those
+present are compared as a heading's are (issue #534).  ROW-LOC
+locates the row."
+  (let ((cells (mapcar (lambda (column)
+                         (org-canvas--validate-override-cell row column))
+                       columns)))
+    (org-canvas--validate-date-sequence
+     (cl-mapcar (lambda (name cell) (list name (car cell) (cdr cell)))
+                '("Unlock At" "Due At" "Lock At")
+                (list (nth 1 cells) (nth 0 cells) (nth 2 cells)))
+     row-loc
+     (format "Override row '%s': "
+             (org-canvas--validate-override-row-label row)))))
+
+(defun org-canvas--validate-override-row-dates (loc)
+  "Check the dates of each row of the override table at point.
+Point is on the table's first line, its header, which names the date
+columns as the push reads them.  LOC is the assignment's
+\(:file :line :heading) plist; each issue carries its row's line."
+  (let* ((start (line-number-at-pos))
+         (table (org-table-to-lisp))
+         (columns (org-canvas--override-date-columns (car table))))
+    (cl-loop for row in (cdr table)
+             for line from (1+ start)
+             unless (eq row 'hline)
+             nconc (org-canvas--validate-override-row-date-order
+                    row columns
+                    (list :file (plist-get loc :file) :line line
+                          :heading (plist-get loc :heading))))))
 
 ;; Messages (issue #232): the resolver lives in the messages module,
 ;; named here rather than required, as the grading-scheme helpers are.

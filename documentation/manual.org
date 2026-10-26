@@ -2228,6 +2228,11 @@ files.  A row that resolves to nothing is skipped with a warning and
 =org-canvas-validate= reports it beforehand.  The date columns are
 found by their headers, so a pulled table that dropped an empty column
 still parses; empty date cells are omitted from the override.
+=org-canvas-validate= checks each row's dates as it checks a heading's,
+reading them as the push does: a row whose Unlock At comes after its
+Due At, or whose Due At comes after its Lock At, is a warning on that
+row, and so is an Unlock At after the Lock At when the row has no Due
+At between them.
 
 Overrides are synced after sections, assignments and the pulled files
 exist.  The sync reconciles the table against Canvas: a section row is

@@ -410,6 +410,101 @@ Not a table row here.
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "not a section link, Group: or Students:")))))
 
+(defun test-validate--override-issues (table &optional props)
+  "Return the assignment-structure issues of a heading holding TABLE.
+PROPS is extra drawer text.  Each issue is reduced to a list of its
+severity, line, property and message."
+  (with-temp-org-buffer
+      (format "* HW\n:PROPERTIES:\n%s:END:\n\n#+NAME: overrides\n%s"
+              (or props "") table)
+    (org-back-to-heading t)
+    (mapcar (lambda (issue)
+              (list (plist-get issue :severity) (plist-get issue :line)
+                    (plist-get issue :property) (plist-get issue :message)))
+            (org-canvas--validate-assignment-structure
+             (list :file (buffer-file-name) :line 1 :heading "HW")))))
+
+(describe "override row date order (issue #534)"
+  (it "says nothing of rows whose dates run in order, each optional"
+    (expect (test-validate--override-issues
+             (concat "| Section | Due At | Unlock At | Lock At |\n"
+                     "|---+---+---+---|\n"
+                     "| Group: #1 | <2099-03-10 Tue 23:59> | <2099-03-01 Sun 00:00> | <2099-03-12 Thu 23:59> |\n"
+                     "| Group: #2 | <2099-03-10 Tue 23:59> | | |\n"
+                     "| Group: #3 | | <2099-03-01 Sun 00:00> | <2099-03-12 Thu 23:59> |\n"))
+            :to-be nil))
+
+  (it "warns on the row whose lock comes before its due date"
+    (let* ((issues (test-validate--override-issues
+                    (concat "| Section | Due At | Unlock At | Lock At |\n"
+                            "|---+---+---+---|\n"
+                            "| Group: #1 | <2099-03-10 Tue 23:59> | | <2099-03-12 Thu 23:59> |\n"
+                            "| Group: #2 | <2099-03-10 Tue 23:59> | | <2099-03-09 Mon 23:59> |\n"
+                            "| Group: #3 | <2099-03-10 Tue 23:59> | | |\n")))
+           (issue (car issues)))
+      (expect (length issues) :to-equal 1)
+      (expect (nth 0 issue) :to-equal 'warning)
+      (expect (nth 1 issue) :to-equal 9)
+      (expect (nth 2 issue) :to-equal "Due At")
+      (expect (nth 3 issue) :to-match
+              "\\`Override row 'Group: #2': Due At is after Lock At")))
+
+  (it "warns when the unlock comes after the due date"
+    (let ((issues (test-validate--override-issues
+                   (concat "| Section | Due At | Unlock At |\n"
+                           "|---+---+---|\n"
+                           "| [[file:sections.org::*Sec A][Sec A]] | <2099-03-10 Tue 23:59> | <2099-03-11 Wed 00:00> |\n"))))
+      (expect (cl-some (lambda (i) (string-match-p
+                                    "Override row 'Sec A': Unlock At is after Due At"
+                                    (nth 3 i)))
+                       issues)
+              :to-be-truthy)))
+
+  (it "compares unlock with lock when the row has no due date"
+    (let ((issues (test-validate--override-issues
+                   (concat "| Section | Due At | Unlock At | Lock At |\n"
+                           "|---+---+---+---|\n"
+                           "| Group: #1 | | <2099-03-15 Sun 00:00> | <2099-03-12 Thu 23:59> |\n"))))
+      (expect (length issues) :to-equal 1)
+      (expect (nth 3 (car issues)) :to-match "Unlock At is after Lock At")))
+
+  (it "finds the date columns by their headers, as the push does"
+    (let ((issues (test-validate--override-issues
+                   (concat "| Section | Lock At | Due At |\n"
+                           "|---+---+---|\n"
+                           "| Group: #1 | <2099-03-12 Thu 23:59> | <2099-03-10 Tue 23:59> |\n"
+                           "| Group: #2 | <2099-03-08 Sun 23:59> | <2099-03-10 Tue 23:59> |\n"))))
+      (expect (length issues) :to-equal 1)
+      (expect (nth 1 (car issues)) :to-equal 9)))
+
+  (it "passes over a cell that is not a timestamp"
+    (expect (test-validate--override-issues
+             (concat "| Section | Due At | Unlock At | Lock At |\n"
+                     "|---+---+---+---|\n"
+                     "| Group: #1 | soon | <2099-03-15 Sun 00:00> | |\n"))
+            :to-be nil)))
+
+(describe "heading date order compares the dates that are there (issue #534)"
+  (it "warns when the unlock comes after the lock and there is no due date"
+    (with-temp-org-buffer
+        "* Test\n:PROPERTIES:\n:UNLOCK_AT: <2099-03-15 Sun 00:00>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n:END:\n"
+      (org-back-to-heading t)
+      (let ((issues (org-canvas--validate-check-date-order
+                     '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
+                     (list :file "/f" :line 1 :heading "Test"))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :message) :to-match "UNLOCK_AT is after LOCK_AT"))))
+
+  (it "reports a pair two triples share only once"
+    (with-temp-org-buffer
+        "* Debate\n:PROPERTIES:\n:AVAILABLE_FROM: <2099-03-15 Sun 00:00>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n:END:\n"
+      (org-back-to-heading t)
+      (let ((issues (org-canvas--validate-check-date-order
+                     '(("AVAILABLE_FROM" "DUE_AT" "LOCK_AT")
+                       ("AVAILABLE_FROM" "CHECKPOINT_REPLY_DUE_AT" "LOCK_AT"))
+                     (list :file "/f" :line 1 :heading "Debate"))))
+        (expect (length issues) :to-equal 1)))))
+
 (describe "org-canvas--validate-post-schedule (issue #352)"
   (cl-flet ((check (props)
               (with-temp-org-buffer (format "* HW\n:PROPERTIES:\n%s:END:\n" props)
