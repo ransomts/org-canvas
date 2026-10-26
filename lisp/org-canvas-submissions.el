@@ -1970,9 +1970,7 @@ longer digests to its BASELINE entry, or has none, is to compare."
 (defun org-canvas--submissions-self-id ()
   "Return the token owner's Canvas user id as a string.
 The comment bank is theirs: Canvas keeps it per user."
-  (let ((me (org-canvas-api-request
-             'GET (format "%s/api/v1/users/self"
-                          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)))))
+  (let ((me (org-canvas-api-request 'GET (org-canvas--api-users-self-url))))
     (or (and (alist-get 'id me) (format "%s" (alist-get 'id me)))
         (org-canvas--signal 'org-canvas-api-error "users/self answered no id"))))
 

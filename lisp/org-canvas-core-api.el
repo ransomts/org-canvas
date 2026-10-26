@@ -36,6 +36,13 @@ URL never contains a double slash."
 	    org-canvas-course-id
 	    (apply #'format suffix args))))
 
+(defun org-canvas--api-users-self-url ()
+  "Return the URL of the user the API token belongs to, users/self.
+It sits under the instance, not the course, so it needs no course
+id; a trailing slash on `org-canvas-base-url' is trimmed."
+  (format "%s/api/v1/users/self"
+          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)))
+
 
 ;;;; Feature URL Resolution
 ;;

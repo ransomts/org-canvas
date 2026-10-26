@@ -89,7 +89,8 @@ The credentials file remains fully supported and is still where =org-canvas-dire
 M-x org-canvas-test-connection
 #+end_src
 
-On failure, specific error messages indicate the cause:
+It reads the user the token belongs to (=users/self=) and the course,
+and names both.  On failure, specific error messages indicate the cause:
 
 | Error               | Meaning                                   |
 |---------------------+-------------------------------------------|
@@ -97,6 +98,26 @@ On failure, specific error messages indicate the cause:
 | HTTP 403            | Token lacks required scope                |
 | HTTP 404            | Course ID not found                       |
 | Network error       | URL wrong or no internet connection       |
+
+From a shell, =scripts/org-canvas check= makes the same two reads and
+prints what they say, never the token (#532):
+
+#+begin_example
+Instance:    https://clemson.instructure.com
+User:        Tim Ransom
+Course:      Ethics in Computing
+Course code: CPSC 3300
+Read-only:   no
+#+end_example
+
+It sends GETs only, so it checks a course marked =org-canvas-read-only=
+as well.  It exits 0 when both reads succeed; 3 on a 401, printing the
+expired-token message, as any command meeting one does (a token not
+configured at all exits 3 too); and 1 on any other failure (a 403 on
+the course, a 404 for a wrong course id, a timeout), naming the
+instance and course id, with a pointer to =org-canvas-course-id= on a
+404.  Run it before a first pull, so a burned token surfaces there and
+not as the first real command's 401, mid-run.
 
 This prints your course name if the connection is successful.
 
@@ -153,6 +174,7 @@ ARGS=, which is also the line to use without it.
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
+| =check=                       | =org-canvas-connection-info=: reads the token's user and the course, GETs only | a read failed (a 401 exits 3) |
 | =version= (=--version=, =-V=) | the version, commit and directory loaded           |                    |
 
 Two kinds of "pull" are kept apart by name.  =grades= takes assignments,
@@ -5428,7 +5450,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 
 | Command                         | Description                                   |
 |---------------------------------+-----------------------------------------------|
-| =org-canvas-test-connection=      | Test API connection (prints course name)      |
+| =org-canvas-test-connection=      | Test API connection (prints course and user)  |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
 | =org-canvas-activate-course=      | Switch to another course in =org-canvas-courses= |
 | =org-canvas-version=              | Show the org-canvas version                   |

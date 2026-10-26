@@ -820,6 +820,100 @@
         (expect (test-batch--run '("extend" "Lab 1" "#1")) :to-equal 2))
       (expect (car messages) :to-match "extend takes ASSIGNMENT STUDENT DUE"))))
 
+;;;; Connection check
+
+(defun test-batch--check (answer)
+  "Run the check command against a Canvas answering ANSWER.
+ANSWER is a function of the URL returning the reply or signalling.
+Return (STATUS OUTPUT MESSAGES URLS), URLS the requests made."
+  (let ((urls nil) (messages nil) (status nil) (out nil))
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _)
+                   (push (cons method url) urls)
+                   (funcall answer url))))
+        (test-batch--quietly messages
+          (setq out (with-output-to-string
+                      (setq status (org-canvas-batch-main '("check"))))))))
+    (list status out (reverse messages) (reverse urls))))
+
+(defun test-batch--canvas (course-error)
+  "Return a Canvas answer whose course read signals COURSE-ERROR, if non-nil."
+  (lambda (url)
+    (cond ((string-suffix-p "/users/self" url) '((id . 7) (name . "Tim Ransom")))
+          (course-error (signal (car course-error) (cdr course-error)))
+          (t '((name . "Ethics") (course_code . "CPSC 3300"))))))
+
+(describe "the check command (issue #532)"
+  (it "prints the instance, user, course and read-only flag, and exits 0"
+    (let ((result (test-batch--check (test-batch--canvas nil))))
+      (expect (nth 0 result) :to-equal 0)
+      (expect (nth 1 result)
+              :to-equal (concat "Instance:    https://test.canvas.example.com\n"
+                                "User:        Tim Ransom\n"
+                                "Course:      Ethics\n"
+                                "Course code: CPSC 3300\n"
+                                "Read-only:   no\n"))
+      (expect (nth 1 result) :not :to-match test-org-canvas-api-token)
+      (expect (nth 3 result)
+              :to-equal '((GET . "https://test.canvas.example.com/api/v1/users/self")
+                          (GET . "https://test.canvas.example.com/api/v1/courses/99999/")))))
+
+  (it "names a read-only course"
+    (let ((info (list :instance "https://c.example.com" :user "U"
+                      :course "C" :course-code "K" :read-only t)))
+      (expect (org-canvas-batch-check-text info) :to-match "^Read-only:   yes$")))
+
+  (it "exits 3 with the expired-token message on a 401"
+    (let ((result (test-batch--check
+                   (lambda (_url)
+                     (signal 'org-canvas-credentials-error
+                             (list "Authentication failed (HTTP 401). Your API token may have expired."))))))
+      (expect (nth 0 result) :to-equal 3)
+      (expect (nth 1 result) :to-equal "")
+      (expect (car (nth 2 result)) :to-match "Your API token may have expired")))
+
+  (it "exits 1 on a 403 from the course, naming the refusal"
+    (let ((result (test-batch--check
+                   (test-batch--canvas
+                    '(org-canvas-permission-error
+                      "Permission denied (HTTP 403) reading course")))))
+      (expect (nth 0 result) :to-equal 1)
+      (expect (nth 1 result) :to-equal "")
+      (expect (car (nth 2 result))
+              :to-match "Connection check failed on https://test.canvas.example.com, course 99999: .*HTTP 403")))
+
+  (it "exits 1 on a 404 for a wrong course id, pointing at the id"
+    (let ((result (test-batch--check
+                   (test-batch--canvas
+                    '(org-canvas-api-error "The specified resource does not exist. (HTTP 404)")))))
+      (expect (nth 0 result) :to-equal 1)
+      (expect (car (nth 2 result))
+              :to-match "\\`Connection check failed on https://test.canvas.example.com, course 99999: .*(HTTP 404)")
+      (expect (cadr (nth 2 result))
+              :to-equal "Check org-canvas-course-id in org-canvas-credentials.el")))
+
+  (it "exits 1 on a timeout, with no course-id hint"
+    (let ((result (test-batch--check
+                   (test-batch--canvas
+                    '(org-canvas-timeout-error "Request timed out after 30s")))))
+      (expect (nth 0 result) :to-equal 1)
+      (expect (length (nth 2 result)) :to-equal 1)))
+
+  (it "runs on a read-only course, sending GETs only"
+    (let ((org-canvas-read-only t) (methods nil))
+      (cl-letf (((symbol-function 'org-canvas-batch-setup) #'ignore)
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _)
+                   (org-canvas--check-writable method)
+                   (push method methods)
+                   (funcall (test-batch--canvas nil) url))))
+        (let ((out (with-output-to-string
+                     (expect (org-canvas-batch-main '("check")) :to-equal 0))))
+          (expect out :to-match "^Read-only:   yes$")))
+      (expect methods :to-equal '(GET GET)))))
+
 ;;;; Entry point
 
 (describe "org-canvas-batch"

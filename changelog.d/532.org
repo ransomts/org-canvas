@@ -1,0 +1,9 @@
+* Added
+- #532 =scripts/org-canvas check= checks the token and the course from a
+  shell: it reads the token's user and the course, GETs only, and
+  prints the instance, the user's name, the course's name and code,
+  and whether =org-canvas-read-only= is on, never the token.  It exits
+  0 when both reads succeed, 3 on a 401 with the expired-token
+  message, and 1 on any other failure, such as a 403 on the course or
+  a 404 for a wrong course id.  =M-x org-canvas-test-connection= makes
+  the same two reads and names the user too.
