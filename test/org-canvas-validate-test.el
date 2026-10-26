@@ -484,6 +484,146 @@ severity, line, property and message."
                      "| Group: #1 | soon | <2099-03-15 Sun 00:00> | |\n"))
             :to-be nil)))
 
+(defun test-validate--late-window-messages (props &optional table)
+  "Return the messages of the late-window issues for a heading.
+PROPS is its drawer text and TABLE an override table under it.
+Other findings (date order, targets) are left out."
+  (delq nil (mapcar (lambda (issue)
+                      (let ((message (nth 3 issue)))
+                        (and (string-match-p "Lock window\\|Unlock date" message)
+                             message)))
+                    (test-validate--override-issues (or table "") props))))
+
+(describe "a course's late window (issue #536)"
+  (it "is off by default"
+    (expect (test-validate--late-window-messages
+             ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n")
+            :to-be nil))
+
+  (it "passes an online heading locking at an allowed offset"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n")
+              :to-be nil))
+    (let ((org-canvas-validate-lock-after-due-hours '(0 48)))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_text_entry\n:DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-10 Tue 23:59>\n")
+              :to-be nil)))
+
+  (it "counts hours by the clock across a daylight-saving change"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-07 Sat 23:59>\n:LOCK_AT: <2099-03-09 Mon 23:59>\n")
+              :to-be nil)))
+
+  (it "warns when the lock is missing or at another offset"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (let ((missing (test-validate--late-window-messages
+                      ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n"))
+            (mismatch (test-validate--late-window-messages
+                       ":SUBMISSION: online_url\n:DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-11 Wed 23:59>\n")))
+        (expect (length missing) :to-equal 1)
+        (expect (car missing) :to-match
+                "\\`Lock window missing: due <2099-03-10 Tue 23:59> with no lock date; the course locks online columns 48 hour(s) after")
+        (expect (length mismatch) :to-equal 1)
+        (expect (car mismatch) :to-match
+                "\\`Lock window mismatch: locks 24 hour(s) after the due date .*the course allows 48 hour(s)"))))
+
+  (it "leaves alone a column that is not online, or has no due date"
+    (let ((org-canvas-validate-lock-after-due-hours 48)
+          (org-canvas-validate-require-unlock t))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: on_paper\n:DUE_AT: <2099-03-10 Tue 23:59>\n")
+              :to-be nil)
+      (expect (test-validate--late-window-messages ":SUBMISSION: online_upload\n")
+              :to-be nil)))
+
+  (it "requires an unlock date when the course says so"
+    (let ((org-canvas-validate-require-unlock t))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n")
+              :to-equal '("Unlock date missing: the course requires one on every online column"))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_upload\n:UNLOCK_AT: <2099-03-01 Sun 00:00>\n:DUE_AT: <2099-03-10 Tue 23:59>\n")
+              :to-be nil)))
+
+  (it "marks the findings push-only once the column is past due, and not before"
+    (let ((org-canvas-validate-require-unlock t))
+      (let* ((past (car (org-canvas--validate-late-window
+                         "<2020-03-10 Tue 23:59>" nil nil '(:file "/f" :line 1 :heading "HW"))))
+             (future (car (org-canvas--validate-late-window
+                           "<2099-03-10 Tue 23:59>" nil nil '(:file "/f" :line 1 :heading "HW"))))
+             (past-severity (plist-get past :severity))
+             (past-push-only (plist-get past :push-only))
+             (future-push-only (plist-get future :push-only)))
+        (expect past-severity :to-equal 'warning)
+        (expect past-push-only :to-be t)
+        (expect future :to-be-truthy)
+        (expect future-push-only :to-be nil))))
+
+  (it "checks each override row that sets a date, inheriting what it leaves empty"
+    (let ((org-canvas-validate-lock-after-due-hours 48)
+          (org-canvas-validate-require-unlock t))
+      (let ((issues (test-validate--override-issues
+                     (concat "| Section | Due At | Unlock At | Lock At |\n"
+                             "|---+---+---+---|\n"
+                             "| Group: #1 | <2099-03-17 Tue 23:59> | | <2099-03-19 Thu 23:59> |\n"
+                             "| Group: #2 | <2099-03-17 Tue 23:59> | | |\n"
+                             "| Group: #3 | | <2099-03-02 Mon 00:00> | |\n"
+                             "| Group: #4 | <2099-03-17 Tue 23:59> | | <2099-03-17 Tue 23:59> |\n")
+                     (concat ":SUBMISSION: online_upload\n:UNLOCK_AT: <2099-03-01 Sun 00:00>\n"
+                             ":DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n"))))
+        (expect (mapcar (lambda (i) (list (nth 1 i) (nth 3 i))) issues)
+                :to-equal
+                '((13 "Override row 'Group: #2': Lock window mismatch: locks -120 hour(s) after the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-12 Thu 23:59>); the course allows 48 hour(s)")
+                  (15 "Override row 'Group: #4': Lock window mismatch: locks 0 hour(s) after the due date (due <2099-03-17 Tue 23:59>, lock <2099-03-17 Tue 23:59>); the course allows 48 hour(s)"))))))
+
+  (it "reads a row setting only a lock date against the assignment's due date"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: <2099-03-12 Thu 23:59>\n"
+               (concat "| Section | Lock At |\n"
+                       "|---+---|\n"
+                       "| Group: #1 | <2099-03-12 Thu 23:59> |\n"
+                       "| Group: #2 | <2099-03-13 Fri 23:59> |\n"
+                       "| Group: #3 | |\n"))
+              :to-equal
+              '("Override row 'Group: #2': Lock window mismatch: locks 72 hour(s) after the due date (due <2099-03-10 Tue 23:59>, lock <2099-03-13 Fri 23:59>); the course allows 48 hour(s)"))))
+
+  (it "leaves a lock date that does not parse to the timestamp check"
+    (let ((org-canvas-validate-lock-after-due-hours 48))
+      (expect (test-validate--late-window-messages
+               ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n:LOCK_AT: Friday\n")
+              :to-be nil)))
+
+  (it "asks for an unlock date on a row only when neither it nor the heading has one"
+    (let ((org-canvas-validate-require-unlock t))
+      (let ((messages (test-validate--late-window-messages
+                       (concat ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n"
+                               ":UNLOCK_AT: <2099-03-01 Sun 00:00>\n")
+                       (concat "| Section | Due At | Unlock At |\n"
+                               "|---+---+---|\n"
+                               "| Group: #1 | <2099-03-17 Tue 23:59> | |\n"
+                               "| Group: #2 | <2099-03-17 Tue 23:59> | <2099-03-03 Tue 00:00> |\n"
+                               "| Group: #3 | <2099-03-18 Wed 23:59> | |\n"))))
+        (expect messages :to-be nil))))
+
+  (it "warns on a row with neither an unlock nor a lock date to inherit"
+    (let ((org-canvas-validate-require-unlock t)
+          (org-canvas-validate-lock-after-due-hours 48))
+      (let ((messages (test-validate--late-window-messages
+                       ":SUBMISSION: online_upload\n:DUE_AT: <2099-03-10 Tue 23:59>\n"
+                       (concat "| Section | Due At | Unlock At |\n"
+                               "|---+---+---|\n"
+                               "| Group: #1 | <2099-03-17 Tue 23:59> | |\n"
+                               "| Group: #2 | <2099-03-17 Tue 23:59> | <2099-03-03 Tue 00:00> |\n"))))
+        (expect messages :to-equal
+                '("Lock window missing: due <2099-03-10 Tue 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date"
+                  "Unlock date missing: the course requires one on every online column"
+                  "Override row 'Group: #1': Lock window missing: due <2099-03-17 Tue 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date"
+                  "Override row 'Group: #1': Unlock date missing: the course requires one on every online column"
+                  "Override row 'Group: #2': Lock window missing: due <2099-03-17 Tue 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date"))))))
+
 (describe "heading date order compares the dates that are there (issue #534)"
   (it "warns when the unlock comes after the lock and there is no due date"
     (with-temp-org-buffer

@@ -739,16 +739,19 @@ checked (issue #402)."
 (defun org-canvas--validate-assignment-structure (loc)
   "Check the LTI tool, grading period, posting schedule and override table.
 LOC is a (:file :line :heading) plist."
-  (nconc (org-canvas--validate-external-tool loc)
-         (org-canvas--validate-due-in-grading-period loc)
-         (org-canvas--validate-post-schedule loc)
-         (org-canvas--validate-override-table loc)))
+  (let ((late-window (org-canvas--validate-late-window-defaults)))
+    (nconc (org-canvas--validate-external-tool loc)
+           (org-canvas--validate-due-in-grading-period loc)
+           (org-canvas--validate-post-schedule loc)
+           (org-canvas--validate-heading-late-window loc late-window)
+           (org-canvas--validate-override-table loc late-window))))
 
-(cl-defun org-canvas--validate-override-table (loc)
+(cl-defun org-canvas--validate-override-table (loc &optional late-window)
   "Check the `#+NAME: overrides' table under the assignment at point.
-Each row is checked for who it is for, for a section link's id, and
-for the order of its dates.  LOC is a (:file :line :heading) plist.
-Nil without a table."
+Each row is checked for who it is for, for a section link's id, for
+the order of its dates and, given LATE-WINDOW (the assignment's dates
+when the course's late-window rule applies), against that rule.  LOC
+is a (:file :line :heading) plist.  Nil without a table."
   (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
@@ -769,7 +772,7 @@ Nil without a table."
                                   file heading))))
           (goto-char header-pos)
           (nconc row-issues id-issues
-                 (org-canvas--validate-override-row-dates loc)))))))
+                 (org-canvas--validate-override-row-dates loc late-window)))))))
 
 (declare-function org-canvas--override-date-columns "org-canvas-sections" (header))
 (declare-function org-canvas--override-parse-timestamp-cell "org-canvas-sections" (cell))
@@ -806,21 +809,171 @@ locates the row."
      (format "Override row '%s': "
              (org-canvas--validate-override-row-label row)))))
 
-(defun org-canvas--validate-override-row-dates (loc)
+(defun org-canvas--validate-override-row-late-window (row columns row-loc defaults)
+  "Apply the course's late-window rule to override ROW, or return nil.
+COLUMNS are the due, unlock and lock indexes.  DEFAULTS is the
+assignment's own (:due :unlock :lock), from
+`org-canvas--validate-late-window-defaults', nil when the rule does
+not apply.  A row is checked only when it sets a due or a lock date of
+its own; a date it leaves empty, or one the push cannot read, is the
+assignment's, as on Canvas, where an override not setting a date
+keeps the assignment's (issue #536).  ROW-LOC locates the row."
+  (when defaults
+    (let* ((dates (mapcar (lambda (column)
+                            (let ((cell (org-canvas--validate-override-cell row column)))
+                              (and (cdr cell) (car cell))))
+                          columns))
+           (due (nth 0 dates))
+           (lock (nth 2 dates)))
+      (when (or due lock)
+        (org-canvas--validate-late-window
+         (or due (plist-get defaults :due))
+         (or lock (plist-get defaults :lock))
+         (or (nth 1 dates) (plist-get defaults :unlock))
+         row-loc
+         (format "Override row '%s': "
+                 (org-canvas--validate-override-row-label row)))))))
+
+(defun org-canvas--validate-override-row-dates (loc &optional defaults)
   "Check the dates of each row of the override table at point.
 Point is on the table's first line, its header, which names the date
 columns as the push reads them.  LOC is the assignment's
-\(:file :line :heading) plist; each issue carries its row's line."
+\(:file :line :heading) plist; each issue carries its row's line.
+DEFAULTS, when the course's late-window rule applies to the
+assignment, are its own dates (see
+`org-canvas--validate-override-row-late-window')."
   (let* ((start (line-number-at-pos))
          (table (org-table-to-lisp))
          (columns (org-canvas--override-date-columns (car table))))
     (cl-loop for row in (cdr table)
              for line from (1+ start)
+             for row-loc = (list :file (plist-get loc :file) :line line
+                                 :heading (plist-get loc :heading))
              unless (eq row 'hline)
-             nconc (org-canvas--validate-override-row-date-order
-                    row columns
-                    (list :file (plist-get loc :file) :line line
-                          :heading (plist-get loc :heading))))))
+             nconc (nconc (org-canvas--validate-override-row-date-order
+                           row columns row-loc)
+                          (org-canvas--validate-override-row-late-window
+                           row columns row-loc defaults)))))
+
+;;;; 5a-1c. A Course's Late Window (issue #536)
+
+(defcustom org-canvas-validate-lock-after-due-hours nil
+  "Hours after its due date an online column must lock, or nil for no rule.
+A number, or a list of the offsets allowed, 0 meaning a lock at the
+due date: \\='(0 48) accepts either.  `org-canvas-validate' warns
+about a dated online column (SUBMISSION names an online type) with no
+lock date, or one locking at another offset, on the assignment heading
+and on each override row.  Hours are counted by the clock, as the
+dates are written.  A course rule: set it in the course's
+`org-canvas-course-config-file', beside its syllabus late policy."
+  :type '(choice (const :tag "Off" nil)
+                 (number :tag "Hours")
+                 (repeat :tag "Any of these hours" number))
+  :group 'org-canvas)
+
+(defcustom org-canvas-validate-require-unlock nil
+  "Non-nil when every dated online column must carry an unlock date.
+`org-canvas-validate' warns about an assignment heading or override
+row with a due date and no unlock date.  A course rule: set it in the
+course's `org-canvas-course-config-file'."
+  :type 'boolean
+  :group 'org-canvas)
+
+(defconst org-canvas--validate-online-submission-types
+  '("online_upload" "online_url" "online_text_entry" "media_recording")
+  "Submission types Canvas groups as Online, which the late window covers.")
+
+(defun org-canvas--validate-late-window-defaults ()
+  "Return the assignment's dates for the late-window rule, or nil.
+Nil unless a rule is set and the assignment at point takes an online
+submission; otherwise its (:due :unlock :lock), raw Org timestamps."
+  (when (and (or org-canvas-validate-lock-after-due-hours
+                 org-canvas-validate-require-unlock)
+             (cl-intersection
+              (split-string (or (org-entry-get (point) "SUBMISSION") "")
+                            "," t "[ \t]+")
+              org-canvas--validate-online-submission-types
+              :test #'string=))
+    (list :due (org-entry-get (point) "DUE_AT")
+          :unlock (org-entry-get (point) "UNLOCK_AT")
+          :lock (org-entry-get (point) "LOCK_AT"))))
+
+(defun org-canvas--validate-wall-seconds (timestamp)
+  "Return Org TIMESTAMP as seconds, read as written in no zone."
+  (let ((decoded (org-parse-time-string timestamp)))
+    (setf (nth 8 decoded) 0)
+    (float-time (encode-time decoded))))
+
+(defun org-canvas--validate-wall-hours (from to)
+  "Return the hours from Org timestamp FROM to TO by the clock, or nil.
+Both are read as written, in no zone, so a lock two days after a due
+date is 48 hours across a daylight-saving change too.  Nil when either
+does not parse."
+  (ignore-errors
+    (/ (- (org-canvas--validate-wall-seconds to)
+          (org-canvas--validate-wall-seconds from))
+       3600.0)))
+
+(defun org-canvas--validate-format-hours (hours)
+  "Return HOURS, a list of numbers, as text for a message."
+  (concat (mapconcat #'org-canvas--validate-format-weight hours " or ")
+          " hour(s)"))
+
+(defun org-canvas--validate-lock-window (due lock loc prefix)
+  "Check LOCK against DUE for `org-canvas-validate-lock-after-due-hours'.
+DUE and LOCK are raw Org timestamps, LOCK nil when the column has
+none.  LOC locates the column and PREFIX starts the message.  Returns
+an issue or nil; a lock date that does not parse is the timestamp
+check's to report."
+  (when-let* ((allowed (if (numberp org-canvas-validate-lock-after-due-hours)
+                           (list org-canvas-validate-lock-after-due-hours)
+                         org-canvas-validate-lock-after-due-hours)))
+    (let ((hours (and lock (org-canvas--validate-wall-hours due lock))))
+      (cond
+       ((null lock)
+        (org-canvas--validate-make-issue
+         'warning loc "LOCK_AT"
+         (format "%sLock window missing: due %s with no lock date; the course locks online columns %s after the due date"
+                 prefix due (org-canvas--validate-format-hours allowed))))
+       ((and hours
+             (not (cl-some (lambda (h) (= (round (* 60 h)) (round (* 60 hours))))
+                           allowed)))
+        (org-canvas--validate-make-issue
+         'warning loc "LOCK_AT"
+         (format "%sLock window mismatch: locks %s after the due date (due %s, lock %s); the course allows %s"
+                 prefix (org-canvas--validate-format-hours (list hours))
+                 due lock (org-canvas--validate-format-hours allowed))))))))
+
+(defun org-canvas--validate-late-window (due lock unlock loc &optional prefix)
+  "Check one online column against the course's late-window rule.
+DUE, LOCK and UNLOCK are its raw Org timestamps, an absent one nil.
+A column with no due date that parses has no window and is passed
+over.  The findings are warnings (`org-canvas-validate-lock-after-due-hours',
+`org-canvas-validate-require-unlock'), push-only once the column is
+past due, since a column that has closed is a record and not a push
+to come.  LOC locates the column and PREFIX starts each message."
+  (when-let* ((due-iso (org-canvas--validate-safe-parse-timestamp due)))
+    (let* ((prefix (or prefix ""))
+           (issues (delq nil
+                         (list
+                          (org-canvas--validate-lock-window due lock loc prefix)
+                          (when (and org-canvas-validate-require-unlock (null unlock))
+                            (org-canvas--validate-make-issue
+                             'warning loc "UNLOCK_AT"
+                             (format "%sUnlock date missing: the course requires one on every online column"
+                                     prefix)))))))
+      (if (string< due-iso (org-canvas-current-iso8601-timestamp))
+          (mapcar #'org-canvas--validate-push-only issues)
+        issues))))
+
+(defun org-canvas--validate-heading-late-window (loc defaults)
+  "Check the assignment heading at LOC against the course's late window.
+DEFAULTS are its dates from `org-canvas--validate-late-window-defaults',
+nil when the rule does not apply."
+  (when defaults
+    (org-canvas--validate-late-window
+     (plist-get defaults :due) (plist-get defaults :lock)
+     (plist-get defaults :unlock) loc)))
 
 ;; Messages (issue #232): the resolver lives in the messages module,
 ;; named here rather than required, as the grading-scheme helpers are.

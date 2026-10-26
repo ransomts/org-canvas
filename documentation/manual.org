@@ -286,7 +286,7 @@ silently.
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; API credentials (gitignored)
-├── org-canvas-config.el       ; Optional course settings, no secrets (comment rules)
+├── org-canvas-config.el       ; Optional course settings, no secrets (comment and validate rules)
 ├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
@@ -4990,6 +4990,43 @@ always on Canvas and has usually started.
 =org-canvas-validate-past-timestamps= chooses: =unsynced-only= (the
 default), =always= for every heading as before, or =never=.  These warnings
 are push-only advice, so a read-only course holds them back either way.
+
+*** A Course's Late Window
+
+A syllabus late policy is often a rule about dates: online work locks
+48 hours after it is due, and every column opens on a stated day.  Two
+settings, both off by default, have validation check it:
+
+- =org-canvas-validate-lock-after-due-hours=: the hours after its due
+  date an online column must lock, a number or a list of the offsets
+  allowed (=0= locks at the due date, so ='(0 48)= accepts either).
+- =org-canvas-validate-require-unlock=: non-nil when every online
+  column must carry an unlock date.
+
+They apply to assignments whose =SUBMISSION= names an online type
+(=online_upload=, =online_text_entry=, =online_url=,
+=media_recording=) and that have a due date, to the heading and to
+each override row that sets a due or a lock date of its own; a date a
+row leaves empty is the assignment's, as on Canvas.  Hours are counted
+by the clock, so a lock two days after the due date is 48 hours across
+a daylight-saving change too.  The findings are warnings:
+
+#+begin_example
+assignments.org:88: warning: Lock window missing: due <2026-11-06 Fri 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date
+assignments.org:91: warning: Lock window mismatch: locks 24 hour(s) after the due date (due <2026-11-06 Fri 23:59>, lock <2026-11-07 Sat 23:59>); the course allows 48 hour(s)
+assignments.org:97: warning: Override row 'Section 002': Unlock date missing: the course requires one on every online column
+#+end_example
+
+A column already past due is a record rather than a push to come, so
+its findings are push-only and a read-only course holds them back.
+These are a course's rules, so they go in its =org-canvas-config.el=
+(see [[*Exporting, Importing and Checking Comments][the comment rules]] for the
+file):
+
+#+begin_src emacs-lisp
+(setq org-canvas-validate-lock-after-due-hours 48
+      org-canvas-validate-require-unlock t)
+#+end_src
 
 ** Forcing a Re-upload
 

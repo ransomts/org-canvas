@@ -1,0 +1,10 @@
+* Added
+- #536 Two course settings, off by default and set in the course's
+  =org-canvas-config.el=, have =org-canvas-validate= check a syllabus
+  late window on online assignments, the heading and each override row
+  alike: =org-canvas-validate-lock-after-due-hours= (a number of hours,
+  or a list of the offsets allowed, 0 meaning a lock at the due date)
+  warns about a column with no lock date or one at another offset, and
+  =org-canvas-validate-require-unlock= warns about one with no unlock
+  date.  Hours are counted by the clock; the findings are push-only
+  once the column is past due.
