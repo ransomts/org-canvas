@@ -429,6 +429,109 @@ A read may still be a GraphQL query, sent as a POST to /api/graphql."
       (expect (org-canvas--drift-header '(hline ("Section" "Due At")))
               :to-equal '("Section" "Due At")))))
 
+;;;; Rewriting a CHANGED override row
+
+(defmacro test-drift--with-section-rows (&rest body)
+  "Run BODY with a table cell naming Sn read as section n."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'org-canvas--override-parse-target)
+              (lambda (cell _dir)
+                (and (string-match "\\*S\\([0-9]+\\)\\]" cell)
+                     (list :section-id (match-string 1 cell))))))
+     (test-drift--with-override-cells ,@body)))
+
+(defun test-drift--changed-override (assignment-id where ov &rest names)
+  "Return a CHANGED override entry of ASSIGNMENT-ID's heading WHERE, for OV.
+NAMES are the columns the row names as differing."
+  (list :kind 'override :state 'changed :assignment-id assignment-id
+        :where where :container "assignment" :file org-canvas-assignments-file
+        :title "S1" :id "800" :override ov
+        :fields (mapcar (lambda (n) (list n "<old>" "<new>")) names)))
+
+(describe "org-canvas--drift-rewrite-override (issue #528)"
+  (it "rewrites the dates the row names in the row claiming the override"
+    (test-drift--with-file
+      (test-drift--with-section-rows
+        (let ((outcome (org-canvas--drift-rewrite-override
+                        (test-drift--changed-override
+                         "60" "Lab 1" '((id . 800) (course_section_id . 1)
+                                        (due_at . "2026-10-21T03:59:00Z"))
+                         "Due At"))))
+          (expect (plist-get outcome :outcome) :to-be 'rewritten)
+          (expect (plist-get outcome :adopted) :to-equal '("Due At"))
+          (expect (org-canvas--drift-outcome-line outcome)
+                  :to-match "ADOPTED   S1 (Lab 1) (Due At rewritten in the overrides table, nothing sent)")
+          (expect (test-drift--text file)
+                  :to-match (regexp-quote "|---------+--------|\n| [[file:sections.org::*S1][S1]] | <2026-10-20 Tue 23:59> |\n\n#+ATTR_LATEX"))))))
+
+  (it "writes only the named dates, and empties one Canvas cleared"
+    (test-drift--with-override-cells
+      (let ((header '("Section" "Due At" "Lock At")))
+        (expect (org-canvas--drift-date-cells
+                 '("S1" "a" "b") '((due_at . "x") (lock_at . "y")) header '("Lock At"))
+                :to-equal '("S1" "a" "<2026-10-20 Tue 23:59>"))
+        (expect (org-canvas--drift-date-cells '("S1" "a" "b") '((lock_at . "y")) header '("Due At"))
+                :to-equal '("S1" "" "b")))))
+
+  (it "refuses a row no table row claims, a missing column, and a heading without a table"
+    (test-drift--with-file
+      (test-drift--with-section-rows
+        (let ((before (test-drift--text file)))
+          (expect (plist-get (org-canvas--drift-rewrite-override
+                              (test-drift--changed-override
+                               "60" "Lab 1" '((id . 800) (course_section_id . 9)) "Due At"))
+                             :reason)
+                  :to-match "no row of the table claims the override")
+          (expect (plist-get (org-canvas--drift-rewrite-override
+                              (test-drift--changed-override
+                               "60" "Lab 1" '((id . 800) (course_section_id . 1)
+                                              (lock_at . "2026-10-21T03:59:00Z"))
+                               "Lock At"))
+                             :reason)
+                  :to-match "no Lock At column")
+          (expect (plist-get (org-canvas--drift-rewrite-override
+                              (test-drift--changed-override
+                               "62" "Lab 3" '((id . 800) (course_section_id . 1)) "Due At"))
+                             :reason)
+                  :to-match "has no overrides table")
+          (expect (test-drift--text file) :to-equal before)))))
+
+  (it "names what it would write under a dry run, and writes nothing"
+    (test-drift--with-file
+      (let* ((before (test-drift--text file))
+             (outcome (let ((org-canvas--dry-run t))
+                        (org-canvas--drift-rewrite-override
+                         (test-drift--changed-override
+                          "60" "Lab 1" '((id . 800)) "Due At" "Lock At")))))
+        (expect (org-canvas--drift-outcome-line outcome)
+                :to-match "DRY-RUN   S1 (Lab 1) (would write Due At, Lock At)")
+        (expect (test-drift--text file) :to-equal before))))
+
+  (it "adopts CHANGED override rows in batch and holds a MISSING one, counting it left"
+    (test-drift--with-file
+      (test-drift--with-section-rows
+        (let (report outcomes)
+          (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                    ((symbol-function 'org-canvas--report-display)
+                     (lambda (_name render) (setq report (with-temp-buffer
+                                                           (funcall render)
+                                                           (buffer-string))))))
+            (setq outcomes
+                  (org-canvas-diff-adopt-drifts
+                   'all :overrides t
+                   :results `((:name "Assignment Overrides"
+                               :divergences
+                               (,(test-drift--changed-override
+                                  "60" "Lab 1" '((id . 800) (course_section_id . 1)
+                                                 (due_at . "2026-10-21T03:59:00Z"))
+                                  "Due At")
+                                (:kind override :state missing :title "S3" :where "Lab 2"
+                                 :assignment-id "61")))))))
+          (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                  :to-equal '(rewritten refused))
+          (expect report :to-match "HELD      S3 (Lab 2) (Canvas holds no such override")
+          (expect report :to-match "1 row(s) adopted, 1 left"))))))
+
 ;;;; The row verb
 
 (describe "org-canvas-diff-adopt-drift (issue #498)"
@@ -714,6 +817,24 @@ A read may still be a GraphQL query, sent as a POST to /api/graphql."
               (expect text :to-match "\\* POINTS +org: +10"))))
         (expect read :to-equal "60"))
       (expect (test-drift--prop file "Lab 1" "POINTS") :to-equal "10")))
+
+  (it "lists an assignment's overrides as Canvas holds them (issue #528)"
+    (let ((assignments (org-canvas--diff-find-feature "Assignments")))
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method url &rest _)
+                   (expect url :to-match "assignments/60/overrides")
+                   [((id . 800) (student_ids . [5]) (due_at . "2026-10-23T14:15:00Z"))
+                    ((id . 801) (student_ids . [6]))])))
+        (let ((text (org-canvas--drift-show-overrides assignments "60")))
+          (expect text :to-match "Overrides on Canvas (2)")
+          (expect text :to-match "Students: #5 +due <2026-10-23")
+          (expect text :to-match "Students: #6 +(no dates)")))
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (error "Boom"))))
+        (expect (org-canvas--drift-show-overrides assignments "60")
+                :to-match "Overrides on Canvas: not read (Boom)"))
+      (expect (org-canvas--drift-show-overrides (org-canvas--diff-find-feature "Pages") "x")
+              :to-equal "")))
 
   (it "says when Canvas no longer holds the item"
     (test-drift--with-file

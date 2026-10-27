@@ -1,0 +1,11 @@
+* Fixed
+- #528 =adopt --overrides= (and =A= on the row) adopts a CHANGED
+  override row: the dates it names are rewritten in the table row that
+  claims the override, other cells and rows untouched.  It used to
+  skip such rows silently, so the next push would revert a web-UI
+  extension.  A MISSING override row is now listed as HELD and counted
+  as left instead of being dropped from the report.
+
+* Added
+- #528 =show= on an assignment lists every override Canvas holds for
+  it, with its dates.
