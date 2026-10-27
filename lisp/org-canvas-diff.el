@@ -1858,7 +1858,9 @@ is the heading's."
                    (org-canvas--diff-override-entry
                     heading item file 'changed :title who
                     :id (format "%s" (alist-get 'id existing))
-                    :fields fields)))))))
+                    :fields fields
+                    ;; What `A' rewrites the row's dates from (issue #528).
+                    :override existing)))))))
 
 (defun org-canvas--diff-override-extra-entry (heading item file ov)
   "Return the EXTRA entry for Canvas override OV of HEADING's ITEM in FILE.

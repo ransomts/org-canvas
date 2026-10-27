@@ -193,8 +193,9 @@ and pages (see [[*Publishing One Heading][Publishing One Heading]]).
 =adopt= takes the same names, or =--all= for every CHANGED row of the
 drift report, and writes what Canvas holds of the fields each row
 names (see [[*Adopting the Drift][Adopting the Drift]]); =--body= lets
-it replace a body, and =--overrides= appends the heading's EXTRA
-override rows to its table.  =show= takes the same names and prints
+it replace a body, and =--overrides= adopts the heading's override
+rows too: an EXTRA one appended to its table, a CHANGED one's dates
+rewritten in it.  =show= takes the same names and prints
 each heading's Canvas version, writing nothing (see [[*Showing the
 Canvas Version][Showing the Canvas Version]]).  =delete= takes the
 same names and deletes each heading's item from Canvas, clearing the
@@ -3862,7 +3863,7 @@ Three sections carry rows of their own, with their own verbs:
 
 | Section                | Keys on its rows                                                                                     |
 |------------------------+------------------------------------------------------------------------------------------------------|
-| Assignment Overrides   | =RET= visits the assignment heading, =b= its page; =p= pulls the heading, writing Canvas's table whole; =A= appends an EXTRA override to the table; =k= and =a= refuse |
+| Assignment Overrides   | =RET= visits the assignment heading, =b= its page; =p= pulls the heading, writing Canvas's table whole; =A= appends an EXTRA override to the table or rewrites a CHANGED one's dates; =k= and =a= refuse |
 | New Quiz Items         | =k= deletes the item; =b= / =B= open the quiz's page; =p= pulls the whole quiz over its heading     |
 | Module Items           | =k= deletes the item from its module; =a= acknowledges under ="module-items"=; =org-canvas-prune-module-items= removes every such item after confirming |
 
@@ -3958,13 +3959,22 @@ date the table has no column for is refused (adding the column would
 rewrite every row); a heading with no table gets one under its drawer.
 The next push then keeps the override instead of deleting it.
 
+On a CHANGED override row (a date moved in the web UI), =A= rewrites
+the dates the row names in the table row that claims the override,
+matched as a push matches it, and leaves that row's other cells and
+every other row as they are (#528).  Without it, the next push would
+send the old dates back and undo the extension.  A date the table has
+no column for is refused, as above.  A MISSING override row, a table
+row Canvas holds no override for, is never adopted, since that would
+delete the row; batch adoption reports it =HELD= and counts it left.
+
 =org-canvas-diff-adopt-drifts= does the same for the rows it is given,
 without asking:
 
 #+begin_src emacs-lisp
 (org-canvas-diff-adopt-drifts '(("assignment" . "Midterm Exam")
                                 ("assignment" "2563805" canvas-id))
-                              :overrides t)   ; and their EXTRA override rows
+                              :overrides t)   ; and their override rows
 (org-canvas-diff-adopt-drifts 'all)           ; every CHANGED row, bodies held
 #+end_src
 
@@ -3996,6 +4006,11 @@ names them.  From the shell:
 #+begin_src sh
 scripts/org-canvas show "assignment:Closer 07" "page#week-05-objectives"
 #+end_src
+
+For an assignment, =show= (not ~=~) also lists every override Canvas
+holds for it, who it is for and its dates, read from the overrides
+endpoint, so a date moved in the web UI can be read before it is
+adopted (#528).
 
 None of them writes anything, locally or on Canvas, so they are the
 way to read what an instructor changed in the web UI before choosing

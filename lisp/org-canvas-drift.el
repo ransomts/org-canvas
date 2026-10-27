@@ -26,7 +26,9 @@
 ;; the conflict check.  A row with no compared property differing is
 ;; stamp adoption (issue #257), unchanged.  On an EXTRA override row,
 ;; `A' appends the override to the heading's table as a new row,
-;; leaving the existing rows as they are.  Nothing is sent to Canvas.
+;; leaving the existing rows as they are; on a CHANGED one it rewrites
+;; the dates the row names in the table row claiming the override
+;; (issue #528).  Nothing is sent to Canvas.
 ;;
 ;; SHOWING THE CANVAS SIDE (issue #500)
 ;; ====================================
@@ -55,6 +57,10 @@
 (declare-function org-canvas--override-emit-table "org-canvas-sections"
                   (overrides &optional parent-due parent-unlock parent-lock
                              accept-fn))
+(declare-function org-canvas--override-parse-target "org-canvas-sections"
+                  (cell source-dir))
+(declare-function org-canvas--override-find-existing "org-canvas-sections"
+                  (override existing))
 ;; Whether a heading is what its last push sent, as setting the
 ;; published flag alone decides it (issue #466); `org-canvas' loads it.
 (declare-function org-canvas--publish-heading-clean-p "org-canvas-publish"
@@ -303,31 +309,45 @@ id, `refused' when the row holds no copy of the Canvas item."
           (org-canvas--drift-log-outcome result)
           result)))))
 
-;;;; Appending an Override Row
+;;;; Appending or Rewriting an Override Row
 
 (defun org-canvas--drift-header (table)
   "Return the first row of TABLE, an `org-table-to-lisp' list, that is not a rule."
   (cl-find-if #'listp table))
 
-(defun org-canvas--drift-override-cells (ov header)
-  "Return the cells of a table row for override OV under HEADER.
+(defun org-canvas--drift-date-cells (cells ov header &optional names)
+  "Return CELLS with the dates of override OV in the columns HEADER names.
 HEADER is the table's first row; each date goes in the column its
-title names (`org-canvas--override-date-columns').  Returns (missing
-TITLE...) instead when OV carries a date the table has no column for:
-adding the column would rewrite every row."
-  (let ((cells (make-list (max 1 (length header)) ""))
+title names (`org-canvas--override-date-columns'), and a date OV does
+not carry empties its cell.  NAMES, column titles, limits the dates
+written to those; nil writes all three.  Returns (missing TITLE...)
+instead when OV carries a date the table has no column for: adding the
+column would rewrite every row."
+  (let ((cells (copy-sequence cells))
         (missing nil))
-    (setf (nth 0 cells) (org-canvas--override-target-cell ov))
     (cl-mapc (lambda (field col title)
                (let ((value (org-canvas--diff-normalize-remote (alist-get field ov))))
-                 (when value
-                   (if (and col (< col (length cells)))
-                       (setf (nth col cells) (org-canvas--override-format-cell value))
-                     (push title missing)))))
+                 (cond ((and names (not (member title names))))
+                       ((and col (< col (length cells)))
+                        (setf (nth col cells) (org-canvas--override-format-cell value)))
+                       (value (push title missing)))))
              '(due_at unlock_at lock_at)
              (org-canvas--override-date-columns header)
              '("Due At" "Unlock At" "Lock At"))
     (if missing (cons 'missing (nreverse missing)) cells)))
+
+(defun org-canvas--drift-override-cells (ov header)
+  "Return the cells of a new table row for override OV under HEADER.
+As `org-canvas--drift-date-cells', the first cell naming who OV is for."
+  (let ((cells (make-list (max 1 (length header)) "")))
+    (setf (nth 0 cells) (org-canvas--override-target-cell ov))
+    (org-canvas--drift-date-cells cells ov header)))
+
+(defun org-canvas--drift-missing-columns (cells)
+  "Return why CELLS cannot be written, when they name missing columns, or nil."
+  (and (eq (car cells) 'missing)
+       (format "the table has no %s column; add it, or pull the heading with p"
+               (mapconcat #'identity (cdr cells) " or "))))
 
 (defun org-canvas--drift-append-row (ov)
   "Append override OV to the table at point, after its last row.
@@ -335,12 +355,42 @@ Point is on the table.  The existing rows are left exactly as they are,
 alignment included.  Returns nil, or why nothing was appended."
   (let ((cells (org-canvas--drift-override-cells
                 ov (org-canvas--drift-header (org-table-to-lisp)))))
-    (if (eq (car cells) 'missing)
-        (format "the table has no %s column; add it, or pull the heading with p"
-                (mapconcat #'identity (cdr cells) " or "))
-      (goto-char (org-table-end))
-      (insert "| " (mapconcat #'identity cells " | ") " |\n")
-      nil)))
+    (or (org-canvas--drift-missing-columns cells)
+        (progn (goto-char (org-table-end))
+               (insert "| " (mapconcat #'identity cells " | ") " |\n")
+               nil))))
+
+(defun org-canvas--drift-row-claims-p (row ov dir)
+  "Return non-nil when table ROW, its cells, claims Canvas override OV.
+ROW claims OV as the push matches them
+\(`org-canvas--override-find-existing'); DIR is the directory of the
+file holding the table, for section links."
+  (let ((target (org-canvas--override-parse-target
+                 (string-trim (or (car row) "")) dir)))
+    (and target (org-canvas--override-find-existing target (list ov)) t)))
+
+(defun org-canvas--drift-rewrite-row (ov names dir)
+  "Rewrite the NAMES dates of the row of the table at point claiming OV.
+Point is on the table's first line; DIR is as for
+`org-canvas--drift-row-claims-p'.  The other rows, and the row's other
+cells, are left exactly as they are.  Returns nil, or why nothing was
+written."
+  (let* ((table (org-table-to-lisp))
+         (header (org-canvas--drift-header table))
+         (index (cl-position-if (lambda (row) (and (listp row)
+                                                   (org-canvas--drift-row-claims-p row ov dir)))
+                                table :start (1+ (cl-position header table))))
+         (row (and index (nth index table)))
+         (cells (and index
+                     (org-canvas--drift-date-cells
+                      (append row (make-list (max 0 (- (length header) (length row))) ""))
+                      ov header names))))
+    (cond ((null index) "no row of the table claims the override; pull the heading with p")
+          ((org-canvas--drift-missing-columns cells))
+          (t (forward-line index)
+             (delete-region (line-beginning-position) (line-end-position))
+             (insert "| " (mapconcat #'identity cells " | ") " |")
+             nil))))
 
 (defun org-canvas--drift-insert-table (ov)
   "Write a new overrides table holding OV under the drawer at point.
@@ -352,29 +402,50 @@ Returns nil, or why nothing was written."
       (org-canvas--override-emit-table (list ov))
       (and (= start (point)) "the override carries no date to write"))))
 
+(defun org-canvas--drift-table-here ()
+  "Return the start of the overrides table of the heading at point, or nil."
+  (let ((end (save-excursion (org-end-of-subtree t) (point))))
+    (save-excursion
+      (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+        (forward-line 1)
+        (and (org-at-table-p) (point))))))
+
 (defun org-canvas--drift-append-override-here (ov)
   "Add override OV to the table of the heading at point, and save.
 Returns nil, or why nothing was written."
-  (let* ((end (save-excursion (org-end-of-subtree t) (point)))
-         (table (save-excursion
-                  (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
-                    (forward-line 1)
-                    (and (org-at-table-p) (point)))))
+  (let* ((table (org-canvas--drift-table-here))
          (reason (if table
                      (save-excursion (goto-char table) (org-canvas--drift-append-row ov))
                    (org-canvas--drift-insert-table ov))))
     (unless reason (org-canvas--save-buffer))
     reason))
 
-(defun org-canvas--drift-append-override (entry)
-  "Add EXTRA override row ENTRY to its heading's table; return an outcome.
+(defun org-canvas--drift-rewrite-override-here (ov names dir)
+  "Rewrite the NAMES dates of OV's row in the table of the heading at point.
+DIR is as for `org-canvas--drift-row-claims-p'.  Saves, and returns
+nil, or why nothing was written."
+  (let* ((table (org-canvas--drift-table-here))
+         (reason (if table
+                     (save-excursion (goto-char table)
+                                     (org-canvas--drift-rewrite-row ov names dir))
+                   "the heading has no overrides table; pull the heading with p")))
+    (unless reason (org-canvas--save-buffer))
+    reason))
+
+(defun org-canvas--drift-override-title (entry)
+  "Return how an outcome names override row ENTRY: who, then its heading."
+  (format "%s (%s)" (plist-get entry :title) (plist-get entry :where)))
+
+(defun org-canvas--drift-override-outcome (entry done write)
+  "Call WRITE at the heading of override row ENTRY; return an outcome plist.
 The heading is the one carrying the row's assignment id in the row's
-file.  :outcome is `appended', `dry-run', `refused' with :reason, or
-`not-found'.  Nothing is sent: the next push of the heading claims
-the override instead of deleting it (issue #411)."
+file.  WRITE is called with the Canvas override, point on the heading,
+and returns nil, or why nothing was written.  :outcome is DONE when it
+wrote, `dry-run', `refused' with :reason, or `not-found'.  Nothing is
+sent."
   (let* ((out (list :feature org-canvas--diff-overrides-name
-                    :title (format "%s (%s)" (plist-get entry :title)
-                                   (plist-get entry :where))))
+                    :title (org-canvas--drift-override-title entry)
+                    :adopted (mapcar #'car (plist-get entry :fields))))
          (file (plist-get entry :file))
          (pos (org-canvas--diff-find-heading-by-id
                file "CANVAS_ID" (plist-get entry :assignment-id)))
@@ -382,15 +453,44 @@ the override instead of deleting it (issue #411)."
     (cond
      ((or (null pos) (null ov)) (append out (list :outcome 'not-found)))
      (org-canvas--dry-run (append out (list :outcome 'dry-run)))
-     (t (let ((reason (org-canvas--drift-at
-                       (cons file pos)
-                       (lambda () (org-canvas--drift-append-override-here ov)))))
+     (t (let ((reason (org-canvas--drift-at (cons file pos)
+                                            (lambda () (funcall write ov)))))
           (if reason
               (append out (list :outcome 'refused :reason reason))
             (org-canvas--log-info org-canvas--logger
-              "[Drift] Appended override %s to the table of '%s'; nothing sent"
+              "[Drift] %s override %s in the table of '%s'; nothing sent"
+              (if (eq done 'appended) "Appended" "Rewrote")
               (plist-get entry :id) (plist-get entry :where))
-            (append out (list :outcome 'appended))))))))
+            (append out (list :outcome done))))))))
+
+(defun org-canvas--drift-append-override (entry)
+  "Add EXTRA override row ENTRY to its heading's table; return an outcome.
+As `org-canvas--drift-override-outcome', :outcome `appended' when
+written.  The next push of the heading claims the override instead of
+deleting it (issue #411)."
+  (org-canvas--drift-override-outcome
+   entry 'appended #'org-canvas--drift-append-override-here))
+
+(defun org-canvas--drift-rewrite-override (entry)
+  "Rewrite CHANGED override row ENTRY's dates in its table; return an outcome.
+As `org-canvas--drift-override-outcome', :outcome `rewritten' when
+written.  Only the dates the row names are written, in the table row
+that claims the override, so the next push of the heading sends
+Canvas's dates back instead of reverting them (issue #528)."
+  (let ((names (mapcar #'car (plist-get entry :fields)))
+        (dir (file-name-directory (plist-get entry :file))))
+    (org-canvas--drift-override-outcome
+     entry 'rewritten
+     (lambda (ov) (org-canvas--drift-rewrite-override-here ov names dir)))))
+
+(defun org-canvas--drift-missing-override (entry)
+  "Return the held outcome of MISSING override row ENTRY.
+Its table row names an override Canvas does not hold, and adopting
+Canvas's side would delete the row, so it is left for the instructor."
+  (list :feature org-canvas--diff-overrides-name
+        :title (org-canvas--drift-override-title entry)
+        :outcome 'refused
+        :reason "Canvas holds no such override; the next push creates it, or delete the row"))
 
 ;;;; The Row Verb
 
@@ -399,16 +499,24 @@ the override instead of deleting it (issue #411)."
   (and (eq (plist-get entry :kind) 'override)
        (eq (plist-get entry :state) 'extra)))
 
+(defun org-canvas--drift-changed-override-p (entry)
+  "Return non-nil when ENTRY is a CHANGED override row (issue #528)."
+  (and (eq (plist-get entry :kind) 'override)
+       (eq (plist-get entry :state) 'changed)))
+
 (defun org-canvas--drift-adopt-row (row body)
   "Adopt the Canvas side of ROW, a report row; return an outcome plist.
 BODY says whether a CHANGED row's body may be replaced.  Anything but
-a CHANGED row of a feature or an EXTRA override row is a `user-error'."
+a CHANGED row of a feature or an EXTRA or CHANGED override row is a
+`user-error'."
   (let ((entry (plist-get row :entry)))
     (cond
      ((org-canvas--drift-extra-override-p entry)
       (org-canvas--drift-append-override entry))
+     ((org-canvas--drift-changed-override-p entry)
+      (org-canvas--drift-rewrite-override entry))
      ((not (eq (plist-get entry :kind) 'modified))
-      (user-error "Only a CHANGED row or an EXTRA override row has a Canvas side to adopt"))
+      (user-error "Only a CHANGED row or an EXTRA or CHANGED override row has a Canvas side to adopt"))
      ((plist-get entry :quiz-id)
       (user-error "A New Quiz item is adopted with its quiz: p pulls the quiz"))
      (t (org-canvas--drift-adopt-changed
@@ -446,6 +554,8 @@ a CHANGED row of a feature or an EXTRA override row is a `user-error'."
                         (org-canvas--drift-held-text (plist-get outcome :held))))
       ('appended (format "  ADOPTED   %s (row appended to the overrides table, nothing sent)"
                          title))
+      ('rewritten (format "  ADOPTED   %s (%s rewritten in the overrides table, nothing sent)"
+                          title written))
       ('dry-run (format "  DRY-RUN   %s (would write %s)"
                         title (if (string-empty-p written) "the table row" written)))
       ('not-found (format "  NOT FOUND %s (no heading carries its id)" title))
@@ -476,8 +586,10 @@ CANVAS_UPDATED_AT takes Canvas's stamp and PAYLOAD_HASH is hashed
 again if the heading was clean; a field held back keeps the stamp.
 A row with no compared property differing adopts its stamp, as `a'
 does.  On an EXTRA override row, the override is appended to the
-heading's table, the other rows untouched.  Sends nothing (issue
-#498).  Returns the outcome plist."
+heading's table, the other rows untouched; on a CHANGED one, the
+dates the row names are rewritten in the table row that claims the
+override (issue #528).  Sends nothing (issue #498).  Returns the
+outcome plist."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (outcome (org-canvas--drift-adopt-row row (org-canvas--drift-ask-body row))))
@@ -504,7 +616,7 @@ heading's table, the other rows untouched.  Sends nothing (issue
   "Return non-nil when override ENTRY belongs to the heading TARGET names.
 BY is as for `org-canvas--drift-named-p'; ID is the heading's Canvas
 id when its CHANGED row gave one."
-  (and (org-canvas--drift-extra-override-p entry)
+  (and (org-canvas--drift-override-p entry)
        (or (and id (equal (plist-get entry :assignment-id) id))
            (if (eq by 'canvas-id)
                (equal (plist-get entry :assignment-id) (format "%s" target))
@@ -517,12 +629,21 @@ id when its CHANGED row gave one."
               results))
 
 (defun org-canvas--drift-override-rows (results pred)
-  "Return the EXTRA override rows of RESULTS that PRED accepts, as rows."
-  (mapcar (lambda (e) (list :feature org-canvas--diff-overrides-name :entry e))
-          (cl-remove-if-not
-           pred (plist-get (org-canvas--drift-result
-                            results org-canvas--diff-overrides-name)
-                           :extra))))
+  "Return the override rows of RESULTS that PRED accepts, as rows.
+EXTRA and CHANGED rows are adopted; a MISSING row is its held outcome
+already, so it is reported and counted as left, never dropped (issue
+#528)."
+  (let ((result (org-canvas--drift-result results org-canvas--diff-overrides-name)))
+    (mapcar (lambda (e)
+              (if (eq (plist-get e :state) 'missing)
+                  (org-canvas--drift-missing-override e)
+                (list :feature org-canvas--diff-overrides-name :entry e)))
+            (cl-remove-if-not
+             pred (append (plist-get result :divergences) (plist-get result :extra))))))
+
+(defun org-canvas--drift-override-p (entry)
+  "Return non-nil when ENTRY is an override row of any state."
+  (eq (plist-get entry :kind) 'override))
 
 (defun org-canvas--drift-select-heading (results selector overrides)
   "Return the rows SELECTOR names in RESULTS, or a `not-found' outcome.
@@ -556,7 +677,7 @@ With OVERRIDES, every EXTRA override row as well."
                            (plist-get r :divergences)))))
               results)
    (and overrides
-        (org-canvas--drift-override-rows results #'org-canvas--drift-extra-override-p))))
+        (org-canvas--drift-override-rows results #'org-canvas--drift-override-p))))
 
 (defun org-canvas--drift-adopt-one (row body)
   "Adopt ROW, or pass an outcome plist through; never signal.
@@ -570,7 +691,7 @@ BODY is as for `org-canvas--drift-adopt-row'."
              :title (plist-get (plist-get row :entry) :title)
              :outcome 'failed :reason (error-message-string err))))))
 
-(defconst org-canvas--drift-done-outcomes '(adopted stamped appended dry-run)
+(defconst org-canvas--drift-done-outcomes '(adopted stamped appended rewritten dry-run)
   "The outcomes after which nothing the row named is left to do.")
 
 (defun org-canvas--drift-adopt-render (outcomes)
@@ -594,8 +715,10 @@ BODY is as for `org-canvas--drift-adopt-row'."
 SELECTORS is `all', every CHANGED row a feature owns, or a list of
 headings, each (FEATURE . TITLE) or (FEATURE TARGET BY) as
 `org-canvas-sync-headings' reads them, naming the heading's CHANGED
-row.  With OVERRIDES, each EXTRA override row of the headings named
-\(every one, with `all') is appended to its table too.  Each row is
+row.  With OVERRIDES, each override row of the headings named (every
+one, with `all') is adopted too: an EXTRA row appended to its table, a
+CHANGED row's dates rewritten in it, and a MISSING row held, since
+adopting it would delete the table row (issue #528).  Each row is
 adopted as `A' adopts it (`org-canvas-diff-adopt-drift'); a body is
 replaced only with BODY non-nil.  Never asks.  The rows come from the
 report's own comparison, RESULTS when given, else read afresh.  A dry
@@ -603,7 +726,7 @@ run writes nothing and names what would be written.  Nothing is sent
 to Canvas.
 
 Returns one plist per row or unmatched heading: :feature, :title,
-:outcome (`adopted', `stamped', `partial', `appended', `dry-run',
+:outcome (`adopted', `stamped', `partial', `appended', `rewritten', `dry-run',
 `not-found', `refused' or `failed'), :adopted, :held, :updated and
 :reason (issue #498)."
   (org-canvas--preflight-check)
@@ -807,17 +930,44 @@ Writes nothing and sends nothing.  Returns the text shown."
        (org-canvas--drift-at where (lambda () (org-canvas--drift-show-text
                                                feature (plist-get entry :item))))))))
 
+(defun org-canvas--drift-show-override (ov)
+  "Return the line naming Canvas override OV: who, then its dates."
+  (format "  %-30s %s\n" (org-canvas--diff-override-who ov)
+          (let ((dates (org-canvas--diff-override-dates-text
+                        (lambda (d) (org-canvas--diff-normalize-remote
+                                     (alist-get (nth 1 d) ov))))))
+            (if (string-empty-p dates) "(no dates)" dates))))
+
+(defun org-canvas--drift-show-overrides (feature id)
+  "Return the overrides section for FEATURE's item ID, or \"\".
+Only an assignment has one: every override Canvas holds for it, read
+from its overrides endpoint, so a date moved in the web UI can be read
+before it is adopted (issue #528).  A failed read says so."
+  (if (not (equal (plist-get feature :name) "Assignments"))
+      ""
+    (condition-case err
+        (let ((overrides (append (org-canvas-api-request-all-pages
+                                  'GET (org-canvas-api-course-endpoint
+                                        "assignments/%s/overrides" id))
+                                 nil)))
+          (concat (format "\nOverrides on Canvas (%d)\n" (length overrides))
+                  (mapconcat #'org-canvas--drift-show-override overrides "")))
+      (error (format "\nOverrides on Canvas: not read (%s)\n"
+                     (org-canvas--log-redact (error-message-string err)))))))
+
 (defun org-canvas--drift-show-here ()
   "Return the Canvas version of the heading at point as text.
-The item is read on its own (`org-canvas--pull-item-read'); nothing is
-written.  A heading Canvas deleted says so."
+The item is read on its own (`org-canvas--pull-item-read'), an
+assignment's overrides with it; nothing is written.  A heading Canvas
+deleted says so."
   (save-excursion
     (pcase-let ((`(,feature ,id ,title) (org-canvas--pull-at-point-target)))
       (let ((item (org-canvas--pull-item-read feature id)))
         (if (eq item 'gone)
             (format "%s '%s' (id %s) is not on Canvas any more; nothing to show.\n"
                     (plist-get feature :name) title id)
-          (org-canvas--drift-show-text feature item))))))
+          (concat (org-canvas--drift-show-text feature item)
+                  (org-canvas--drift-show-overrides feature id)))))))
 
 ;;;###autoload
 (defun org-canvas-show-at-point ()

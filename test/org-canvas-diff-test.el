@@ -4848,6 +4848,8 @@ RESULT and FILE while the scratch course still exists."
       (expect changed-kind :to-be 'override)
       (expect (plist-get changed :title) :to-equal "Students: #279871")
       (expect (plist-get changed :id) :to-equal "11")
+      ;; The Canvas override itself, for `A' to rewrite the row from (#528).
+      (expect (alist-get 'id (plist-get changed :override)) :to-equal 11)
       (expect (plist-get changed :fields)
               :to-equal '(("Lock At" "<2026-10-01 Thu 14:00>" "(unset)")))
       (expect (mapcar (lambda (e) (list (plist-get e :id) (plist-get e :title)
