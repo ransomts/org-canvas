@@ -32,6 +32,7 @@ lisp/
 ├── org-canvas-announcements-verify.el # Read pushed announcements back and compare title, publish, posting, comments and body (requires diff, announcements)
 ├── org-canvas-heading-verify.el # Read pushed assignments, modules (and their items) and files back and compare them with their headings (requires diff, announcements-verify, assignments, modules, files)
 ├── org-canvas-setup.el          # Setup wizard (org-canvas-init)
+├── org-canvas-new-semester.el   # org-canvas-new-semester: retarget a copied course directory and strip its sync stamps (local only)
 ├── org-canvas-transient.el      # Transient command menu
 ├── org-canvas-submissions.el    # Submission viewer and grading
 ├── org-canvas-quiz-submissions.el # Read-only table of a classic quiz's attempts (requires submissions)

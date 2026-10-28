@@ -1,0 +1,5 @@
+* Added
+- #547 =M-x org-canvas-new-semester= carries a copied course directory into its next semester: a dry run names every heading it would strip and the new course ID, and on confirmation strips every sync stamp the registries name — the =CANVAS_DELETED= mark included, which the sed this replaces never listed — drops each file's =#+LAST_SYNCED= header, retargets =org-canvas-credentials.el= at the new course ID and directory, and loads it, so the first sync creates every item instead of updating the old course's. Dates and section names stay for the editor to fix.
+
+* Changed
+- #547 The semester-copy workflow runs =M-x org-canvas-new-semester= in place of the shell =sed=: copy the directory, run the command, fix dates, validate, push.

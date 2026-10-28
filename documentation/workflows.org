@@ -132,15 +132,17 @@ Time: 15-30 minutes.  Most is reviewing the import.
 Time: 30-60 minutes.  Mostly updating dates.
 #+end_quote
 
-1. *Copy the directory* and update =org-canvas-credentials.el= with the new course ID.
+1. *Copy the directory* — =cp -r= or your file sync's equivalent.  Leave the original alone: it is the record of the semester that just ended.
 
-2. *Strip sync state* so everything is created fresh:
+2. *Run the rollover* in the copy:
 
-   #+begin_src bash
-   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:CANVAS_ASSIGNMENT_ID:/d; /:CANVAS_ITEM_ID:/d; /:CANVAS_CRITERION_ID:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d; /^#+LAST_SYNCED:/d' *.org
+   #+begin_src elisp
+   M-x org-canvas-new-semester
    #+end_src
 
-   The three middle stamps are the ids a New Quiz, its items and a rubric's criteria carry beside =CANVAS_ID=; left in place, the next sync would try to update the old course's objects.
+   Answer the prompt for the new course ID (the number in the new Canvas course's URL).  The command prints a dry run first: every heading whose sync stamps it would strip, the =#+LAST_SYNCED= headers it would drop, the new course ID, and what it will write into =org-canvas-credentials.el=.  Nothing is written until you confirm.
+
+   On confirmation it strips every sync stamp the property registries know — =CANVAS_ID=, =CANVAS_URL=, the companion id stamps (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), =CANVAS_UPDATED_AT=, =PAYLOAD_HASH=, the legacy per-entry =LAST_SYNCED= and the =CANVAS_DELETED= mark, which the shell one-liner this replaces never listed — so the first sync creates every item in the new course instead of updating the old one's.  Content is otherwise untouched, and the credentials file is retargeted to the new course ID and the copy's directory, then loaded, so the running session points at the new course.
 
 3. *Update dates.*  Search for timestamps and adjust to the new semester.  Don't forget override tables in =assignments.org=.
 
@@ -510,10 +512,9 @@ git tag "fall-2026-final"
 See [[*Copying from a Previous Semester]] above.  The key steps:
 
 1. Copy the directory.
-2. Update credentials with the new course ID.
-3. Strip =CANVAS_ID= (=CANVAS_URL= for pages), the companion id stamps (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), =CANVAS_UPDATED_AT= and =PAYLOAD_HASH= from all headings, and the =#+LAST_SYNCED= header from each file (the =sed= above does all of it, including any per-entry =LAST_SYNCED= older files still carry).
-4. Update all dates.
-5. Validate and push.
+2. Run =M-x org-canvas-new-semester= in the copy with the new course ID, and confirm it after reading the dry run: it strips every sync stamp the property registries know (the companion id stamps and the =CANVAS_DELETED= mark included) from all headings, drops each file's =#+LAST_SYNCED= header, and retargets =org-canvas-credentials.el=.
+3. Update all dates.
+4. Validate and push.
 
 ** Clean Up Canvas
 
