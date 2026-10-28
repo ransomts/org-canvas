@@ -73,7 +73,7 @@ The easiest way to set up a new course is the setup wizard:
 M-x org-canvas-init
 #+end_src
 
-This prompts for the course directory, your Canvas URL, API token, and course ID, tests the connection, asks whether you own the course (one you are only adopting is marked read-only: pull, status and diff, never a write), writes =org-canvas-credentials.el=, offers to add it to =.gitignore=, optionally creates skeleton =.org= files for the main content types, and offers to register the course in =org-canvas-courses=.
+This prompts for the course directory, your Canvas URL, API token, and course ID, tests the connection, asks whether you own the course (one you are only adopting is marked read-only: pull, status and diff, never a write), writes =org-canvas-credentials.el=, offers to add it and the student-data files a pull writes (the roster, the groups, the gradebook and its scores file, the discussion replies, the submissions directory) to =.gitignore=, optionally creates skeleton =.org= files for the main content types, and offers to register the course in =org-canvas-courses=.
 
 Or create =org-canvas-credentials.el= manually in your course directory (not tracked by git):
 
@@ -108,10 +108,10 @@ my-course/
 ├── grading-schemes.org       ; Letter-grade schemes
 ├── grading-periods.org       ; Grading periods (pulled from Canvas)
 ├── question-banks.org        ; Question banks (pulled from Canvas, read-only)
-├── discussion-replies.org    ; Discussion replies archive (pulled from Canvas)
-├── groups.org                ; Groups and members (pulled from Canvas)
-├── people.org                ; Course roster (pulled from Canvas)
-├── gradebook.org             ; Course-wide grade overview (pulled from Canvas)
+├── discussion-replies.org    ; Discussion replies archive (pulled from Canvas; student data, gitignored by the pull)
+├── groups.org                ; Groups and members (pulled from Canvas; student data, gitignored by the pull)
+├── people.org                ; Course roster (pulled from Canvas; student data, gitignored by the pull)
+├── gradebook.org             ; Course-wide grade overview (pulled from Canvas; student data, gitignored by the pull)
 ├── quiz-results.org          ; Classic quiz item analyses (pulled from Canvas)
 ├── rubric-results.org        ; Rubric criterion results (pulled from Canvas)
 ├── sections.org              ; Course sections (pulled from Canvas); date overrides are tables in assignments.org

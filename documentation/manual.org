@@ -42,7 +42,7 @@ The wizard prompts for your Canvas URL, API token, and course ID.  It:
 - Writes =org-canvas-credentials.el=
 - Warns before overwriting an existing credentials file
 - Validates the URL starts with =https://=
-- Offers to create or update =.gitignore= to protect credentials
+- Offers to create or update =.gitignore= to protect the credentials file and the student-data files a pull writes (see [[*Privacy][Privacy]])
 - Optionally generates skeleton =.org= files for all content types
 
 Or create =org-canvas-credentials.el= manually in your course directory:
@@ -59,7 +59,7 @@ Or create =org-canvas-credentials.el= manually in your course directory:
 ;;; org-canvas-credentials.el ends here
 #+end_src
 
-*Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token.
+*Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token — the wizard offers to do it for you, and it offers the same for the student-data files a pull writes (see [[*Student Data and Version Control][Student Data and Version Control]]).
 
 ** Keeping the Token in authinfo
 
@@ -485,6 +485,31 @@ clobbered stamps the sync had written (#97).  In batch, org-canvas also
 rereads its own unmodified buffers when the file changed on disk, and refuses
 with a clear error — rather than dying on the prompt — when such a buffer
 holds unsaved edits.
+
+** Student Data and Version Control
+
+Some pulls fill course files with student data: the roster
+(=people.org=), the group members (=groups.org=), the gradebook and
+its scores file, the discussion replies, and everything under the
+submissions directory (grading files, quiz attempts, peer reviews).
+Org-canvas keeps these out of git itself rather than by advice
+(#549):
+
+- The setup wizard offers to add the student-data files to the
+  course =.gitignore= beside the credentials file.
+- A pull that writes one adds the file's name to the =.gitignore= in
+  the same directory when the course directory is in a git work tree
+  and git does not ignore the file already.
+- When git already tracks the file — committed before the line
+  existed — the pull touches nothing and logs a warning, since a
+  =.gitignore= does not untrack; run =git rm --cached= on it yourself.
+- Outside a git work tree, or without git installed, none of this
+  happens and nothing errors.
+
+The submissions directory is the special case: it receives its own
+=.gitignore=, excluding everything in it, when it is first created
+(=org-canvas-submissions-write-gitignore=), and a pull warns when git
+tracks files under it anyway.
 
 * System Context
 
@@ -2552,9 +2577,14 @@ for being absent on Canvas.
 
 The member lists are student names.  Only the display name is written,
 never an email, SIS id or login id, but a name is personal data all
-the same: treat =groups.org= as you treat the submissions directory
-and keep it out of a course repository (add it to =.gitignore=) and
-out of anything you share.
+the same.  When the course directory is in a git work tree, the pull
+keeps =groups.org= out of it for you: it adds the file's name to the
+=.gitignore= in the same directory (creating that file if needed)
+unless git already ignores it.  If git already tracks it, the pull
+touches nothing and logs a warning instead; remove it from the index
+yourself(=git rm --cached groups.org=).  Without git, nothing is
+done.  Keep the file out of any other sharing you would not extend to
+a gradebook export.
 
 ** people.org
 
@@ -2625,10 +2655,15 @@ The file is a roster of names.  By default only the name, role,
 sections, state and last activity are written; the SIS id and login
 id are opt-in through =org-canvas-people-include-identifiers=, and an
 email address or a grade is never written, although the enrollment
-object Canvas returns carries current scores.  A name is personal data
-all the same: treat =people.org= as you treat the submissions
-directory and keep it out of a course repository (add it to
-=.gitignore=) and out of anything you share.
+object Canvas returns carries current scores.  A name is personal
+data all the same.  When the course directory is in a git work tree,
+the pull keeps =people.org= out of it for you: it adds the file's
+name to the =.gitignore= in the same directory (creating that file if
+needed) unless git already ignores it.  If git already tracks it, the
+pull touches nothing and logs a warning instead; remove it from the
+index yourself (=git rm --cached people.org=).  Without git, nothing
+is done.  Keep the file out of any other sharing you would not extend
+to a gradebook export.
 
 ** gradebook.org
 
@@ -2761,17 +2796,15 @@ read, so a teacher's pull costs no extra request with it on.
 Scores are more sensitive than names.  Only the name, the numbers and
 the custom column text are written, never an identifier, but a Notes
 column is free text about a student, the most sensitive cell in the
-file.  Treat =gradebook.org= as you treat the submissions directory:
-keep it out of a course repository (add it to =.gitignore=) and out
-of anything you share.  The same goes, more so, for
-=gradebook-scores.eld=, written when =org-canvas-gradebook-groups= is
-on: every student's score on every assignment, with their Canvas user
-ids.  When the course directory is in a git work tree, the pull keeps
-it out for you: it adds =gradebook-scores.eld= to the =.gitignore= in
-the same directory (creating that file if needed) unless git already
-ignores it.  If git already tracks it, the pull touches nothing and
-logs a warning instead; remove it from the index yourself
-(=git rm --cached gradebook-scores.eld=).  Without git, nothing is done.
+file.  When the course directory is in a git work tree, the pull keeps
+=gradebook.org= out of it for you: it adds the file's name to the
+=.gitignore= in the same directory (creating that file if needed)
+unless git already ignores it.  If git already tracks it, the pull
+touches nothing and logs a warning instead; remove it from the index
+yourself (=git rm --cached gradebook.org=).  Without git, nothing is
+done.  The same goes, more so, for =gradebook-scores.eld=, written when
+=org-canvas-gradebook-groups= is on: every student's score on every
+assignment, with their Canvas user ids, guarded the same way.
 
 From the shell, =scripts/org-canvas gradebook= pulls the file and
 prints the Sections table and the course's mean and median scores
@@ -4883,7 +4916,7 @@ With a prefix argument (=C-u M-x org-canvas-submissions-reports=), or =(org-canv
 
 ** Privacy
 
-Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
+Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. When git already tracks files under the directory — committed before that =.gitignore= existed, or with the option off — the pull logs a warning, since a =.gitignore= does not untrack; remove them from the index yourself (=git rm --cached=). Keep the directory out of any other sharing you would not extend to a gradebook export.
 
 * Canvas-to-Org Migration
 

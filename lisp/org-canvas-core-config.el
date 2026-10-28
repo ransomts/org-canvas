@@ -586,7 +586,85 @@ pinned to whatever fallback `org-canvas--path' picked at load time
 
 (add-variable-watcher 'org-canvas-directory #'org-canvas--directory-watcher)
 
-;;;; 1c. Property Registry
+;;;; 1c. Student-Data Files
+
+;; A pull that fills a course file with student data keeps it out of
+;; git itself (issue #549), so the guard is behavior rather than the
+;; comment each module used to carry: the pull adds the file's name to
+;; the course directory's .gitignore when git does not ignore it
+;; already, and a file git already tracks is warned about rather than
+;; touched, since a .gitignore does not untrack.  The list is a
+;; defconst of names rather than a flag on the features that write
+;; them because the writers are pull-only readers outside the feature
+;; registry (the roster, the groups, the gradebook, the discussion
+;; replies), and the files under the submissions directory have no one
+;; name at all.
+
+(defconst org-canvas--student-data-files
+  '("people.org" "groups.org" "gradebook.org" "gradebook-scores.eld"
+    "discussion-replies.org" "submissions/")
+  "The .gitignore lines that keep student data out of a course repository.
+The names are the files a pull fills with student data by default:
+the roster (people.org), the group members (groups.org), the gradebook
+and its scores file, and the discussion replies; the last line is the
+submissions directory, which holds the grading files, the quiz
+attempts and the peer reviews and writes its own .gitignore when
+created (`org-canvas-submissions-write-gitignore'), the line here
+covering the default location when that option is off.  The setup
+wizard offers these lines beside the credentials file, and
+`org-canvas--student-data-ignore' is what a pull runs on the file it
+writes.  coverage.org's covered table is the list's source of truth:
+a pull that joins it with student data joins this list too.")
+
+(defun org-canvas--git (directory &rest args)
+  "Return the exit status of git run with ARGS in DIRECTORY.
+Nil when git cannot be run at all (not installed, say); its output is
+discarded.  Outside a work tree git answers 128, which callers treat as
+\"do nothing\" rather than an error."
+  (condition-case nil
+      (let ((default-directory (file-name-as-directory directory)))
+        (apply #'process-file "git" nil nil nil args))
+    (error nil)))
+
+(defun org-canvas--gitignore-append (directory name)
+  "Add NAME as a line of the .gitignore in DIRECTORY, creating the file.
+A file without a final newline gets one, so NAME never shares a line
+with what was already there."
+  (let ((ignore (expand-file-name ".gitignore" directory)))
+    (with-temp-buffer
+      (when (file-exists-p ignore)
+        (insert-file-contents ignore))
+      (goto-char (point-max))
+      (unless (or (bobp) (bolp)) (insert "\n"))
+      (insert name "\n")
+      (write-region nil nil ignore nil 'silent))))
+
+(defun org-canvas--student-data-ignore (file)
+  "Keep the student-data FILE out of the git work tree its directory is in.
+Answer what was done: nil outside a work tree (or without git),
+`ignored' when git already ignores FILE, `tracked' when git already
+tracks it (logged as a warning, nothing touched: removing it from the
+index is the user's call), and `added' when FILE's name was added to
+the .gitignore beside it, which is created when missing (issue #549)."
+  (let ((directory (file-name-directory file))
+        (name (file-name-nondirectory file)))
+    (cond
+     ((not (eql 0 (org-canvas--git directory "rev-parse" "--is-inside-work-tree")))
+      nil)
+     ((eql 0 (org-canvas--git directory "ls-files" "--error-unmatch" "--" name))
+      (org-canvas--log-warning org-canvas--logger
+        "[Student data] %s is tracked by git: student data travels with the repository.  Run git rm --cached on it and ignore it"
+        file)
+      'tracked)
+     ((eql 0 (org-canvas--git directory "check-ignore" "-q" "--" name))
+      'ignored)
+     (t
+      (org-canvas--gitignore-append directory name)
+      (org-canvas--log-info org-canvas--logger
+        "[Student data] Added %s to %s" name (expand-file-name ".gitignore" directory))
+      'added))))
+
+;;;; 1d. Property Registry
 
 (defvar org-canvas--property-registry (make-hash-table :test 'equal)
   "Hash-table keyed by feature name (string), values are property spec plists.
@@ -758,7 +836,7 @@ the sync had already written (issue #97)."
           "[Config] org-canvas-directory not set, falling back to %s" base)))
     (file-truename (expand-file-name filename base))))
 
-;;;; 1d. Sync Run Context
+;;;; 1e. Sync Run Context
 ;;
 ;; One sync run — a full-file pipeline, a push at point, the files loop
 ;; — owns a context plist: the remote snapshot, the pipeline functions,

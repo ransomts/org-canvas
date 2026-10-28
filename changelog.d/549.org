@@ -1,0 +1,20 @@
+* Added
+- #549 Student-data files are kept out of git by the pull that writes them,
+  not by advice.  One list names them — the roster (=people.org=), the group
+  members (=groups.org=), the gradebook and its scores file, the discussion
+  replies, and the submissions directory — and every pull that writes one
+  adds the file's name to the =.gitignore= in the same directory when the
+  course directory is in a git work tree and git does not ignore the file
+  already.  The setup wizard offers the same lines beside the credentials
+  file, so a course whose pulls have not run yet is covered too.
+* Changed
+- #549 A pull that writes a student-data file git already tracks — committed
+  before the =.gitignore= line existed — logs a warning instead of touching
+  anything, since a =.gitignore= does not untrack; run =git rm --cached= on
+  the file yourself.  When git tracks files under the submissions directory,
+  its pull warns the same way.  Outside a git work tree, or without git
+  installed, none of this happens and nothing errors.
+- #549 =gradebook-scores.eld= is guarded through the shared list now: the
+  behavior it already had (added to the =.gitignore=, warned about when
+  tracked) is unchanged, and a customized
+  =org-canvas-gradebook-scores-file= is protected the same way.

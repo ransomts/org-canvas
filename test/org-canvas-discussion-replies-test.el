@@ -93,6 +93,24 @@ to a fresh path under a temp directory, DIR, which BODY may use."
         (expect (string-match "Reply by Carol" text)
                 :to-be-less-than (string-match "Reply by Bob" text)))))
 
+  (it "keeps discussion-replies.org out of git when the course directory is a work tree (issue #549)"
+    (test-replies--with-course
+        '(((id . 7) (title . "Week 1: Introductions")))
+        `((7 . (,(test-replies--entry 100 "Alice" "2026-09-01T14:00:00Z" "<p>Hello</p>"))))
+        nil
+      ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+      ;; answer 1 (not tracked, not ignored), so the pull adds the name.
+      (cl-letf (((symbol-function 'process-file)
+                 (lambda (_program _in _out _display &rest args)
+                   (if (equal (car args) "rev-parse") 0 1))))
+        (org-canvas-pull-discussion-replies))
+      (expect (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name ".gitignore"
+                                   (file-name-directory org-canvas-discussion-replies-file)))
+                (buffer-string))
+              :to-equal "discussion-replies.org\n")))
+
   (it "fetches replies only for an entry that has some"
     (test-replies--with-course
         '(((id . 7) (title . "T")))

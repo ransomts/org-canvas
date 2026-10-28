@@ -34,9 +34,11 @@
 ;; =============
 ;; The member lists are student names.  Only the display name is
 ;; written -- no email, SIS id or login id -- but a name is still
-;; personal data, so treat groups.org the way the submissions
-;; directory is treated: keep it out of a course repository (add it
-;; to .gitignore) and out of anything shared.  The module writes only
+;; personal data, so keep groups.org out of anything shared.  In a
+;; git work tree the pull keeps it out of a course repository itself
+;; (issue #549): it adds groups.org to the .gitignore beside it
+;; unless git ignores the file already, and warns when git tracks it,
+;; since a .gitignore does not untrack.  The module writes only
 ;; `org-canvas-groups-file' itself.
 ;;
 ;; API NOTES
@@ -54,7 +56,8 @@
 
 (defcustom org-canvas-groups-file (org-canvas--path "groups.org")
   "Path to the groups.org file.
-It holds student names once pulled; keep it out of a course repository."
+It holds student names once pulled; the pull keeps it out of a course
+repository (issue #549)."
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-groups-file "groups.org")
@@ -237,7 +240,8 @@ The current buffer must visit FILE."
 Categories become level-1 headings, groups level-2, and each group's
 members a list of names in its body.  Read-only: nothing is pushed,
 and nothing local is deleted for being absent on Canvas.  The file
-holds student names afterwards; keep it out of a course repository."
+holds student names afterwards; the pull keeps it out of a course
+repository (issue #549)."
   (interactive)
   (org-canvas--start-operation "PULLING GROUPS")
   (let* ((file (expand-file-name org-canvas-groups-file))
@@ -248,6 +252,9 @@ holds student names afterwards; keep it out of a course repository."
          (category-count 0) (group-count 0) (member-count 0)
          (was-fresh (org-canvas--pull-was-fresh-p file)))
     (org-canvas--pull-confirm-unsaved file "groups")
+    ;; The member lists are student names: the pull keeps them out of
+    ;; git itself rather than by a comment (issue #549).
+    (org-canvas--student-data-ignore file)
     (if (zerop total)
         (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "groups"))
       (org-canvas--create-file file)
