@@ -410,6 +410,13 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
      "people" 'list (append org-canvas--people-departure-params '(("user_id" . "1"))))
     (expect org-canvas--people-departure-params :to-contain '("state[]" . "deleted")))
 
+  (it "the people identifiers read is the documented course users list (issue #543)"
+    ;; The read asks for no include: the ids come on the user records
+    ;; themselves, and the roster's grouping already comes from the
+    ;; enrollments index.  The check pins the operation the fixture
+    ;; carries, so a parameter the read starts sending is checked too.
+    (org-canvas-contract--check-read-params "people" 'users nil))
+
   (it "a student's gradebook pull sends only documented parameters (issue #488)"
     ;; The submissions read and the course read are the module's own
     ;; constants: the gradebook is pull-only, with no registry entry.

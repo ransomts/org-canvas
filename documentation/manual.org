@@ -149,6 +149,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =student NAME-OR-USER-ID=    | =org-canvas-gradebook-student=: one student's every column, what is still open, the best possible grade (#542) |   |
+| =person NAME-OR-USER-ID=    | =org-canvas-people-person=: one person's roster entry and ids, from people.org (#543) |   |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
@@ -2587,8 +2588,8 @@ skipped.
 | =ENROLLMENT_STATE=   | string    | active, invited, inactive, completed; several when the enrollments differ; deleted, rejected or absent once Canvas no longer lists the person |
 | =DEPARTED=           | timestamp | When a person Canvas no longer lists left; removed if they come back |
 | =LAST_ACTIVITY=      | timestamp | When Canvas last saw the person in the course                        |
-| =SIS_USER_ID=        | string    | Only with =org-canvas-people-include-identifiers=                    |
-| =LOGIN_ID=           | string    | Only with =org-canvas-people-include-identifiers=                    |
+| =SIS_USER_ID=        | string    | The university's id, read from the course's user records; only with =org-canvas-people-include-identifiers=, and left out when Canvas omits it |
+| =LOGIN_ID=           | string    | The Canvas login, read from the course's user records; only with =org-canvas-people-include-identifiers=, and left out when Canvas omits it |
 
 *** Departures
 
@@ -2629,6 +2630,29 @@ object Canvas returns carries current scores.  A name is personal data
 all the same: treat =people.org= as you treat the submissions
 directory and keep it out of a course repository (add it to
 =.gitignore=) and out of anything you share.
+
+With the identifiers on, the pull reads the course's user records —
+where Canvas returns =sis_user_id= and =login_id=, and only for a
+token whose role may see them — and writes each one it returns into
+the person's drawer.  A field Canvas omits for a user leaves the
+property out, and a re-pull removes one Canvas stopped returning; a
+person whose record the read did not return keeps none.  Turning the
+option off stops writing them: the ones already written stay until you
+remove them.
+
+*** Looking One Person Up
+
+=M-x org-canvas-people-person=, or =scripts/org-canvas person
+NAME-OR-USER-ID= from the shell (issue #543), prints one person's
+roster entry: their name and user id, role, sections, enrollment
+state, and their SIS id and login id when the pull wrote them — the
+university student number an office form or a registrar request asks
+for.  The name is a people.org title (the sortable name, ="Last,
+First"=) or a Canvas user id (=5001= or =#5001=); interactively it is
+completed from the roster.  An identifier the pull did not write is
+reported as such, with the option that asks for it named.  Read-only:
+=people.org= is read and nothing is sent, so it works from a shell
+with no credentials loaded.
 
 ** gradebook.org
 
@@ -5772,6 +5796,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
 | =org-canvas-gradebook-student=    | Print one student's standing: every column, what is still open, the best possible total (read-only; see [[*One Student's Standing][One Student's Standing]]) |
+| =org-canvas-people-person=       | Print one person's roster entry and institution ids, from people.org (read-only; see [[*Looking One Person Up][Looking One Person Up]]) |
 | =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
@@ -6528,8 +6553,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =ENROLLMENT_STATE= | string | set by Canvas (read-only) |  | active, invited, inactive or completed; several when the enrollments differ; deleted, rejected or absent for a heading Canvas no longer lists |
 | =DEPARTED= | timestamp | set by Canvas (read-only) |  | When a person Canvas no longer lists left; removed if they come back |
 | =LAST_ACTIVITY= | timestamp | set by Canvas (read-only) |  | When Canvas last saw the person in the course |
-| =SIS_USER_ID= | string | set by Canvas (read-only) |  | SIS id, only with org-canvas-people-include-identifiers |
-| =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers |
+| =SIS_USER_ID= | string | set by Canvas (read-only) |  | University SIS id, only with org-canvas-people-include-identifiers; left out when Canvas omits it |
+| =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers; left out when Canvas omits it |
 
 ** Question Banks
 
