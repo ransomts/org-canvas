@@ -13,8 +13,8 @@
 ;; `org-canvas-batch-setup' is the half a script still wants: given a
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
-;; command line with subcommands (status, grades, gradebook, pull,
-;; pull-all, push, publish, delete, diff, adopt, show, validate,
+;; command line with subcommands (status, grades, gradebook, student,
+;; pull, pull-all, push, publish, delete, diff, adopt, show, validate,
 ;; sync, check ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
@@ -198,6 +198,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Import the whole course; exit 1 if anything failed (#458).")
     ("gradebook" org-canvas-batch--cmd-gradebook 0 0 ""
      "Pull gradebook.org; print its Sections table and the course's scores.")
+    ("student" org-canvas-batch--cmd-student 1 1 "NAME-OR-USER-ID"
+     "Print one student's standing: every column, what is still open, the best possible grade (#542).")
     ("verify" org-canvas-batch--cmd-verify 1 nil
      "[--hidden] ASSIGNMENT... | FEATURE:TITLE..."
      "Read pushed columns or headings back; exit 1 on a difference.")
@@ -429,6 +431,13 @@ Return t, or nil after reporting a failure."
 The Sections table, then the course's mean and median scores
 \(`org-canvas-gradebook-summary-text', issue #451)."
   (princ (org-canvas-gradebook-summary-text (org-canvas-pull-gradebook)))
+  0)
+
+(defun org-canvas-batch--cmd-student (parsed)
+  "Print the standing of the student PARSED names; return 0.
+Every column grouped by assignment group, the columns still open, and
+the best possible total (`org-canvas-gradebook-student', #542)."
+  (org-canvas-gradebook-student (car (plist-get parsed :args)))
   0)
 
 (defun org-canvas-batch--cmd-pull-queue (_parsed)

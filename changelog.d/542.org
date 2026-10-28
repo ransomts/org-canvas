@@ -1,0 +1,10 @@
+* Added
+- #542 =scripts/org-canvas student NAME=, or =M-x
+  org-canvas-gradebook-student=, prints one student's standing without
+  writing anything: every column with its score, points, state, late
+  and missing flags, due and lock dates and whether it is still open,
+  grouped by assignment group with its weight and drop rules; the
+  columns past due but not locked, the only work the student can still
+  turn in; and the best possible total if every still-open column
+  scored full marks, drop rules kept and closed ungraded columns
+  counting zero.

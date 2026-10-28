@@ -820,6 +820,23 @@
         (expect (test-batch--run '("extend" "Lab 1" "#1")) :to-equal 2))
       (expect (car messages) :to-match "extend takes ASSIGNMENT STUDENT DUE"))))
 
+(describe "the student command (issue #542)"
+  (it "takes exactly one student and prints their standing"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-gradebook-student)
+                 (lambda (&rest args) (push args calls))))
+        (expect (test-batch--run '("student" "Adams, Alice")) :to-equal 0)
+        (expect (test-batch--run '("student" "#5001")) :to-equal 0))
+      (expect (reverse calls) :to-equal '(("Adams, Alice") ("#5001")))))
+
+  (it "is a usage error with no argument or with two"
+    (let (messages)
+      (test-batch--quietly messages
+        (expect (test-batch--run '("student")) :to-equal 2)
+        (expect (test-batch--run '("student" "Adams, Alice" "Beta, Bob"))
+                :to-equal 2))
+      (expect (car messages) :to-match "student takes NAME-OR-USER-ID"))))
+
 ;;;; --json (issue #531)
 
 (defvar test-batch--json-output nil
