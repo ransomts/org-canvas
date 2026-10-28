@@ -32,6 +32,7 @@ lisp/
 ├── org-canvas-announcements-verify.el # Read pushed announcements back and compare title, publish, posting, comments and body (requires diff, announcements)
 ├── org-canvas-heading-verify.el # Read pushed assignments, modules (and their items) and files back and compare them with their headings (requires diff, announcements-verify, assignments, modules, files)
 ├── org-canvas-setup.el          # Setup wizard (org-canvas-init)
+├── org-canvas-new-semester.el   # org-canvas-new-semester: retarget a copied course directory and strip its sync stamps (local only)
 ├── org-canvas-transient.el      # Transient command menu
 ├── org-canvas-submissions.el    # Submission viewer and grading
 ├── org-canvas-quiz-submissions.el # Read-only table of a classic quiz's attempts (requires submissions)
@@ -46,7 +47,7 @@ lisp/
 ├── org-canvas-submissions-ruling.el # Apply a grading ruling to listed students: rubric rows, scores and drafted comments rewritten, everything local (requires submissions, submissions-comments)
 ├── org-canvas-submissions-uploads.el # Read a column's downloaded uploads and pair students by shared document, everything local (requires submissions)
 ├── org-canvas-submissions-reports.el # Similarity and AI Writing across every column with a processor, one row per student, read-only (requires submissions)
-├── org-canvas-messages.el       # Send Canvas conversations from messages.org; never part of org-canvas-sync
+├── org-canvas-messages.el       # Send Canvas conversations from messages.org and pull the replies back beneath them; never part of org-canvas-sync
 ├── org-canvas-new-quiz-items.el # New Quizzes item/question pipeline (sub-module of new-quizzes)
 ├── org-canvas-announcements.el     # Course announcements
 ├── org-canvas-assignment-groups.el # Grade weighting categories

@@ -66,16 +66,19 @@ MODULE_READ_OPS = {
     "pages": ("list_pages_courses", "show_page_courses"),
 }
 
-# Pull-only modules -> (list operationId,): reads with no feature registry
-# entry, whose query parameters the module keeps in its own constants.
-# people: the roster read and the per-person departure read (issue #290)
-# both go to the course enrollments index with `state[]' and `user_id'.
+# Pull-only modules -> {read kind: operationId}: reads with no feature
+# registry entry, whose query parameters the module keeps in its own
+# constants.  people: the roster read and the per-person departure read
+# (issue #290) both go to the course enrollments index with `state[]'
+# and `user_id', and the identifiers read (issue #543) lists the
+# course's user records, where sis_user_id and login_id live.
 PULL_ONLY_READ_OPS = {
-    "people": ("list_enrollments_courses",),
+    "people": {"list": "list_enrollments_courses",
+               "users": "list_users_in_course_users"},
     # gradebook: a student's own submissions, and the course read that
     # tells the caller's role and carries their totals (issue #488).
-    "gradebook": ("list_submissions_for_multiple_assignments_courses",
-                  "get_single_course_courses"),
+    "gradebook": {"list": "list_submissions_for_multiple_assignments_courses",
+                  "item": "get_single_course_courses"},
 }
 
 # Modules whose read (pull) response object is documented as a component
@@ -256,7 +259,7 @@ def main():
 
     for module, read_ops in PULL_ONLY_READ_OPS.items():
         reads = {}
-        for kind, read_opid in zip(("list", "item"), read_ops):
+        for kind, read_opid in read_ops.items():
             read_op = find_op(spec, read_opid)
             if read_op is None:
                 sys.exit(f"operationId not found: {read_opid} (module {module})")

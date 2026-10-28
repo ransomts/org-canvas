@@ -1,0 +1,14 @@
+* Added
+- #548 =org-canvas-pull-message-replies= reads what students replied to
+  the sent messages of messages.org back in beneath them: every heading
+  stamped =CONVERSATION_IDS= is matched against the course's Inbox, and
+  each conversation's messages after the one the send wrote become
+  level-2 reply headings named for who wrote them and when, updated in
+  place on a re-pull, with nothing local deleted.  Only GETs are sent,
+  so a course marked read-only allows it; like sending, the command is
+  part of no sync or pull tier.
+* Fixed
+- #548 The text of a message heading now ends at the first heading
+  beneath it, so a note kept under a draft is no longer sent as part of
+  the message, and the replies the pull writes beneath a sent heading
+  no longer read as an edit of the text that went out.

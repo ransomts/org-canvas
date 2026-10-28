@@ -148,6 +148,7 @@ KIND names the blocked primitive; DETAIL is safe-to-print context
 (defconst test-org-canvas-course-globals
   '(org-canvas-directory org-canvas-base-url org-canvas-api-token
     org-canvas-course-id org-canvas-read-only
+    org-canvas-write-allowlist
     org-canvas--active-course-name)
   "Course settings a spec must leave as it found them.")
 

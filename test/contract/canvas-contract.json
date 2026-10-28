@@ -673,6 +673,21 @@
           "type",
           "user_id"
         ]
+      },
+      "users": {
+        "operationId": "list_users_in_course_users",
+        "params": [
+          "enrollment_role",
+          "enrollment_role_id",
+          "enrollment_state",
+          "enrollment_type",
+          "include",
+          "page",
+          "per_page",
+          "search_term",
+          "user_id",
+          "user_ids"
+        ]
       }
     }
   },

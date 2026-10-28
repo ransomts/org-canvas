@@ -146,6 +146,7 @@ writing commands greyed rather than only erroring when one is chosen
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)
    ("c" "Switch course" org-canvas-activate-course)
+   ("k" "New semester (retarget and strip sync stamps)" org-canvas-new-semester)
    ("t" "Test connection" org-canvas-test-connection)
    ("v" "Validate files" org-canvas-validate)
    ("V" "Validate files (including push-only advice)" org-canvas-validate-all)

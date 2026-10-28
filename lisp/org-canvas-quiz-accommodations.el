@@ -393,6 +393,8 @@ Reads the `#+NAME: accommodations' table under each quiz heading in
 quizzes.org that carries a CANVAS_ID and reconciles it with the
 extensions Canvas holds: the table is the whole set."
   (interactive)
+  (org-canvas--check-write-scope
+   (expand-file-name org-canvas-quizzes-file) "an accommodations sync")
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((file (expand-file-name org-canvas-quizzes-file))
@@ -420,6 +422,7 @@ extensions Canvas holds: the table is the whole set."
   (interactive)
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an Org buffer"))
+  (org-canvas--check-write-scope (buffer-file-name) "an accommodations sync")
   (org-canvas-clear-log)
   (save-excursion
     (org-back-to-heading t)

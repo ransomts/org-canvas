@@ -41,19 +41,27 @@
 ;;                    enrollment's last change, or the pull that first
 ;;                    found no enrollment at all
 ;; LAST_ACTIVITY    - when Canvas last saw the person in the course
-;; SIS_USER_ID      - only with `org-canvas-people-include-identifiers'
-;; LOGIN_ID         - only with `org-canvas-people-include-identifiers'
+;; SIS_USER_ID      - the university's id for the person, from their user
+;;                    record; only with `org-canvas-people-include-identifiers',
+;;                    and left out when Canvas omits it
+;; LOGIN_ID         - the person's Canvas login, from their user record,
+;;                    same condition
 ;;
 ;; PERSONAL DATA
 ;; =============
 ;; The file is a roster of names.  By default only the name, the role,
 ;; the sections, the state and the last activity are written; the SIS
-;; id and login id are opt-in, and an email address or a grade is never
-;; written (the enrollment object carries current scores; this module
-;; does not read them).  A name is personal data all the same: treat
-;; people.org as you treat the submissions directory and keep it out of
-;; a course repository (add it to .gitignore) and out of anything
-;; shared.  The module writes only `org-canvas-people-file' itself.
+;; id and login id are opt-in, read from the course's user records
+;; only while `org-canvas-people-include-identifiers' is set, and left
+;; out for a person whose record Canvas omits them from.  An email
+;; address or a grade is never written (the enrollment object carries
+;; current scores; this module does not read them).  A name is personal
+;; data all the same: keep people.org out of anything shared.  In a
+;; git work tree the pull keeps it out of a course repository itself
+;; (issue #549): it adds people.org to the .gitignore beside it unless
+;; git ignores the file already, and warns when git tracks it, since a
+;; .gitignore does not untrack.  The module writes only
+;; `org-canvas-people-file' itself.
 ;;
 ;; API NOTES
 ;; =========
@@ -63,6 +71,12 @@
 ;;   GET /courses/:id/enrollments?user_id=N&state[]=...  - one request per
 ;;       heading the roster read did not return, every state asked for
 ;;   GET /courses/:id/sections                  - section names for SECTIONS
+;;   GET /courses/:id/users                     - the user records the
+;;       identifiers are read from, sis_user_id and login_id among their
+;;       fields when the token's role may see them; read only while
+;;       `org-canvas-people-include-identifiers' is set.  The enrollments
+;;       index carries a name only, which is why the ids are not read
+;;       from it
 ;;   StudentViewEnrollment is Canvas's "Test Student" and is skipped.
 
 ;;; Code:
@@ -75,7 +89,8 @@
 
 (defcustom org-canvas-people-file (org-canvas--path "people.org")
   "Path to the people.org file.
-It holds the course roster once pulled; keep it out of a course repository."
+It holds the course roster once pulled; the pull keeps it out of a
+course repository (issue #549)."
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-people-file "people.org")
@@ -106,9 +121,9 @@ the ones an institution treats as sensitive."
     (:org-prop "LAST_ACTIVITY" :data-key :last_activity_at :type timestamp :pull-only t
      :doc "When Canvas last saw the person in the course")
     (:org-prop "SIS_USER_ID" :data-key :sis_user_id :type string :pull-only t
-     :doc "SIS id, only with org-canvas-people-include-identifiers")
+     :doc "University SIS id, only with org-canvas-people-include-identifiers; left out when Canvas omits it")
     (:org-prop "LOGIN_ID" :data-key :login_id :type string :pull-only t
-     :doc "Login id, only with org-canvas-people-include-identifiers")))
+     :doc "Login id, only with org-canvas-people-include-identifiers; left out when Canvas omits it")))
 
 (defconst org-canvas--people-roles
   '(("TeacherEnrollment" "teacher" "Teachers")
@@ -133,15 +148,16 @@ is skipped.")
   (cl-position type org-canvas--people-roles :key #'car :test #'equal))
 
 (defun org-canvas--people-new (uid user rank)
-  "Return a fresh person plist for user UID from the USER object, at role RANK."
+  "Return a fresh person plist for user UID from the USER object, at role RANK.
+The USER object is the name-only one the enrollments index embeds; the
+institution's ids are stamped on from the course's user records by
+`org-canvas--people-with-identifiers'."
   (list :user-id uid
         :name (or (alist-get 'sortable_name user)
                   (alist-get 'name user)
                   (format "User %s" uid))
         :rank rank
-        :section-ids nil :states nil :last-activity nil
-        :sis-user-id (org-canvas--alist-get-non-null 'sis_user_id user)
-        :login-id (org-canvas--alist-get-non-null 'login_id user)))
+        :section-ids nil :states nil :last-activity nil))
 
 (defun org-canvas--people-merge-enrollment (person enrollment rank)
   "Fold one ENROLLMENT at role RANK into PERSON's plist, in place.
@@ -165,8 +181,9 @@ latest activity is kept."
 (defun org-canvas--people-group (enrollments)
   "Fold ENROLLMENTS, one per section, into one plist per person.
 Each plist has :user-id, :name (the sortable name), :role, :heading,
-:section-ids, :states, :last-activity (the latest), :sis-user-id and
-:login-id.  Enrollment types the roster does not list are dropped.
+:section-ids, :states and :last-activity (the latest); the institution
+ids are stamped on afterwards by `org-canvas--people-with-identifiers'.
+Enrollment types the roster does not list are dropped.
 Returns the people in role-heading order, then by name."
   (let ((people (make-hash-table :test 'eql)))
     (dolist (e (append enrollments nil))
@@ -193,6 +210,53 @@ Returns the people in role-heading order, then by name."
                        (if (= ha hb)
                            (string< (plist-get a :name) (plist-get b :name))
                          (< ha hb))))))))
+
+;;;; Institution Identifiers (issue #543)
+
+(defun org-canvas--people-identifier (user field)
+  "Return USER's FIELD, `sis_user_id' or `login_id', as a string or nil.
+Canvas returns each field only when the token's role may see it, and
+sends null for a user the institution has not given one; either leaves
+the property out, so nil is the answer for both."
+  (let ((value (org-canvas--alist-get-non-null field user)))
+    (and (stringp value) (not (string-empty-p value)) value)))
+
+(defun org-canvas--people-fetch-users ()
+  "Return the course's user records, as a list.
+The enrollments index embeds a name only, so this is where the
+institution's ids are read from."
+  (append (org-canvas-api-request-all-pages
+           'GET (org-canvas-api-course-endpoint "users"))
+          nil))
+
+(defun org-canvas--people-identifier-map (users)
+  "Return a hash table of user id to (SIS . LOGIN) from USERS.
+Each id is nil in its pair when the record omits it."
+  (let ((map (make-hash-table :test 'eql)))
+    (dolist (user (append users nil))
+      (puthash (alist-get 'id user)
+               (cons (org-canvas--people-identifier user 'sis_user_id)
+                     (org-canvas--people-identifier user 'login_id))
+               map))
+    map))
+
+(defun org-canvas--people-with-identifiers (people)
+  "Return PEOPLE with each person's institution ids stamped on.
+The course's user records are read for them, but only while
+`org-canvas-people-include-identifiers' asks for the properties to be
+written: a pull not writing them reads none, and neither does one
+whose roster read came back empty.  A person whose record the read did
+not return keeps nil ids, so their properties are left out."
+  (if (and people org-canvas-people-include-identifiers)
+      (let ((ids (org-canvas--people-identifier-map
+                  (org-canvas--people-fetch-users))))
+        (dolist (person people)
+          (let ((pair (gethash (plist-get person :user-id) ids)))
+            (when pair
+              (plist-put person :sis-user-id (car pair))
+              (plist-put person :login-id (cdr pair)))))
+        people)
+    people))
 
 ;;;; Section Names and Links
 
@@ -267,6 +331,14 @@ Returns the new heading's position."
 
 ;;;; Properties
 
+(defun org-canvas--people-set-identifier (pos property value)
+  "Write identifier PROPERTY with VALUE on the heading at POS, or remove it.
+VALUE nil, Canvas's answer for a user the token may not see the field
+of, takes the property off rather than leaving a stale one behind."
+  (if value
+      (org-canvas-org-set-property pos property value)
+    (org-entry-delete pos property)))
+
 (defun org-canvas--people-set-properties (pos person names)
   "Write PERSON's pulled properties on the heading at POS.
 NAMES maps section ids to names."
@@ -285,10 +357,10 @@ NAMES maps section ids to names."
   ;; Listed again, so back: a departure a previous pull wrote is over.
   (org-entry-delete pos "DEPARTED")
   (when org-canvas-people-include-identifiers
-    (when (plist-get person :sis-user-id)
-      (org-canvas-org-set-property pos "SIS_USER_ID" (plist-get person :sis-user-id)))
-    (when (plist-get person :login-id)
-      (org-canvas-org-set-property pos "LOGIN_ID" (plist-get person :login-id)))))
+    (org-canvas--people-set-identifier
+     pos "SIS_USER_ID" (plist-get person :sis-user-id))
+    (org-canvas--people-set-identifier
+     pos "LOGIN_ID" (plist-get person :login-id))))
 
 (defun org-canvas--people-pull-one (person names)
   "Upsert PERSON into the current buffer under its role heading.
@@ -485,20 +557,27 @@ Empty when there were none."
 (defun org-canvas-pull-people ()
   "Pull the course roster into people.org.
 Roles become level-1 headings and each person a level-2 heading with
-their role, sections, enrollment state and last activity.  Read-only:
-nothing is pushed, and nothing local is deleted for being absent on
-Canvas: a heading the roster no longer lists is looked up in every
-enrollment state and marked with the state Canvas gives, or `absent',
-and DEPARTED, and the closing line names it.  A roster read that comes
-back empty leaves an existing file alone.  The file holds a roster
-of names afterwards; keep it out of a course repository."
+their role, sections, enrollment state and last activity, and with
+their SIS and login ids while `org-canvas-people-include-identifiers'
+is set.  Read-only: nothing is pushed, and nothing local is deleted
+for being absent on Canvas: a heading the roster no longer lists is
+looked up in every enrollment state and marked with the state Canvas
+gives, or `absent', and DEPARTED, and the closing line names it.  A
+roster read that comes back empty leaves an existing file alone.  The
+file holds a roster of names afterwards; the pull keeps it out of a
+course repository."
   (interactive)
   (org-canvas--start-operation "PULLING PEOPLE")
   (let* ((file (expand-file-name org-canvas-people-file))
-         (people (org-canvas--people-group (org-canvas--people-fetch-enrollments)))
+         (people (org-canvas--people-with-identifiers
+                  (org-canvas--people-group
+                   (org-canvas--people-fetch-enrollments))))
          (was-fresh (org-canvas--pull-was-fresh-p file))
          (departures nil))
     (org-canvas--pull-confirm-unsaved file "people")
+    ;; A roster of names is student data: the pull keeps it out of git
+    ;; itself rather than by a comment (issue #549).
+    (org-canvas--student-data-ignore file)
     (cond
      (people (setq departures (org-canvas--people-write file people)))
      ((org-canvas--people-file-has-people-p file)
@@ -549,6 +628,107 @@ DEPARTURES is `refused' when an empty roster read left the file alone."
       (org-canvas--log-info org-canvas--logger
         "People pull complete: %d people (%s)%s" (length people) summary tail)
       (message "People pull complete: %d people (%s)%s." (length people) summary tail))))
+
+;;;; Looking One Person Up (issue #543)
+
+(defconst org-canvas--people-missing-identifier-text
+  "not in people.org; set org-canvas-people-include-identifiers and pull people again"
+  "What the person report prints for an identifier the pull did not write.
+Canvas omits each id for a token that may not see it, so a pull asked
+for them can still leave one out.")
+
+(defun org-canvas--people-person-id-p (name)
+  "Return the user id NAME spells, as a string, or nil when it spells none.
+Both 5001 and #5001 spell an id."
+  (when (string-match "\\`#?\\([0-9]+\\)\\'" name)
+    (match-string 1 name)))
+
+(defun org-canvas--people-entries ()
+  "Return one plist per person in people.org, in file order.
+Each plist holds :title (the heading), :user-id and the roster
+properties the pull writes; any of them nil when the heading carries
+none.  A missing people.org, or one naming no person, is a `user-error'
+that says to pull the roster."
+  (if (not (and org-canvas-people-file (file-exists-p org-canvas-people-file)))
+      (user-error "No people.org in this course; run org-canvas-pull-people first")
+    (with-current-buffer (org-canvas--find-file-noselect org-canvas-people-file)
+      (org-with-wide-buffer
+       (or (delq nil
+                 (org-map-entries
+                  (lambda ()
+                    (let ((uid (org-entry-get (point) "USER_ID")))
+                      (and uid
+                           (list :title (org-get-heading t t t t)
+                                 :user-id uid
+                                 :role (org-entry-get (point) "ROLE")
+                                 :sections (org-entry-get (point) "SECTIONS")
+                                 :enrollment (org-entry-get (point) "ENROLLMENT_STATE")
+                                 :sis (org-entry-get (point) "SIS_USER_ID")
+                                 :login (org-entry-get (point) "LOGIN_ID")))))
+                  "LEVEL=2+USER_ID={.}" 'file))
+           (user-error "No people in people.org; run org-canvas-pull-people first"))))))
+
+(defun org-canvas--people-person-pick (entries name)
+  "Return the entry of ENTRIES that NAME, a title or a user id, names.
+A title two people share is an error naming both user ids: the id is
+the only way to tell them apart."
+  (let* ((id (org-canvas--people-person-id-p name))
+         (matching (cl-remove-if-not
+                    (lambda (entry)
+                      (if id
+                          (equal (plist-get entry :user-id) id)
+                        (equal (plist-get entry :title) name)))
+                    entries)))
+    (cond ((null matching)
+           (user-error "No person %s in people.org" name))
+          ((and (null id) (cdr matching))
+           (user-error "Two people in people.org are named %s; name the user id: %s"
+                       name (mapconcat (lambda (e) (plist-get e :user-id))
+                                       matching ", ")))
+          (t (car matching)))))
+
+(defun org-canvas--people-person-prompt ()
+  "Read a person for `org-canvas-people-person', with completion.
+The candidates are people.org's titles, the sortable names; a user id
+answers too.  The file is read once for the completion and again by the
+command itself."
+  (completing-read "Person (name or user id): "
+                   (mapcar (lambda (entry) (plist-get entry :title))
+                           (org-canvas--people-entries))
+                   nil t))
+
+(defun org-canvas--people-person-text (entry)
+  "Return ENTRY's roster card as text: who they are and their ids.
+Every line comes from people.org's drawer; nothing is read or sent.
+A roster fact the heading carries none of prints as a dash, and an
+identifier the pull did not write names the way to ask for it."
+  (concat
+   (format "%s (user %s)\n" (plist-get entry :title) (plist-get entry :user-id))
+   (format "Role: %s\n" (or (plist-get entry :role) "-"))
+   (format "Sections: %s\n" (or (plist-get entry :sections) "-"))
+   (format "Enrollment: %s\n" (or (plist-get entry :enrollment) "-"))
+   (format "SIS id: %s\n"
+           (or (plist-get entry :sis) org-canvas--people-missing-identifier-text))
+   (format "Login: %s\n"
+           (or (plist-get entry :login) org-canvas--people-missing-identifier-text))))
+
+;;;###autoload
+(defun org-canvas-people-person (&optional name-or-id)
+  "Print one person's roster entry and institution ids.
+NAME-OR-ID is a Canvas user id (5001 or #5001) or a people.org
+title, the sortable name; interactively it is completed from the roster.
+Prints their role, sections and enrollment state, and their SIS id and
+login id — the university student number an office form asks for — when
+the pull wrote them: set `org-canvas-people-include-identifiers' before
+pulling to read them.  Read-only: people.org is read and nothing is
+sent (issue #543)."
+  (interactive (list (org-canvas--people-person-prompt)))
+  (org-canvas--report-display
+   "*canvas-person*"
+   (lambda ()
+     (insert (org-canvas--people-person-text
+              (org-canvas--people-person-pick
+               (org-canvas--people-entries) name-or-id))))))
 
 (provide 'org-canvas-people)
 ;;; org-canvas-people.el ends here

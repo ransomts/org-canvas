@@ -102,6 +102,19 @@ FILE is bound to the groups file path and DIR to the directory."
         (expect text :not :to-match "ada@x")
         (expect text :not :to-match "s2"))))
 
+  (it "keeps groups.org out of git when the course directory is a work tree (issue #549)"
+    (test-groups--with-course
+      ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+      ;; answer 1 (not tracked, not ignored), so the pull adds the name.
+      (cl-letf (((symbol-function 'process-file)
+                 (lambda (_program _in _out _display &rest args)
+                   (if (equal (car args) "rev-parse") 0 1))))
+        (org-canvas-pull-groups))
+      (expect (with-temp-buffer
+                (insert-file-contents (expand-file-name ".gitignore" dir))
+                (buffer-string))
+              :to-equal "groups.org\n")))
+
   (it "omits a nil member limit and writes nothing under a group without members"
     (test-groups--with-course
       (org-canvas-pull-groups)

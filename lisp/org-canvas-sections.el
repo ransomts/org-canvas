@@ -1099,6 +1099,10 @@ Returns the expanded assignments file path."
                            (if (boundp 'org-canvas-assignments-file)
                                org-canvas-assignments-file
                              (org-canvas--path "assignments.org")))))
+    ;; The overrides table lives in assignments.org, so its file is
+    ;; what an allowlist must name to let a scoped identity send them
+    ;; (issue #550).
+    (org-canvas--check-write-scope assignments-file "the override sync")
     (unless (file-exists-p assignments-file)
       (org-canvas--signal 'org-canvas-config-error
         "Assignments file not found: %s" assignments-file))

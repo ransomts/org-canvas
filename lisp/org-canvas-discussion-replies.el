@@ -21,6 +21,14 @@
 ;; Entry and reply headings read `Reply by NAME (YYYY-MM-DD HH:MM)';
 ;; the body is the message converted to Org.
 ;;
+;; PRIVACY
+;; =======
+;; The authors are students and the bodies are what they wrote.  In a
+;; git work tree the pull keeps the file out of a course repository
+;; itself (issue #549): it adds discussion-replies.org to the
+;; .gitignore beside it unless git ignores the file already, and warns
+;; when git tracks it, since a .gitignore does not untrack.
+;;
 ;; PROPERTIES (set by pull)
 ;; ========================
 ;; CANVAS_ID          - topic id, on the level-1 heading
@@ -48,7 +56,9 @@
 ;;;; Configuration
 
 (defcustom org-canvas-discussion-replies-file (org-canvas--path "discussion-replies.org")
-  "Path to the discussion-replies.org file."
+  "Path to the discussion-replies.org file.
+It names the students who posted; the pull keeps it out of a course
+repository (issue #549)."
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-discussion-replies-file "discussion-replies.org")
@@ -292,6 +302,9 @@ deleted.  Read-only: this never writes to Canvas."
          (topics (org-canvas--reply-fetch-topics))
          (topic-count 0) (entry-count 0) (reply-count 0) (skipped 0))
     (org-canvas--pull-confirm-unsaved file "discussion replies")
+    ;; Entries and replies name their authors: student data, kept out
+    ;; of git by the pull itself (issue #549).
+    (org-canvas--student-data-ignore file)
     (org-canvas--create-file file)
     (org-canvas--log-info org-canvas--logger "[Pull] %d topics on Canvas" (length topics))
     (dolist (topic topics)

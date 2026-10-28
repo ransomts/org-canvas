@@ -250,6 +250,14 @@ reference everything.  Files run early in tier 1 so their id-to-path
 map is there when later pulls rewrite Canvas file URLs in their bodies
 (=org-canvas--pull-tiers=, =lisp/org-canvas.el=, is the authority).
 
+The message commands sit outside every tier on purpose
+(=org-canvas-send-messages=, =org-canvas-pull-message-replies=): a sync
+or a full pull must never mail anyone, and the replies are personal
+Inbox data keyed to what messages.org sent, not course content a
+migration pulls.  The reply pull is a read-only reader in the shape of
+=org-canvas-pull-discussion-replies=, matched by the CONVERSATION_IDS
+the send stamped rather than by a course list.
+
 ** Overwrite Protection
 
 Before pulling, =pull-all= checks for existing content:

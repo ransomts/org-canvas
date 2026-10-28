@@ -42,7 +42,7 @@ pull-at-point and prune.
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
-| People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
+| People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org; the institution's SIS and login ids opt-in, read from the course's user records; one person's entry printed, not written (`scripts/org-canvas person`, #543) |
 | Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, and each assignment's score spread, in gradebook.org; one student's standing — every column, the still-open ones, the best possible total — printed, not written (`scripts/org-canvas student`, #542) |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, and a published survey's answers by text (#347), in quiz-results.org |
@@ -54,13 +54,22 @@ pull-at-point and prune.
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
 | Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy, and an assignment's scheduled posting of grades and comments; posting grades from a grading file |
 | Discussion checkpoints | yes | no    | yes  | no     | no       | the five CHECKPOINT_ properties on a discussion, by GraphQL; the flag is account-level, so an instance without it pulls none and refuses the push |
-| Conversations     | yes  | yes      | no   | no     | yes      | push-only, on command and never in a tier: messages.org sends to students, a section, a group, the course or yourself; a sent heading is stamped and never resent; nothing is read back |
+| Conversations     | yes  | yes      | replies only | no   | yes      | push-only on command and never in a tier, its replies pulled by `org-canvas-pull-message-replies` (also outside every tier): messages.org sends to students, a section, a group, the course or yourself; a sent heading is stamped and never resent; replies land beneath it matched by CONVERSATION_IDS |
 
 Submission grading (=org-canvas-submissions.el=) is a workflow, not a
 content type: it pulls a grading file per assignment, pushes scores
 and comments, posts grades held by a manual policy, downloads
 attachments, and reads and pushes each student's rubric assessment
 through the grading file's Rubric section.
+
+Every pull in the table that fills a file with student data — the
+roster, the groups, the gradebook and its scores file, the discussion
+replies, and everything under the submissions directory (grading files,
+quiz attempts, peer reviews) — keeps that file out of a course
+repository itself (#549): =org-canvas--student-data-files= in
+core-config names them, the pull adds the file's name to the course
+=.gitignore= unless git ignores it already, and a file git tracks is
+warned about rather than touched.
 
 *Course settings synced* (the registry in =org-canvas-settings.el= is
 the authority): the syllabus body, whether it is public, the home page

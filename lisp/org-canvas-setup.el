@@ -5,6 +5,8 @@
 
 ;; Interactive setup wizard for initializing org-canvas with a new course.
 ;; Creates credentials file, skeleton .org files, and tests the connection.
+;; It offers .gitignore protection for the credentials file and the
+;; student-data files a pull writes (issue #549).
 
 ;;; Code:
 
@@ -38,20 +40,48 @@ owned (issue #163)."
       (insert ";;; org-canvas-credentials.el ends here\n"))
     file))
 
+(defun org-canvas--gitignore-missing-lines (existing)
+  "Return the student-data lines the .gitignore text EXISTING lacks."
+  (let ((missing nil))
+    (dolist (name org-canvas--student-data-files)
+      (unless (string-match-p (regexp-quote name) existing)
+        (setq missing (append missing (list name)))))
+    missing))
+
+(defun org-canvas--suggest-gitignore-create (dir)
+  "Offer to write DIR's .gitignore with credentials and student data in it."
+  (when (y-or-n-p
+         "No .gitignore found.  Create one to protect credentials and student data? ")
+    (with-temp-file (expand-file-name ".gitignore" dir)
+      (insert "org-canvas-credentials.el\n")
+      (insert "# Student data written by org-canvas pulls\n")
+      (dolist (name org-canvas--student-data-files)
+        (insert name "\n")))))
+
+(defun org-canvas--suggest-gitignore-append (dir existing)
+  "Offer the credentials and student-data lines EXISTING lacks, for DIR.
+The credentials line first, then the student-data files (issue #549)."
+  (unless (string-match-p "org-canvas-credentials" existing)
+    (when (y-or-n-p "Add org-canvas-credentials.el to .gitignore? ")
+      (org-canvas--gitignore-append dir "org-canvas-credentials.el")))
+  (let ((missing (org-canvas--gitignore-missing-lines existing)))
+    (when missing
+      (when (y-or-n-p (format "Add student data (%s) to .gitignore? "
+                              (string-join missing ", ")))
+        (dolist (name missing)
+          (org-canvas--gitignore-append dir name))))))
+
 (defun org-canvas--suggest-gitignore (dir)
-  "Suggest adding credentials to .gitignore in DIR."
-  (let ((gitignore (expand-file-name ".gitignore" dir)))
-    (if (not (file-exists-p gitignore))
-        (when (y-or-n-p
-               "No .gitignore found.  Create one to protect credentials? ")
-          (with-temp-file gitignore
-            (insert "org-canvas-credentials.el\n")))
-      (with-temp-buffer
-        (insert-file-contents gitignore)
-        (unless (string-match-p "org-canvas-credentials" (buffer-string))
-          (when (y-or-n-p "Add org-canvas-credentials.el to .gitignore? ")
-            (append-to-file
-             "org-canvas-credentials.el\n" nil gitignore)))))))
+  "Suggest adding credentials and student data to .gitignore in DIR.
+The student-data files are `org-canvas--student-data-files', offered
+beside the credentials file so a shared course repository can leak
+neither (issue #549)."
+  (if (not (file-exists-p (expand-file-name ".gitignore" dir)))
+      (org-canvas--suggest-gitignore-create dir)
+    (org-canvas--suggest-gitignore-append
+     dir (with-temp-buffer
+           (insert-file-contents (expand-file-name ".gitignore" dir))
+           (buffer-string)))))
 
 (defun org-canvas--create-skeleton-files (dir)
   "Create minimal skeleton .org files in DIR."
@@ -127,6 +157,10 @@ is empty."
     (setq org-canvas-api-token token)
     (setq org-canvas-course-id course-id)
     (setq org-canvas-read-only read-only)
+    ;; A fresh course is scoped by nothing; leaving a previously
+    ;; activated course's allowlist in place would refuse this course's
+    ;; files with no entry naming them (issue #550).
+    (setq org-canvas-write-allowlist nil)
     (org-canvas--recompute-file-paths)
     ;; Offer to register in course registry
     (let ((course-name (read-string "Register as course (empty to skip): ")))
@@ -162,6 +196,11 @@ If NAME is nil and called interactively, prompt with completion."
     (let ((cred-file (expand-file-name "org-canvas-credentials.el" dir)))
       (unless (file-exists-p cred-file)
         (user-error "No org-canvas-credentials.el in %s" dir))
+      ;; The credentials file about to load sets what it scopes.  An
+      ;; allowlist left behind by a previously activated course would
+      ;; refuse this course's files, since a file that does not mention
+      ;; scoping cannot clear it (issue #550).
+      (setq org-canvas-write-allowlist nil)
       (load cred-file nil t)
       ;; Style settings live apart from the token (issue #499).
       (org-canvas-load-course-config dir)

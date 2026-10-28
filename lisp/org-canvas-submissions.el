@@ -58,7 +58,8 @@
 ;; =======
 ;; Grading files are student work.  The directory gets a .gitignore
 ;; when created (`org-canvas-submissions-write-gitignore') so they never
-;; travel with a course repository.
+;; travel with a course repository; a file git tracked before that
+;; warns, since a .gitignore does not untrack (issue #549).
 
 ;;; Code:
 
@@ -404,7 +405,9 @@ naming both, and nothing is written."
   "Create the submissions directory and return it.
 Write a .gitignore there once, when
 `org-canvas-submissions-write-gitignore' is non-nil, so the student
-work the directory holds never travels with a course repository."
+work the directory holds never travels with a course repository.
+Warn when git already tracks files under it — a .gitignore does not
+untrack (issue #549)."
   (let ((dir (org-canvas--submissions-dir)))
     (make-directory dir t)
     (when org-canvas-submissions-write-gitignore
@@ -413,6 +416,13 @@ work the directory holds never travels with a course repository."
           (with-temp-file gitignore
             (insert "# Student work pulled by org-canvas.  Never commit it.\n"
                     "*\n!.gitignore\n")))))
+    ;; Grading files, quiz attempts and peer reviews are student data
+    ;; (issue #549); a tracked one warns, since the .gitignore above
+    ;; does not untrack what was committed before it existed.
+    (when (eql 0 (org-canvas--git dir "ls-files" "--error-unmatch" "--" "."))
+      (org-canvas--log-warning org-canvas--logger
+        "[Submissions] git tracks files under %s: student work travels with the repository.  Run git rm --cached on them"
+        dir))
     dir))
 
 (defun org-canvas--submissions-file-property (name)
@@ -2317,6 +2327,9 @@ never does."
   (let ((item (org-canvas--submissions-bank-item-at-point)))
     (unless (and item (plist-get item :id))
       (user-error "No saved comment with an id at point"))
+    ;; Deleting a saved comment is a submissions write, refused before
+    ;; the question (issue #550).
+    (org-canvas--check-write-feature 'submissions "deleting a saved comment")
     (when (y-or-n-p (format "Delete saved comment %s from the comment bank? "
                             (plist-get item :id)))
       (if (not (org-canvas--submissions-bank-delete (plist-get item :id)))
@@ -3895,6 +3908,9 @@ student's Comment to post heading and `S' instead."
   (org-canvas--submissions-ensure-context)
   (unless (eq org-canvas-submissions--current-view 'detail)
     (user-error "Switch to detail view first (press v)"))
+  ;; Before the text is read from the grader: posting a comment is a
+  ;; submissions write (issue #550).
+  (org-canvas--check-write-feature 'submissions "posting a comment")
   (save-excursion
     (org-back-to-heading t)
     (let ((user-id (org-entry-get (point) "USER_ID"))
@@ -5413,6 +5429,10 @@ marked."
   (let ((assignment-id org-canvas-submissions--assignment-id))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    ;; Grading is the \"submissions\" word of the allowlist, its own
+    ;; axis beside the files: checked before the plan and the question,
+    ;; so a scoped identity is refused before any read or send (#550).
+    (org-canvas--check-write-feature 'submissions "a grade push")
     (let* ((plan (org-canvas--submissions-push-plan assignment-id only))
            (comments (plist-get plan :comments)))
       (cond ((not (org-canvas--submissions-plan-sends-p plan))
@@ -5571,6 +5591,7 @@ nil when declined, else the plist of
   (let ((assignment-id org-canvas-submissions--assignment-id))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    (org-canvas--check-write-feature 'submissions "a comment-edit push")
     (let ((comments (org-canvas--submissions-pending-comment-edits assignment-id)))
       (cond ((not (car comments))
              (message "No sent comment to change%s"
@@ -5766,6 +5787,9 @@ each student's POSTED_AT."
 (defun org-canvas--submissions-post-assignment (assignment-id)
   "Post ASSIGNMENT-ID's grades; return non-nil when the request was sent.
 Under `org-canvas--dry-run' nothing is sent and nil comes back."
+  ;; The one post path every poster reaches: P, the post commands of
+  ;; the status table, and a script's POST argument (issue #550).
+  (org-canvas--check-write-feature 'submissions "posting grades")
   (let ((reply (org-canvas--graphql-mutate
                 (format "post the grades of assignment %s" assignment-id)
                 org-canvas--submissions-post-grades-mutation

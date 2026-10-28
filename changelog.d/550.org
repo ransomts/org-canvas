@@ -1,0 +1,17 @@
+* Added
+- #550 =org-canvas-write-allowlist=, set in =org-canvas-credentials.el=,
+  names the files and features this identity may write, so a TA can be
+  scoped to =assignments.org= and =rubrics.org= and a grader to
+  ="submissions"= without owning any course content.  An entry is an
+  Org file's basename, the way the multi-instructor workflow divides
+  them, or the word =submissions= for grading — scores, rubric rows,
+  late statuses, comments, the Comment Bank and posting — which is
+  separated from the content of the same =assignments.org= by being its
+  own commands.  A write outside the list is refused before a push
+  starts, naming the file and where to grant it; reads (pull, status,
+  diff, validate) are never refused; =M-x org-canvas-sync= skips a
+  refused file with a warning instead of aborting the run.  Deletes,
+  prunes, orphan cleanup, publishes and drift-report deletes follow
+  the same list, and =M-x org-canvas-activate-course= leaves the
+  previous course's list behind.  An empty or absent list changes
+  nothing: =org-canvas-read-only= alone decides, as before.

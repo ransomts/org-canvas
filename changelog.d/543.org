@@ -1,0 +1,14 @@
+* Fixed
+- #543 The people pull writes =SIS_USER_ID= and =LOGIN_ID= when
+  =org-canvas-people-include-identifiers= is set: the ids are read from
+  the course's user records, where Canvas returns them, instead of the
+  enrollment rows, which carry a name only, so the properties never
+  appeared before.  A field Canvas omits for a user leaves the property
+  out, and a re-pull removes one Canvas stopped returning.
+
+* Added
+- #543 =scripts/org-canvas person NAME-OR-USER-ID=, or =M-x
+  org-canvas-people-person=, prints one person's roster entry from
+  people.org — name, user id, role, sections, enrollment state, and
+  their SIS and login ids when the pull wrote them — reading the file
+  only, with nothing sent.

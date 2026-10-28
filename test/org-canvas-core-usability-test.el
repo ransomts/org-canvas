@@ -656,7 +656,9 @@
                   (expect (file-exists-p gitignore) :to-be-truthy)
                   (with-temp-buffer
                     (insert-file-contents gitignore)
-                    (expect (buffer-string) :to-match "org-canvas-credentials"))))
+                    (expect (buffer-string) :to-match "org-canvas-credentials")
+                    (dolist (name org-canvas--student-data-files)
+                      (expect (buffer-string) :to-match (regexp-quote name))))))
             (delete-directory temp-dir t)))))
 
   (it "offers to append to existing .gitignore"
@@ -687,7 +689,85 @@
                   (with-temp-buffer
                     (insert-file-contents (expand-file-name ".gitignore" temp-dir))
                     (expect (buffer-string) :to-match "\\*.elc")
-                    (expect (buffer-string) :to-match "org-canvas-credentials"))))
+                    (expect (buffer-string) :to-match "org-canvas-credentials")
+                    (dolist (name org-canvas--student-data-files)
+                      (expect (buffer-string) :to-match (regexp-quote name)))))
+            (delete-directory temp-dir t))))))
+
+  (it "asks for nothing when the .gitignore already covers credentials and student data"
+      (with-org-canvas-course-globals
+        (let ((temp-dir (make-temp-file "init-gitignore-full-" t))
+              (asked nil))
+          (unwind-protect
+              (progn
+                (with-temp-file (expand-file-name ".gitignore" temp-dir)
+                  (insert "org-canvas-credentials.el\n")
+                  (dolist (name org-canvas--student-data-files)
+                    (insert name "\n")))
+                (cl-letf (((symbol-function 'read-directory-name)
+                           (lambda (&rest _) temp-dir))
+                          ((symbol-function 'read-string)
+                           (lambda (prompt &rest _)
+                             (cond
+                              ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                              ((string-match-p "^Course ID" prompt) "12345")
+                              ((string-match-p "Register" prompt) ""))))
+                          ((symbol-function 'read-passwd)
+                           (lambda (&rest _) "valid-token"))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (&rest _) '((name . "Test Course"))))
+                          ((symbol-function 'y-or-n-p)
+                           (lambda (prompt)
+                             (push prompt asked)
+                             (cond
+                              ((string-match-p "gitignore" prompt) t)
+                              (t nil)))))
+                  (org-canvas-init)
+                  ;; Every .gitignore question is answered before it is
+                  ;; asked: nothing is missing, so nothing is offered.
+                  (expect (cl-remove-if-not
+                           (lambda (prompt) (string-match-p "gitignore" prompt))
+                           asked)
+                          :to-equal nil)
+                  (expect (with-temp-buffer
+                            (insert-file-contents (expand-file-name ".gitignore" temp-dir))
+                            (buffer-string))
+                          :to-match "\\`org-canvas-credentials")))
+            (delete-directory temp-dir t)))))
+
+  (it "leaves the .gitignore alone when the student-data offer is declined"
+      (with-org-canvas-course-globals
+        (let ((temp-dir (make-temp-file "init-gitignore-decline-" t)))
+          (unwind-protect
+              (progn
+                (with-temp-file (expand-file-name ".gitignore" temp-dir)
+                  (insert "org-canvas-credentials.el\n"))
+                (cl-letf (((symbol-function 'read-directory-name)
+                           (lambda (&rest _) temp-dir))
+                          ((symbol-function 'read-string)
+                           (lambda (prompt &rest _)
+                             (cond
+                              ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                              ((string-match-p "^Course ID" prompt) "12345")
+                              ((string-match-p "Register" prompt) ""))))
+                          ((symbol-function 'read-passwd)
+                           (lambda (&rest _) "valid-token"))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (&rest _) '((name . "Test Course"))))
+                          ((symbol-function 'y-or-n-p)
+                           (lambda (prompt)
+                             (cond
+                              ;; The credentials line is already there,
+                              ;; so only the student-data offer reaches a
+                              ;; question, and it is declined.
+                              ((string-match-p "student data" prompt) nil)
+                              ((string-match-p "gitignore" prompt) t)
+                              (t nil)))))
+                  (org-canvas-init)
+                  (expect (with-temp-buffer
+                            (insert-file-contents (expand-file-name ".gitignore" temp-dir))
+                            (buffer-string))
+                          :to-equal "org-canvas-credentials.el\n")))
             (delete-directory temp-dir t))))))
 
 ;;;; The course globals guard (issue #353)

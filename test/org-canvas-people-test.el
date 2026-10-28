@@ -21,11 +21,16 @@
   "Enrollments the fake API lists for the course.")
 (defvar test-people--sections nil
   "Sections the fake API lists for the course.")
+(defvar test-people--users nil
+  "User records the fake API lists for the course.
+An id Canvas omits for the token's role is left out of the record.")
 
 (defvar test-people--history nil
   "Enrollments only a read asking for every state sees: deleted, rejected.")
 (defvar test-people--user-reads nil
   "User ids the fake answered a departure read for, most recent first.")
+(defvar test-people--reads nil
+  "URLs the fake API served, most recent first.")
 
 (defun test-people--user-read (uid)
   "Answer the departure read for UID as Canvas does: that user's rows only.
@@ -38,23 +43,38 @@ A function in `test-people--history' answers instead, for a failing read."
 
 (defun test-people--api (_method url &optional params)
   "Answer URL with PARAMS from the fake tables, as the paginated helper would."
+  (push url test-people--reads)
   (cond
    ((and (string-match "/enrollments" url) (assoc "user_id" params))
     (test-people--user-read (cdr (assoc "user_id" params))))
    ((string-match "/enrollments" url) test-people--enrollments)
    ((string-match "/sections\\'" url) test-people--sections)
+   ((string-match "/users\\'" url) test-people--users)
    (t (error "Unexpected request: %s" url))))
+
+(defun test-people--user (uid name &optional sis login)
+  "A user record for UID named NAME, with SIS and LOGIN ids or without.
+An id left nil is left out of the record: Canvas returns each one only
+when the token's role may see it, and omits it otherwise."
+  (let ((user `((id . ,uid) (name . ,name) (sortable_name . ,name))))
+    (when sis (nconc user (list (cons 'sis_user_id sis))))
+    (when login (nconc user (list (cons 'login_id login))))
+    user))
+
+(defun test-people--read-users-p ()
+  "Return non-nil when the fake served the course's user records."
+  (cl-some (lambda (url) (string-match-p "/users\\'" url)) test-people--reads))
 
 (defun test-people--enrollment (uid name type section &rest extra)
   "An enrollment row for user UID named NAME of TYPE in SECTION, plus EXTRA pairs."
   ;; EXTRA first, so an explicit state or activity shadows the default.
+  ;; The embedded user carries only what Canvas puts there: a name.  The
+  ;; institution's ids live on the user records, not on this row.
   (append extra
           `((id . ,(+ 1000 uid (* 10 section)))
             (user_id . ,uid) (type . ,type) (role . ,type)
             (course_section_id . ,section) (enrollment_state . "active")
-            (user . ((id . ,uid) (name . ,name) (sortable_name . ,name)
-                     (sis_user_id . ,(format "sis-%d" uid))
-                     (login_id . ,(format "login%d" uid)))))))
+            (user . ((id . ,uid) (name . ,name) (sortable_name . ,name))))))
 
 (defun test-people--count (regexp text)
   "Return how many times REGEXP matches in TEXT."
@@ -71,8 +91,10 @@ A function in `test-people--history' answers instead, for a failing read."
           (org-canvas-sections-file (expand-file-name "sections.org" dir))
           (test-people--enrollments ,enrollments)
           (test-people--sections ,sections)
+          (test-people--users nil)
           (test-people--history nil)
-          (test-people--user-reads nil))
+          (test-people--user-reads nil)
+          (test-people--reads nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-people--api)
@@ -154,6 +176,22 @@ A function in `test-people--history' answers instead, for a failing read."
         (expect text :not :to-match "LOGIN_ID")
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
 
+  (it "keeps people.org out of git when the course directory is a work tree (issue #549)"
+    (test-people--with-course
+        (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10))
+        nil
+      ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+      ;; answer 1 (not tracked, not ignored), so the pull adds the name.
+      (cl-letf (((symbol-function 'process-file)
+                 (lambda (_program _in _out _display &rest args)
+                   (if (equal (car args) "rev-parse") 0 1))))
+        (org-canvas-pull-people))
+      (expect (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name ".gitignore" (file-name-directory org-canvas-people-file)))
+                (buffer-string))
+              :to-equal "people.org\n")))
+
   (it "links a section to its sections.org heading when that file holds the id"
     (test-people--with-course
         (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10))
@@ -168,11 +206,67 @@ A function in `test-people--history' answers instead, for a failing read."
     (test-people--with-course
         (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10))
         '(((id . 10) (name . "Lecture")))
+      (setq test-people--users
+            (list (test-people--user 1 "Adams, Alice" "sis-1" "login1")))
       (let ((org-canvas-people-include-identifiers t))
         (org-canvas-pull-people))
       (let ((text (test-people--file)))
         (expect text :to-match ":SIS_USER_ID: +sis-1\n")
         (expect text :to-match ":LOGIN_ID: +login1\n"))))
+
+  (it "leaves an identifier Canvas omits out entirely (issue #543)"
+    (test-people--with-course
+        (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10)
+              (test-people--enrollment 2 "Beta, Bob" "StudentEnrollment" 10)
+              (test-people--enrollment 3 "Cruz, Cal" "StudentEnrollment" 10))
+        '(((id . 10) (name . "Lecture")))
+      ;; Alice's login and Bob's ids Canvas does not return; Cal's SIS
+      ;; id comes back null, an institution that has not given one.
+      (setq test-people--users
+            (list (test-people--user 1 "Adams, Alice" "sis-1")
+                  (test-people--user 2 "Beta, Bob")
+                  '((id . 3) (name . "Cruz, Cal") (sortable_name . "Cruz, Cal")
+                    (sis_user_id . :null) (login_id . "login3"))))
+      (let ((org-canvas-people-include-identifiers t))
+        (org-canvas-pull-people))
+      (let ((text (test-people--file)))
+        (expect text :to-match ":SIS_USER_ID: +sis-1\n")
+        (expect text :to-match ":LOGIN_ID: +login3\n")
+        (expect (test-people--count ":SIS_USER_ID:" text) :to-equal 1)
+        (expect (test-people--count ":LOGIN_ID:" text) :to-equal 1))))
+
+  (it "removes an identifier Canvas stopped returning on a re-pull"
+    (test-people--with-course
+        (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10)
+              (test-people--enrollment 2 "Beta, Bob" "StudentEnrollment" 10))
+        '(((id . 10) (name . "Lecture")))
+      (setq test-people--users
+            (list (test-people--user 1 "Adams, Alice" "sis-1" "login1")
+                  (test-people--user 2 "Beta, Bob" "sis-2" "login2")))
+      (let ((org-canvas-people-include-identifiers t))
+        (org-canvas-pull-people))
+      (expect (test-people--entry 1 "LOGIN_ID") :to-equal "login1")
+      ;; Canvas returns Alice's SIS id alone, and no record for Bob.
+      (setq test-people--users (list (test-people--user 1 "Adams, Alice" "sis-1")))
+      (let ((org-canvas-people-include-identifiers t))
+        (org-canvas-pull-people))
+      (expect (test-people--entry 1 "SIS_USER_ID") :to-equal "sis-1")
+      (expect (test-people--entry 1 "LOGIN_ID") :to-be nil)
+      (expect (test-people--entry 2 "SIS_USER_ID") :to-be nil)
+      (expect (test-people--entry 2 "LOGIN_ID") :to-be nil)))
+
+  (it "reads the course's user records only when identifiers are asked for"
+    (test-people--with-course
+        (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10))
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (expect (test-people--read-users-p) :to-be nil)
+      (setq test-people--users
+            (list (test-people--user 1 "Adams, Alice" "sis-1" "login1")))
+      (let ((org-canvas-people-include-identifiers t))
+        (org-canvas-pull-people))
+      (expect (test-people--read-users-p) :to-be-truthy)
+      (expect (test-people--file) :to-match ":SIS_USER_ID: +sis-1\n")))
 
   (it "upserts by USER_ID on a re-pull, keeps a moved person in place, and deletes nothing"
     (test-people--with-course
@@ -385,6 +479,116 @@ A function in `test-people--history' answers instead, for a failing read."
     (expect (org-canvas--people-departed-state-p "inactive, active") :to-be nil)
     (expect (org-canvas--people-departed-state-p "") :to-be nil)
     (expect (org-canvas--people-departed-state-p nil) :to-be nil)))
+
+(describe "org-canvas-people-person (issue #543)"
+  (it "prints a person's roster card from people.org, with their ids"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (setq test-people--users
+            (list (test-people--user 1 "Adams, Alice" "sis-1" "login1")
+                  (test-people--user 2 "Beta, Bob")))
+      (let ((org-canvas-people-include-identifiers t))
+        (org-canvas-pull-people))
+      (let ((report (cl-letf (((symbol-function 'princ) #'ignore))
+                     (org-canvas-people-person "Adams, Alice"))))
+        (expect report :to-match "\\`Adams, Alice [(]user 1[)]\n")
+        (expect report :to-match "^Role: student\n")
+        (expect report :to-match "^Sections: Lecture\n")
+        (expect report :to-match "^Enrollment: active\n")
+        (expect report :to-match "^SIS id: sis-1\n")
+        (expect report :to-match "^Login: login1\n"))))
+
+  (it "finds the person by user id, bare or with a hash"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-people-person "2") :to-match "\\`Beta, Bob [(]user 2[)]")
+        (expect (org-canvas-people-person "#1") :to-match "\\`Adams, Alice [(]user 1[)]"))))
+
+  (it "names the way to ask for an identifier the pull did not write"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (let ((report (cl-letf (((symbol-function 'princ) #'ignore))
+                     (org-canvas-people-person "Beta, Bob"))))
+        (expect report :to-match "^SIS id: not in people.org;")
+        (expect report :to-match "^Login: not in people.org;"))))
+
+  (it "prints a dash for a roster fact a hand-written heading carries none of"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (with-temp-file org-canvas-people-file
+        (insert "* Students\n** Doe, Dee\n:PROPERTIES:\n:USER_ID: 7\n:END:\n"))
+      (let ((report (cl-letf (((symbol-function 'princ) #'ignore))
+                     (org-canvas-people-person "Doe, Dee"))))
+        (expect report :to-match "^Role: -\n")
+        (expect report :to-match "^Sections: -\n")
+        (expect report :to-match "^Enrollment: -\n"))))
+
+  (it "is an error naming both ids when two people share a title"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (with-temp-file org-canvas-people-file
+        (insert "* Students\n** Smith, Chris\n:PROPERTIES:\n:USER_ID: 1\n:END:\n"
+                "** Smith, Chris\n:PROPERTIES:\n:USER_ID: 2\n:END:\n"))
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-people-person "Smith, Chris")
+                :to-throw 'user-error))))
+
+  (it "is an error for a person people.org does not hold"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-people-person "Nobody, Nancy")
+                :to-throw 'user-error))))
+
+  (it "is an error, saying to pull, when people.org is missing or holds no one"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      ;; No pull yet: there is no people.org at all.
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-people-person "Adams, Alice") :to-throw 'user-error))
+      ;; An empty roster on a fresh course writes the note file,
+      ;; which holds no person.
+      (setq test-people--enrollments nil)
+      (org-canvas-pull-people)
+      (expect (file-exists-p org-canvas-people-file) :to-be-truthy)
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-people-person "Adams, Alice") :to-throw 'user-error))))
+
+  (it "prompts with completion over people.org's titles"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (setq seen (append collection nil))
+                     "Adams, Alice")))
+          (expect (org-canvas--people-person-prompt) :to-equal "Adams, Alice")
+          (expect seen :to-contain "Adams, Alice")
+          (expect seen :to-contain "Beta, Bob")))))
+
+  (it "answers interactively, the name completed from the roster"
+    (test-people--with-course
+        test-people--two
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (let ((report (cl-letf (((symbol-function 'completing-read)
+                               (lambda (_prompt _collection &rest _) "Adams, Alice"))
+                              ((symbol-function 'princ) #'ignore))
+                     (call-interactively #'org-canvas-people-person))))
+        (expect report :to-match "\\`Adams, Alice [(]user 1[)]")))))
 
 (provide 'org-canvas-people-test)
 ;;; org-canvas-people-test.el ends here

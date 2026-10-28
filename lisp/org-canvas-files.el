@@ -1504,6 +1504,9 @@ correcting one file rather than a course."
   (unless org-canvas--inhibit-log-clear
     (unless (y-or-n-p "Delete ALL files and folders in this course? ")
       (user-error "Aborted")))
+  ;; A delete is a write on files.org, so a scoped identity is refused
+  ;; before the Danger Zone runs (issue #550).
+  (org-canvas--check-write-scope org-canvas-files-file "a delete-all")
   (let ((files-file (expand-file-name org-canvas-files-file)))
     (org-canvas-clear-log)
     ;; Clear session caches

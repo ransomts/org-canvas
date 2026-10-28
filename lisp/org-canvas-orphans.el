@@ -127,19 +127,28 @@ ALL-ORPHANS is a list of (FEATURE . ITEMS) pairs."
            (name (plist-get feature :name))
            (delete-data (plist-get feature :delete-data))
            (id-field (plist-get feature :id-field)))
-      (dolist (item orphans)
-        (let* ((id (alist-get id-field item))
-               (url (org-canvas--feature-item-url feature id)))
-          (condition-case err
-              (progn
-                (apply #'org-canvas-api-request 'DELETE url
-                       (and delete-data (list :data delete-data)))
-                (org-canvas--log-info org-canvas--logger
-                  "[Orphan] Deleted %s #%s" name id))
-            (error
-             (org-canvas--log-warning org-canvas--logger
-               "[Orphan] Failed to delete %s #%s: %s"
-               name id (error-message-string err)))))))))
+      (if (org-canvas--write-scope-refused-p
+           (file-name-nondirectory
+            (or (org-canvas--feature-file feature) "")))
+          ;; A feature whose file this identity may not write keeps its
+          ;; orphans, named here rather than failed, as a sync skips
+          ;; the file (issue #550).
+          (org-canvas--log-warning org-canvas--logger
+            "[Orphan] Left %d %s orphan(s) alone: outside this credentials file's write allowlist"
+            (length orphans) name)
+        (dolist (item orphans)
+          (let* ((id (alist-get id-field item))
+                 (url (org-canvas--feature-item-url feature id)))
+            (condition-case err
+                (progn
+                  (apply #'org-canvas-api-request 'DELETE url
+                         (and delete-data (list :data delete-data)))
+                  (org-canvas--log-info org-canvas--logger
+                    "[Orphan] Deleted %s #%s" name id))
+              (error
+               (org-canvas--log-warning org-canvas--logger
+                 "[Orphan] Failed to delete %s #%s: %s"
+                 name id (error-message-string err))))))))))
 
 ;;;###autoload
 (defun org-canvas-cleanup-orphans ()

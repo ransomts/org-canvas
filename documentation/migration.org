@@ -82,6 +82,11 @@ This creates =.org= files for every content type with all your existing content,
    git commit -m "Import from Canvas"
    #+end_src
 
+   The pulls that write student data (the roster, the groups, the
+   gradebook, the discussion replies) add their file names to
+   =.gitignore= themselves in a git work tree, so they stay out of the
+   commit; add them by hand if you commit before the first pull.
+
 ** Phase 2: Coexistence (Optional)
 
 You don't have to go all-in immediately.  During the transition:

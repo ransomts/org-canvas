@@ -93,7 +93,8 @@ Pulled for reference, never pushed: =grading-periods.org=,
 =question-banks.org=, =discussion-replies.org=, =groups.org=,
 =people.org=, =gradebook.org=, =quiz-results.org=,
 =rubric-results.org=.  =messages.org= sends conversations on its own
-and is never part of a sync.
+and reads their replies back beneath the sent headings; neither is ever
+part of a sync.
 
 * Common Properties (all content types)
 

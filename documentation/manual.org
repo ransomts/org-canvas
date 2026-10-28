@@ -42,7 +42,7 @@ The wizard prompts for your Canvas URL, API token, and course ID.  It:
 - Writes =org-canvas-credentials.el=
 - Warns before overwriting an existing credentials file
 - Validates the URL starts with =https://=
-- Offers to create or update =.gitignore= to protect credentials
+- Offers to create or update =.gitignore= to protect the credentials file and the student-data files a pull writes (see [[*Privacy][Privacy]])
 - Optionally generates skeleton =.org= files for all content types
 
 Or create =org-canvas-credentials.el= manually in your course directory:
@@ -59,7 +59,7 @@ Or create =org-canvas-credentials.el= manually in your course directory:
 ;;; org-canvas-credentials.el ends here
 #+end_src
 
-*Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token.
+*Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token — the wizard offers to do it for you, and it offers the same for the student-data files a pull writes (see [[*Student Data and Version Control][Student Data and Version Control]]).
 
 ** Keeping the Token in authinfo
 
@@ -82,6 +82,53 @@ Resolution order, on every request:
 3. Otherwise the first =auth-source= entry for the host at all.
 
 The credentials file remains fully supported and is still where =org-canvas-directory=, =org-canvas-base-url= and =org-canvas-course-id= live; to use authinfo, leave its =(setq org-canvas-api-token ...)= line out or set the value to ="".  =~/.authinfo.gpg= is encrypted by Emacs's EasyPG, so the token never rests on disk in plaintext, and unlike the credentials file it is not Lisp that =M-x org-canvas-activate-course= evaluates.  A resolved token is cached per host and course; activating a course, or changing =org-canvas-base-url= or =org-canvas-course-id=, drops the cache, so a rotated token takes effect without restarting Emacs (=auth-source= keeps a cache of its own -- see =auth-source-forget-all-cached= if a stale secret persists).  When no token resolves, the preflight check names the exact authinfo line for your host and course.
+
+** Scoping What a Collaborator May Write
+
+Write access is all-or-nothing per course only when nothing scopes it:
+=org-canvas-read-only= refuses every write for a whole course, and
+beside it =org-canvas-write-allowlist= names the files and features
+this credentials file may write (#550).  One credentials file per
+person is the recommended setup already, so the file is the natural
+home for what that person owns:
+
+#+begin_src elisp
+;; A TA who owns the assignments and their rubrics:
+(setq org-canvas-write-allowlist '("assignments.org" "rubrics.org"))
+
+;; A grader who writes submissions and no content:
+(setq org-canvas-write-allowlist '("submissions"))
+#+end_src
+
+An entry names an Org file by its basename, the way the
+multi-instructor workflow divides them (see
+[[file:workflows.org][workflows.org]]), or a feature by its word:
+="submissions"= is grading — scores, Rubric rows, late statuses,
+drafted and sent comments, the Comment Bank, posting — which is
+separated from the content of the same =assignments.org= by being its
+own commands, so a grader needs no content file to grade.  A symbol
+entry reads as its name.
+
+A write outside the list is refused before a push starts — a sync, a
+push at point, a delete, a prune, an orphan cleanup, a publish, a
+grading push — with a message naming the file and where to grant it:
+add it to =org-canvas-write-allowlist= in =org-canvas-credentials.el=.
+=M-x org-canvas-sync= skips a refused file with a warning and carries
+the run on, so a scoped collaborator's sync pushes their files and
+names the rest.  Reads are never refused: pull, status, diff, validate
+and the grading pulls all work unchanged.
+
+An empty or absent list scopes nothing — every write is allowed and
+=org-canvas-read-only= alone decides, exactly as before.  The two do
+not combine into an exception: setting =org-canvas-read-only= beside a
+non-empty list refuses everything regardless of it, so a scoped
+collaborator leaves it alone.  =M-x org-canvas-activate-course= clears
+the previous course's list before loading the next credentials file,
+so a file that does not mention scoping cannot inherit one.
+
+Conversations (=org-canvas-send-messages=) are deliberately out of
+scope: they are person-to-person mail, not course content, so any
+collaborator may send them.
 
 ** Testing Connection
 
@@ -149,6 +196,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =student NAME-OR-USER-ID=    | =org-canvas-gradebook-student=: one student's every column, what is still open, the best possible grade (#542) |   |
+| =person NAME-OR-USER-ID=    | =org-canvas-people-person=: one person's roster entry and ids, from people.org (#543) |   |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
@@ -486,6 +534,31 @@ rereads its own unmodified buffers when the file changed on disk, and refuses
 with a clear error — rather than dying on the prompt — when such a buffer
 holds unsaved edits.
 
+** Student Data and Version Control
+
+Some pulls fill course files with student data: the roster
+(=people.org=), the group members (=groups.org=), the gradebook and
+its scores file, the discussion replies, and everything under the
+submissions directory (grading files, quiz attempts, peer reviews).
+Org-canvas keeps these out of git itself rather than by advice
+(#549):
+
+- The setup wizard offers to add the student-data files to the
+  course =.gitignore= beside the credentials file.
+- A pull that writes one adds the file's name to the =.gitignore= in
+  the same directory when the course directory is in a git work tree
+  and git does not ignore the file already.
+- When git already tracks the file — committed before the line
+  existed — the pull touches nothing and logs a warning, since a
+  =.gitignore= does not untrack; run =git rm --cached= on it yourself.
+- Outside a git work tree, or without git installed, none of this
+  happens and nothing errors.
+
+The submissions directory is the special case: it receives its own
+=.gitignore=, excluding everything in it, when it is first created
+(=org-canvas-submissions-write-gitignore=), and a pull warns when git
+tracks files under it anyway.
+
 * System Context
 
 org-canvas moves course content between the Org files of a course
@@ -611,7 +684,7 @@ These files have no outgoing links to other course files:
 | =announcements.org=     | Announcements      | Course announcements          |
 | =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
 | =sections.org=          | Sections           | Course sections               |
-| =messages.org=          | Messages           | Inbox messages to students, sent on command and stamped; never part of a sync |
+| =messages.org=          | Messages           | Inbox messages to students, sent on command and stamped, their replies pulled back on command; never part of a sync |
 
 *** Tier 1: Depends on Tier 0
 
@@ -2552,9 +2625,14 @@ for being absent on Canvas.
 
 The member lists are student names.  Only the display name is written,
 never an email, SIS id or login id, but a name is personal data all
-the same: treat =groups.org= as you treat the submissions directory
-and keep it out of a course repository (add it to =.gitignore=) and
-out of anything you share.
+the same.  When the course directory is in a git work tree, the pull
+keeps =groups.org= out of it for you: it adds the file's name to the
+=.gitignore= in the same directory (creating that file if needed)
+unless git already ignores it.  If git already tracks it, the pull
+touches nothing and logs a warning instead; remove it from the index
+yourself(=git rm --cached groups.org=).  Without git, nothing is
+done.  Keep the file out of any other sharing you would not extend to
+a gradebook export.
 
 ** people.org
 
@@ -2587,8 +2665,8 @@ skipped.
 | =ENROLLMENT_STATE=   | string    | active, invited, inactive, completed; several when the enrollments differ; deleted, rejected or absent once Canvas no longer lists the person |
 | =DEPARTED=           | timestamp | When a person Canvas no longer lists left; removed if they come back |
 | =LAST_ACTIVITY=      | timestamp | When Canvas last saw the person in the course                        |
-| =SIS_USER_ID=        | string    | Only with =org-canvas-people-include-identifiers=                    |
-| =LOGIN_ID=           | string    | Only with =org-canvas-people-include-identifiers=                    |
+| =SIS_USER_ID=        | string    | The university's id, read from the course's user records; only with =org-canvas-people-include-identifiers=, and left out when Canvas omits it |
+| =LOGIN_ID=           | string    | The Canvas login, read from the course's user records; only with =org-canvas-people-include-identifiers=, and left out when Canvas omits it |
 
 *** Departures
 
@@ -2625,10 +2703,38 @@ The file is a roster of names.  By default only the name, role,
 sections, state and last activity are written; the SIS id and login
 id are opt-in through =org-canvas-people-include-identifiers=, and an
 email address or a grade is never written, although the enrollment
-object Canvas returns carries current scores.  A name is personal data
-all the same: treat =people.org= as you treat the submissions
-directory and keep it out of a course repository (add it to
-=.gitignore=) and out of anything you share.
+object Canvas returns carries current scores.  A name is personal
+data all the same.  When the course directory is in a git work tree,
+the pull keeps =people.org= out of it for you: it adds the file's
+name to the =.gitignore= in the same directory (creating that file if
+needed) unless git already ignores it.  If git already tracks it, the
+pull touches nothing and logs a warning instead; remove it from the
+index yourself (=git rm --cached people.org=).  Without git, nothing
+is done.  Keep the file out of any other sharing you would not extend
+to a gradebook export.
+
+With the identifiers on, the pull reads the course's user records —
+where Canvas returns =sis_user_id= and =login_id=, and only for a
+token whose role may see them — and writes each one it returns into
+the person's drawer.  A field Canvas omits for a user leaves the
+property out, and a re-pull removes one Canvas stopped returning; a
+person whose record the read did not return keeps none.  Turning the
+option off stops writing them: the ones already written stay until you
+remove them.
+
+*** Looking One Person Up
+
+=M-x org-canvas-people-person=, or =scripts/org-canvas person
+NAME-OR-USER-ID= from the shell (issue #543), prints one person's
+roster entry: their name and user id, role, sections, enrollment
+state, and their SIS id and login id when the pull wrote them — the
+university student number an office form or a registrar request asks
+for.  The name is a people.org title (the sortable name, ="Last,
+First"=) or a Canvas user id (=5001= or =#5001=); interactively it is
+completed from the roster.  An identifier the pull did not write is
+reported as such, with the option that asks for it named.  Read-only:
+=people.org= is read and nothing is sent, so it works from a shell
+with no credentials loaded.
 
 ** gradebook.org
 
@@ -2761,17 +2867,15 @@ read, so a teacher's pull costs no extra request with it on.
 Scores are more sensitive than names.  Only the name, the numbers and
 the custom column text are written, never an identifier, but a Notes
 column is free text about a student, the most sensitive cell in the
-file.  Treat =gradebook.org= as you treat the submissions directory:
-keep it out of a course repository (add it to =.gitignore=) and out
-of anything you share.  The same goes, more so, for
-=gradebook-scores.eld=, written when =org-canvas-gradebook-groups= is
-on: every student's score on every assignment, with their Canvas user
-ids.  When the course directory is in a git work tree, the pull keeps
-it out for you: it adds =gradebook-scores.eld= to the =.gitignore= in
-the same directory (creating that file if needed) unless git already
-ignores it.  If git already tracks it, the pull touches nothing and
-logs a warning instead; remove it from the index yourself
-(=git rm --cached gradebook-scores.eld=).  Without git, nothing is done.
+file.  When the course directory is in a git work tree, the pull keeps
+=gradebook.org= out of it for you: it adds the file's name to the
+=.gitignore= in the same directory (creating that file if needed)
+unless git already ignores it.  If git already tracks it, the pull
+touches nothing and logs a warning instead; remove it from the index
+yourself (=git rm --cached gradebook.org=).  Without git, nothing is
+done.  The same goes, more so, for =gradebook-scores.eld=, written when
+=org-canvas-gradebook-groups= is on: every student's score on every
+assignment, with their Canvas user ids, guarded the same way.
 
 From the shell, =scripts/org-canvas gradebook= pulls the file and
 prints the Sections table and the course's mean and median scores
@@ -3071,13 +3175,16 @@ Messages to students through the Canvas Inbox, sent with
 is wanted is the moment =gradebook.org= shows who has missing work:
 name them in =TO=, write the text, send.  A sent heading is stamped and
 never sent again, so the file is also the record of what went out and
-when.
+when; =org-canvas-pull-message-replies= reads the other half of the
+conversation back in beneath it.
 
 *** Structure
 
 - Level 1 headings = Messages; the heading is the subject
-- Body = the message, sent as plain text (Canvas renders no markup in
+- Body text = the message, sent as plain text (Canvas renders no markup in
   a conversation, so write it as prose)
+- Level 2 headings = replies to the message, written by the reply pull
+  beneath it
 
 #+begin_example
 ,* Reminder: proposals due Friday
@@ -3098,6 +3205,16 @@ assignment.  One page is enough.
 | =RECIPIENTS=         | string    | Set by the send: the user ids or the Canvas context the message went to |
 | =CONVERSATION_IDS=   | string    | Set by the send, when Canvas answers with the conversations it made |
 | =PAYLOAD_HASH=       | string    | Set by the send, so validation can tell an edited message from the one that went out |
+
+On a reply heading (set by the reply pull, never typed):
+
+| Property           | Type      | Description                                                        |
+|--------------------+-----------+--------------------------------------------------------------------|
+| =CONVERSATION_ID=    | string    | The conversation the reply belongs to, one of the message's =CONVERSATION_IDS= |
+| =MESSAGE_ID=         | string    | Canvas id of the reply; a re-pull matches it and updates in place  |
+| =AUTHOR=             | string    | Display name of whoever wrote the reply                           |
+| =AUTHOR_ID=          | number    | Canvas user id of the author                                       |
+| =POSTED_AT=          | timestamp | When the reply was posted                                          |
 
 =TO= is one of:
 
@@ -3129,6 +3246,49 @@ and every tier: a full sync never mails anyone.  A course marked
 To send a message again, add a new heading: editing a stamped one changes
 nothing on Canvas, and =org-canvas-validate= says so when the text no
 longer matches the hash stamped at the send.
+
+*** Reading replies
+
+=M-x org-canvas-pull-message-replies= reads what came back: every
+heading stamped =CONVERSATION_IDS= is looked up in the Canvas Inbox,
+and each conversation's messages after the one the send wrote become
+level-2 headings beneath the message, headed =Reply by NAME (date
+time)= with who wrote them and when.
+
+#+begin_example
+,* Reminder: proposals due Friday
+:PROPERTIES:
+:TO: Students: Adams, Alice; Beta, Bob
+:SENT_AT: <2026-10-01 Thu 09:00>
+:RECIPIENTS: 11, 22
+:CONVERSATION_IDS: 5001, 5002
+:END:
+Proposals are due Friday at 23:59 through the Project Proposal
+assignment.  One page is enough.
+,** Reply by Adams, Alice (2026-10-02 Fri 10:00)
+:PROPERTIES:
+:CONVERSATION_ID: 5001
+:MESSAGE_ID: 601
+:AUTHOR: Adams, Alice
+:AUTHOR_ID: 11
+:POSTED_AT: <2026-10-02 Fri 10:00>
+:END:
+When you say Friday, do you mean end of day?
+#+end_example
+
+A heading sent to several recipients carries one conversation per
+recipient, and all of them are read back: each student's replies stay
+together under the message.  A re-pull matches replies by =MESSAGE_ID=
+and updates them in place; nothing local is deleted, and a conversation
+Canvas no longer returns, or whose read fails, is skipped and named in
+the log rather than aborting the rest.
+
+The command only reads: it is allowed on a course marked
+=org-canvas-read-only=, and reading a reply back leaves the Inbox's
+unread state alone.  Like sending, it is never part of =org-canvas-sync=,
+=org-canvas-pull-all= or any tier — messages.org is the half of the
+conversation that lives in Org, and both halves of it are commanded,
+not synced.
 
 *** Personal Data
 
@@ -4883,7 +5043,7 @@ With a prefix argument (=C-u M-x org-canvas-submissions-reports=), or =(org-canv
 
 ** Privacy
 
-Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
+Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. When git already tracks files under the directory — committed before that =.gitignore= existed, or with the option off — the pull logs a warning, since a =.gitignore= does not untrack; remove them from the index yourself (=git rm --cached=). Keep the directory out of any other sharing you would not extend to a gradebook export.
 
 * Canvas-to-Org Migration
 
@@ -4952,6 +5112,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
 | =org-canvas-pull-discussion-replies=  | Pull entries and replies under topics |
+| =org-canvas-pull-message-replies=      | Pull what students replied to sent messages, into messages.org (read-only, never in a tier) |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
@@ -5603,6 +5764,7 @@ skipped, for a script that wants the data rather than the report.
 | =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
 | =org-canvas-pull-discussion-replies=  | Pull entries and replies under topics |
+| =org-canvas-pull-message-replies=      | Pull what students replied to sent messages, into messages.org (read-only, never in a tier) |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
@@ -5757,6 +5919,7 @@ See [[*Grading Submissions]] for the workflow.
 |---|---|
 | =org-canvas-send-messages= | Send every unsent heading in =messages.org= after one confirmation; =C-u= rehearses without sending (=e= in the menu) |
 | =org-canvas-send-message-at-point= | Send the message heading at point; =C-u= rehearses (=E=) |
+| =org-canvas-pull-message-replies= | Pull what students replied beneath the sent headings, matched by =CONVERSATION_IDS= (read-only) |
 
 Never part of a sync; see [[*messages.org][messages.org]].
 
@@ -5767,11 +5930,13 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-test-connection=      | Test API connection (prints course and user)  |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
 | =org-canvas-activate-course=      | Switch to another course in =org-canvas-courses= |
+| =org-canvas-new-semester=         | Carry a copied course directory into its next semester: dry run, then strip every registry-known sync stamp and retarget credentials (local only; see [[*Semester-to-Semester Course Copy][Semester-to-Semester Course Copy]]) |
 | =org-canvas-version=              | Show the org-canvas version                   |
 | =org-canvas-submit-bug-report=    | Open a buffer of diagnostic information for a bug report (the token redacted) |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
 | =org-canvas-gradebook-student=    | Print one student's standing: every column, what is still open, the best possible total (read-only; see [[*One Student's Standing][One Student's Standing]]) |
+| =org-canvas-people-person=       | Print one person's roster entry and institution ids, from people.org (read-only; see [[*Looking One Person Up][Looking One Person Up]]) |
 | =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
@@ -5912,13 +6077,12 @@ Adopting org-canvas for a course that already has content on Canvas.
 
 Reusing last semester's Org files for a new section.
 
-1. *Copy the directory.*  Duplicate your course folder and update =org-canvas-credentials.el= with the new course ID.
+1. *Copy the directory.*  Duplicate your course folder, leaving the original as the record of the semester that ended.
 
-2. *Strip sync state.*  Delete all =CANVAS_ID=, =CANVAS_URL=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH= properties from every heading.  This tells org-canvas to create fresh items instead of trying to update the old course:
+2. *Run the rollover.*  In the copy, run =M-x org-canvas-new-semester= and answer the prompt with the new course's ID.  It prints a dry run first — every heading whose sync stamps it would strip, the new course ID, and the credentials retarget — and writes nothing until you confirm.  On confirmation it strips every sync stamp the property registries name (=CANVAS_ID=, =CANVAS_URL=, the companion id stamps, =CANVAS_UPDATED_AT=, =PAYLOAD_HASH=, the legacy per-entry =LAST_SYNCED= and the =CANVAS_DELETED= mark) from every =.org= file in the directory, drops each file's =#+LAST_SYNCED= header, and retargets =org-canvas-credentials.el= at the new course ID and directory, so the first sync creates every item instead of updating the old course's:
 
-   #+begin_src bash
-   # Remove sync properties from all .org files
-   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d' *.org
+   #+begin_src elisp
+   M-x org-canvas-new-semester
    #+end_src
 
 3. *Update dates.*  Search for Org timestamps (=<2025-...>=) and update them to the new semester.  Per-section overrides in =assignments.org= need updated dates too.
@@ -6437,6 +6601,16 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =JOIN_LEVEL= | enum | parent_context_auto_join, parent_context_request, invitation_only |  | Who may join the group (pull-only) |
 | =MEMBERS_COUNT= | number |  |  | Number of members Canvas reports for the group (pull-only) |
 
+** Message Replies
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =CONVERSATION_ID= | string |  |  | Conversation the reply belongs to, one of the heading's CONVERSATION_IDS (set by the reply pull) |
+| =MESSAGE_ID= | string |  |  | Canvas id of the reply (set by the reply pull) |
+| =AUTHOR= | string | set by Canvas (read-only) |  | Display name of the reply's author (set by the reply pull) |
+| =AUTHOR_ID= | number |  |  | Canvas user id of the reply's author (set by the reply pull) |
+| =POSTED_AT= | timestamp | set by Canvas (read-only) |  | When the reply was posted (set by the reply pull) |
+
 ** Messages
 
 | Property | Type | Allowed values | Default | Description |
@@ -6528,8 +6702,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =ENROLLMENT_STATE= | string | set by Canvas (read-only) |  | active, invited, inactive or completed; several when the enrollments differ; deleted, rejected or absent for a heading Canvas no longer lists |
 | =DEPARTED= | timestamp | set by Canvas (read-only) |  | When a person Canvas no longer lists left; removed if they come back |
 | =LAST_ACTIVITY= | timestamp | set by Canvas (read-only) |  | When Canvas last saw the person in the course |
-| =SIS_USER_ID= | string | set by Canvas (read-only) |  | SIS id, only with org-canvas-people-include-identifiers |
-| =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers |
+| =SIS_USER_ID= | string | set by Canvas (read-only) |  | University SIS id, only with org-canvas-people-include-identifiers; left out when Canvas omits it |
+| =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers; left out when Canvas omits it |
 
 ** Question Banks
 

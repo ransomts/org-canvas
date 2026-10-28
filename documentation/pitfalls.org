@@ -148,11 +148,13 @@ Tips:
 
 * Credentials File Must Not Be Committed
 
-=org-canvas-credentials.el= contains your API token.  The init wizard offers to add it to =.gitignore=, but if you skipped that:
+=org-canvas-credentials.el= contains your API token.  The init wizard offers to add it to =.gitignore=, and the same offer covers the student-data files a pull writes (people.org, groups.org, gradebook.org and its scores file, discussion-replies.org, submissions/), but if you skipped that:
 
 #+begin_src bash
 echo "org-canvas-credentials.el" >> .gitignore
 #+end_src
+
+The pulls that write the student-data files add their names to =.gitignore= themselves when the course directory is in a git work tree; add them by hand only for a repository set up before the first pull.
 
 If you accidentally committed it, revoke the token in Canvas (Account > Settings > Approved Integrations) and generate a new one.
 
