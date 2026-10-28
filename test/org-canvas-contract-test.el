@@ -417,6 +417,9 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
     (org-canvas-contract--check-read-params "gradebook" 'item org-canvas--gradebook-course-params)
     (expect (assoc "student_ids[]" org-canvas--gradebook-self-params) :to-be nil))
 
+  (it "the one-student standing read sends only documented parameters (issue #542)"
+    (org-canvas-contract--check-read-params "gradebook" 'list (org-canvas--gradebook-student-params 7)))
+
   (it "the question banks pull sends only documented parameters on its three reads (issue #492)"
     ;; The vendored spec lacks the bank reads; the fixture carries them
     ;; as a pull-only supplement from Canvas's published API docs.

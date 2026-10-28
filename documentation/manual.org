@@ -148,6 +148,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =grades [--download] NAME...= | =org-canvas-pull-submissions= for each             | any pull failed    |
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
+| =student NAME-OR-USER-ID=    | =org-canvas-gradebook-student=: one student's every column, what is still open, the best possible grade (#542) |   |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
@@ -239,7 +240,10 @@ not read (a Designer's or a TA's 403) is a skip and leaves the status
 =gradebook= refreshes =gradebook.org= and prints its Sections table,
 then one line with the course's mean and median current and final
 scores, so a script can read class standing without opening the file
-(#451).
+(#451).  =student= takes one name or user id, in the spellings
+=org-canvas-gradebook-student= reads, and prints that student's whole
+record to standard output, writing nothing (see [[*One Student's
+Standing][One Student's Standing]]); nothing is sent but GETs.
 
 The exit status is 0 when the command succeeded, 1 as the table says,
 2 for a command line it could not read and 3 when an error stopped it
@@ -2774,6 +2778,42 @@ prints the Sections table and the course's mean and median scores
 (see [[*Running from the Shell][Running from the Shell]]); for a student token, the My grades
 heading and a line with the assignment and missing counts and the
 two totals.
+
+*** One Student's Standing
+
+=M-x org-canvas-gradebook-student=, or =scripts/org-canvas student
+NAME-OR-USER-ID= from the shell (issue #542), answers the question the
+class tables cannot: /can this student still pass?/  The name is a
+Canvas user id (=5001= or =#5001=), a sortable name
+(="Last, First"=, what the Students table shows) or a plain one;
+interactively it is completed from the roster.  The report is printed,
+never written to a file, and sends nothing but GETs:
+
+- One line naming the student, their sections, and Canvas's own
+  current and final totals with their letters, honouring
+  =org-canvas-gradebook-unposted= as the pull does.
+- One section per assignment group, in Canvas's order, headed by its
+  weight and drop rules and its percentage standing and at best; then
+  one row per column, by due date: Column (linked to its
+  =assignments.org= heading when the file holds the id), Due, Lock,
+  Score, Points, State (=workflow_state=, or =excused=), Late, Missing
+  and Open — =yes= while the column's lock is in the future or absent.
+  A column that does not count toward the grade (unpublished, or
+  omitted from it) is named =(not counted)=.  With
+  =org-canvas-gradebook-hurdles= pairs (=(GROUP . PERCENT)=), each
+  named group carries a hurdle line comparing its percentage, after
+  the drop, with the percent it requires; a hurdle naming a group the
+  course lacks is reported at the end.
+- The columns past due but not locked, counted and ungraded — the only
+  work the student can still turn in.
+- The best possible total: every graded score stands, every
+  still-open ungraded column scores full marks, every closed ungraded
+  one zero, and the drop rules run over those items as Canvas's final
+  grade would.
+
+The dates are each column's own, not the student's override: a student
+with an extension may still submit a column the report shows closed.
+Under =emacs --batch= the report is printed to standard output.
 
 ** grading-schemes.org
 
@@ -5731,6 +5771,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-submit-bug-report=    | Open a buffer of diagnostic information for a bug report (the token redacted) |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
+| =org-canvas-gradebook-student=    | Print one student's standing: every column, what is still open, the best possible total (read-only; see [[*One Student's Standing][One Student's Standing]]) |
 | =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
