@@ -216,6 +216,18 @@ LABEL is used for logging (e.g., \"Pages\").  Returns what SYNC-FN
 returns — the run context for a pipeline sync — or nil when it failed."
   (condition-case err
       (funcall sync-fn)
+    ;; A file outside `org-canvas-write-allowlist' is skipped with a
+    ;; warning and counted as a skip, never failed: a scoped
+    ;; collaborator's sync runs their files and names the rest (issue
+    ;; #550).
+    (org-canvas-write-scope-error
+     (org-canvas--log-warning org-canvas--logger "[Skip] %s: %s"
+       label (error-message-string err))
+     (org-canvas--sync-record-feature-stats
+      label (list :skip 1
+                  :skipped-titles
+                  '("whole file: not in org-canvas-write-allowlist")))
+     nil)
     (error
      (let ((msg (error-message-string err)))
        (if (string-match-p "file not found\\|no such file" (downcase msg))
@@ -408,7 +420,13 @@ Deletion order is reverse of sync order to respect dependencies."
       (org-canvas--run-tier
        tier (lambda (fn label)
               (org-canvas--log-info org-canvas--logger "[Delete] %s..." label)
-              (funcall fn))))
+              ;; A file this identity may not write is left standing and
+              ;; named, as a sync leaves it (issue #550).
+              (condition-case err
+                  (funcall fn)
+                (org-canvas-write-scope-error
+                 (org-canvas--log-warning org-canvas--logger "[Skip] %s: %s"
+                   label (error-message-string err)))))))
     (org-canvas--log-info org-canvas--logger "Global Delete Complete.")
     (message "Global Delete Complete. See *canvas-log*.")))
 

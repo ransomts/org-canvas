@@ -549,6 +549,22 @@ The simplest conflict-free approach: each person owns specific files.
 | TA 1       | =assignments.org=, =rubrics.org=                   |
 | TA 2       | =pages.org=, =discussions.org=, =announcements.org=   |
 
+Since each person already has their own =org-canvas-credentials.el=
+(gitignored, pointing at the same course), the division can be
+enforced rather than agreed: each person's credentials file carries an
+=org-canvas-write-allowlist= naming their files, and every push outside
+it — a sync, a push at point, a delete, a prune, an orphan cleanup, a
+publish — is refused before anything is sent, naming the file and where
+to grant it (issue #550).  A grader who writes no content at all
+carries the one-word allowlist ='("submissions")=: grading (scores,
+Rubric rows, late statuses, comments, posting) is its own feature, so
+they can grade the columns =assignments.org= declares without being
+able to push the file itself.  Reads are never refused, so everyone can
+still pull, run status and diff the whole course; =M-x org-canvas-sync=
+skips a refused file with a warning instead of aborting, so a
+collaborator's sync pushes their own files and names the rest.  An
+absent allowlist changes nothing — the course owner needs none.
+
 ** Handling Overlapping Edits
 
 If multiple people edit the same file:

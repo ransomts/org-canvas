@@ -862,6 +862,9 @@ returns a plist whose :outcome is `pulled', `dry-run' or `deleted'."
   (unless org-canvas--inhibit-log-clear
     (unless (y-or-n-p "Delete ALL new-quizzes in this course? ")
       (user-error "Aborted")))
+  ;; A delete is a write on new-quizzes.org, so a scoped identity is
+  ;; refused before the list runs (issue #550).
+  (org-canvas--check-write-scope org-canvas-new-quizzes-file "a delete-all")
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--log-warning org-canvas--logger "========================================")

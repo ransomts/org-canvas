@@ -266,6 +266,67 @@ erroring when a command is chosen.
 =group_categories= and =late_policy= with a 403, but writes
 assignments, pages, quizzes and modules without complaint.
 
+** The Write Allowlist (issue #550)
+
+Read-only is the right granularity for an adopted course and the wrong
+one for a collaborator: the multi-instructor workflow divides a course
+by Org file — one person's =settings.org= and =modules.org=, another's
+=assignments.org= and =rubrics.org=, a grader's submissions — and
+before the allowlist, any credentials file that could write at all
+could write everything.  =org-canvas-write-allowlist=, set in
+=org-canvas-credentials.el= beside the course it scopes, names the
+files (by basename) and features (the word ="submissions"=) that one
+identity may write; an empty or absent list scopes nothing, and the
+read-only guard above stays exactly the zero-entry case.
+
+*The check lives at the command and sync layer, not the transport.*
+This is the deliberate exception to #163's placement, and the reason
+is in the routes: scoping by Org file does not map onto them, because
+a submissions push writes through assignment endpoints —
+=assignments/:id/submissions/:user_id= — and a module item's PUT
+targets its module.  Only the command about to push knows which Org
+file the write belongs to, so the check sits where that is known:
+=org-canvas--sync-run-pipeline= and =org-canvas--push-at-point-runtime=
+(which the push-by-heading runtime shares) for every macro-generated
+sync, the custom-loop commands for settings, overrides and quiz
+accommodations, the delete runtimes, orphan cleanup, the publish
+commands, the drift report's =k=, and the five grading push paths that
+funnel through =org-canvas--submissions-push-current=, the
+comment-edit push, =add-comment=, the Comment Bank delete and
+=post-assignment=.  The transport's whole-course guard is unchanged
+and still catches anything a future command forgets to check when the
+course is read-only.
+
+*Grading is separated from content by command, not by route.* The
+crux of the issue was whether a grader can write submissions without
+owning =assignments.org=; they can, because the boundary the package
+already draws is the command: =org-canvas--submissions-push-current=
+and its kin write the submission resource of a column (the grade,
+rows, late status, comments the student has received), while
+=org-canvas-sync-assignments= writes the column itself, and the
+allowlist inherits that boundary — ="submissions"= admits the first
+and not the second.  A route-level check could not tell them apart
+without a =/submissions/= path convention, which is exactly the kind
+of coupling the command layer exists to avoid.
+
+*Sync-all skips, it does not abort.* =org-canvas--safe-sync= catches
+=org-canvas-write-scope-error= ahead of its parent =error= clause,
+logs =[Skip]= with the refusal's message, counts a =:skip= in the
+global summary rather than a failure, and carries the run on — a
+scoped identity's sync pushes their files and names the rest, the way
+a missing file is skipped rather than failed.  The master
+=org-canvas-delete-all= and orphan cleanup skip the same way.  A
+refusal names the file and where to grant it:
+=add pages.org to org-canvas-write-allowlist in
+org-canvas-credentials.el=.
+
+*Fail-closed corners.* A buffer visiting no file can be named by no
+entry, so it is refused while a list is set.  Conversations
+(=org-canvas-send-messages=) are out of scope by design: they are
+mail, not course content.  And =org-canvas-activate-course= clears the
+allowlist before loading the next credentials file, so a course whose
+file does not mention scoping cannot inherit another's.
+
 ** Error Handling Conventions
 
 - Wrap API calls in =condition-case=
