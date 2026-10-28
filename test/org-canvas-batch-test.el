@@ -837,6 +837,23 @@
                 :to-equal 2))
       (expect (car messages) :to-match "student takes NAME-OR-USER-ID"))))
 
+(describe "the person command (issue #543)"
+  (it "takes exactly one person and prints their roster entry"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-people-person)
+                 (lambda (&rest args) (push args calls))))
+        (expect (test-batch--run '("person" "Adams, Alice")) :to-equal 0)
+        (expect (test-batch--run '("person" "#5001")) :to-equal 0))
+      (expect (reverse calls) :to-equal '(("Adams, Alice") ("#5001")))))
+
+  (it "is a usage error with no argument or with two"
+    (let (messages)
+      (test-batch--quietly messages
+        (expect (test-batch--run '("person")) :to-equal 2)
+        (expect (test-batch--run '("person" "Adams, Alice" "Beta, Bob"))
+                :to-equal 2))
+      (expect (car messages) :to-match "person takes NAME-OR-USER-ID"))))
+
 ;;;; --json (issue #531)
 
 (defvar test-batch--json-output nil

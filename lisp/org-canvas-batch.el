@@ -14,8 +14,8 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, student,
-;; pull, pull-all, push, publish, delete, diff, adopt, show, validate,
-;; sync, check ...), which `scripts/org-canvas' wraps:
+;; person, pull, pull-all, push, publish, delete, diff, adopt, show,
+;; validate, sync, check ...), which `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -200,6 +200,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Pull gradebook.org; print its Sections table and the course's scores.")
     ("student" org-canvas-batch--cmd-student 1 1 "NAME-OR-USER-ID"
      "Print one student's standing: every column, what is still open, the best possible grade (#542).")
+    ("person" org-canvas-batch--cmd-person 1 1 "NAME-OR-USER-ID"
+     "Print one person's roster entry and ids, from people.org (#543).")
     ("verify" org-canvas-batch--cmd-verify 1 nil
      "[--hidden] ASSIGNMENT... | FEATURE:TITLE..."
      "Read pushed columns or headings back; exit 1 on a difference.")
@@ -438,6 +440,14 @@ The Sections table, then the course's mean and median scores
 Every column grouped by assignment group, the columns still open, and
 the best possible total (`org-canvas-gradebook-student', #542)."
   (org-canvas-gradebook-student (car (plist-get parsed :args)))
+  0)
+
+(defun org-canvas-batch--cmd-person (parsed)
+  "Print the roster entry of the person PARSED names; return 0.
+Their role, sections and enrollment state, and their SIS and login
+ids when the pull wrote them, read from people.org and nowhere else
+by `org-canvas-people-person' (#543)."
+  (org-canvas-people-person (car (plist-get parsed :args)))
   0)
 
 (defun org-canvas-batch--cmd-pull-queue (_parsed)
