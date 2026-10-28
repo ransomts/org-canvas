@@ -2241,6 +2241,25 @@ Click the heart.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "snapshots the quizzes it is about to delete (issue #555)"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_m _u &optional _p)
+                       ;; A quiz built in the web UI that Org never held.
+                       '(((assignment_id . 300) (title . "Web-made Quiz")))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_m _u &rest _) nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (let ((org-canvas-new-quizzes-file "/nonexistent"))
+              (org-canvas-delete-all-new-quizzes)))
+          (let ((files (directory-files snapshot-dir t
+                                        "-new-quizzes-all\\.json\\'")))
+            (expect (length files) :to-equal 1)
+            (expect (test-org-canvas-delete--snapshot-titles (car files))
+                    :to-equal '("Web-made Quiz")))))))
+
   (it "aborts when user declines"
     (let ((org-canvas-new-quizzes-file "/tmp/test.org"))
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))

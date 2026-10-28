@@ -1,0 +1,14 @@
+* Changed
+- #555 Every delete-all command writes a JSON snapshot of what it is
+  about to delete before the first DELETE goes out, through the drift
+  report's own snapshot writer: one file per run,
+  =<time>-<type>-all.json= under =org-canvas-diff-delete-snapshot-directory=
+  (default =canvas-snapshots/= in the course directory), holding the
+  items as Canvas's listing returned them — an item no Org heading
+  claims included, since that is the half a re-push cannot rebuild.
+  =M-x org-canvas-delete-all= writes one per type it actually deletes
+  and names the directory in its completion message; each feature's
+  own completion message names its file's path.  The two
+  confirmations are unchanged, and a run refused by the write-scope
+  allowlist, a read-only course, or an empty listing writes no
+  snapshot: no file claims a delete that did not happen.

@@ -1519,6 +1519,9 @@ correcting one file rather than a course."
 
     (let* ((endpoint (org-canvas-api-course-endpoint "files"))
            (remote-items (org-canvas-api-request-all-pages 'GET endpoint))
+           ;; The files about to go are written down before the deletes;
+           ;; the folders after them are paths, not content (issue #555).
+           (snapshot (org-canvas--delete-all-snapshot "files" remote-items))
            (deleted-ids nil)
            (deleted-file-count 0)
            (deleted-folder-count 0))
@@ -1552,8 +1555,9 @@ correcting one file rather than a course."
       (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"
         deleted-file-count deleted-folder-count)
       (org-canvas--log-info org-canvas--logger "========================================")
-      (message "Deletion complete. %d files, %d folders removed."
-               deleted-file-count deleted-folder-count))))
+      (message "Deletion complete. %d files, %d folders removed%s."
+               deleted-file-count deleted-folder-count
+               (org-canvas--delete-snapshot-note snapshot)))))
 
 (org-canvas-define-delete-at-point file
   :delete-url-fn (lambda (id)

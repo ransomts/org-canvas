@@ -1315,6 +1315,26 @@ back.  Return (FILE-TEXT . CALLS)."
                   (expect deleted-count :to-equal 1)))))
         (delete-directory temp-dir t))))
 
+  (it "snapshots what it is about to delete before the deletes (issue #555)"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                    ((symbol-function 'org-canvas--rubric-dissociate-all)
+                     (lambda () 0))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method _url &rest _args)
+                       (when (eq method 'GET)
+                         ;; A rubric no Org heading claims: nothing else
+                         ;; records that it ever existed.
+                         [((id . 111) (title . "Web-made Rubric"))]))))
+            (let ((org-canvas-rubrics-file "/nonexistent"))
+              (org-canvas-delete-all-rubrics)))
+          (let ((files (directory-files snapshot-dir t "-rubrics-all\\.json\\'")))
+            (expect (length files) :to-equal 1)
+            (expect (test-org-canvas-delete--snapshot-titles (car files))
+                    :to-equal '("Web-made Rubric")))))))
+
   (it "calls diagnostics when rubric still exists after failed deletion"
     (with-org-canvas-test-config
       (let ((diagnostics-called nil))

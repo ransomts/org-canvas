@@ -451,6 +451,117 @@
 								  :file nil))))
           (expect deleted :to-equal 1))))))
 
+;;;; Delete-all snapshots (issue #555)
+
+(describe "org-canvas--delete-all-items writes a snapshot (issue #555)"
+  (it "writes one JSON file of what is about to go, before the first DELETE"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (let ((deleted-before-snapshot nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_method _url &optional _params)
+                       ;; One item Org syncs and one no heading claims: the
+                       ;; Canvas-only half is the snapshot's value.
+                       '(((id . 1) (title . "Synced"))
+                         ((id . 2) (title . "Canvas-only")))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method _url &rest _args)
+                       ;; A DELETE that fired with no snapshot on disk yet.
+                       (when (and (eq method 'DELETE)
+                                  (null (test-org-canvas-delete--snapshot-files
+                                         snapshot-dir)))
+                         (setq deleted-before-snapshot t))
+                       nil)))
+            (org-canvas--delete-all-items
+             (list :feature "pages" :endpoint "pages" :file nil))
+            (expect deleted-before-snapshot :to-be nil)
+            (let ((files (test-org-canvas-delete--snapshot-files snapshot-dir)))
+              (expect (length files) :to-equal 1)
+              (expect (file-name-nondirectory (car files))
+                      :to-match "-pages-all\\.json\\'")
+              ;; What went is in it, Canvas-only material included.
+              (expect (test-org-canvas-delete--snapshot-titles (car files))
+                      :to-contain "Canvas-only")))))))
+
+  (it "keeps what skip-fn protects out of the snapshot"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     '(((id . 1) (title . "Front Page") (front_page . t))
+                       ((id . 2) (title . "Plain Page")))))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (&rest _) (cons 1 nil))))
+          (org-canvas--delete-all-items
+           (list :feature "pages" :endpoint "pages" :file nil
+                 :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))))
+          (let ((files (test-org-canvas-delete--snapshot-files snapshot-dir)))
+            (expect (length files) :to-equal 1)
+            (expect (test-org-canvas-delete--snapshot-titles (car files))
+                    :to-equal '("Plain Page")))))))
+
+  (it "writes nothing for an empty listing"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params) nil))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (&rest _) (cons 0 nil))))
+          (org-canvas--delete-all-items
+           (list :feature "pages" :endpoint "pages" :file nil))
+          (expect (test-org-canvas-delete--snapshot-files snapshot-dir)
+                  :to-be nil)))))
+
+  (it "writes nothing on a course marked read-only"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (let ((org-canvas-read-only t))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_method _url &optional _params)
+                       '(((id . 1) (title . "Item")))))
+                    ((symbol-function 'org-canvas--delete-items-queued)
+                     (lambda (&rest _) (cons 1 nil))))
+            (org-canvas--delete-all-items
+             (list :feature "pages" :endpoint "pages" :file nil))))
+        (expect (test-org-canvas-delete--snapshot-files snapshot-dir)
+                :to-be nil)))))
+
+(describe "org-canvas--delete-all-runtime names the snapshot (issue #555)"
+  (it "says where the JSON of what went is"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (let ((messages nil))
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'message)
+                       (lambda (fmt &rest args)
+                         (push (apply #'format fmt args) messages)))
+                      ((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method _url &optional _params)
+                         '(((id . 1) (title . "Item")))))
+                      ((symbol-function 'org-canvas--delete-items-queued)
+                       (lambda (&rest _) (cons 1 '("1")))))
+              (org-canvas--delete-all-runtime
+               (list :feature "pages" :endpoint "pages" :file nil))))
+          (expect (car messages)
+                  :to-match "Pages deletion complete\\. 1 removed; its JSON is in .+-pages-all\\.json")))))
+
+  (it "says nothing of a snapshot when nothing was listed"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (let ((messages nil))
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'message)
+                       (lambda (fmt &rest args)
+                         (push (apply #'format fmt args) messages)))
+                      ((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method _url &optional _params) nil))
+                      ((symbol-function 'org-canvas--delete-items-queued)
+                       (lambda (&rest _) (cons 0 nil))))
+              (org-canvas--delete-all-runtime
+               (list :feature "pages" :endpoint "pages" :file nil))))
+          (expect (car messages)
+                  :to-equal "Pages deletion complete. 0 removed."))))))
+
 (describe "org-canvas--delete-item-at-point edge cases (mocked)"
   (it "handles delete failure gracefully"
     (with-org-canvas-test-config
