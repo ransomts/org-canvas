@@ -2317,6 +2317,9 @@ never does."
   (let ((item (org-canvas--submissions-bank-item-at-point)))
     (unless (and item (plist-get item :id))
       (user-error "No saved comment with an id at point"))
+    ;; Deleting a saved comment is a submissions write, refused before
+    ;; the question (issue #550).
+    (org-canvas--check-write-feature 'submissions "deleting a saved comment")
     (when (y-or-n-p (format "Delete saved comment %s from the comment bank? "
                             (plist-get item :id)))
       (if (not (org-canvas--submissions-bank-delete (plist-get item :id)))
@@ -3895,6 +3898,9 @@ student's Comment to post heading and `S' instead."
   (org-canvas--submissions-ensure-context)
   (unless (eq org-canvas-submissions--current-view 'detail)
     (user-error "Switch to detail view first (press v)"))
+  ;; Before the text is read from the grader: posting a comment is a
+  ;; submissions write (issue #550).
+  (org-canvas--check-write-feature 'submissions "posting a comment")
   (save-excursion
     (org-back-to-heading t)
     (let ((user-id (org-entry-get (point) "USER_ID"))
@@ -5413,6 +5419,10 @@ marked."
   (let ((assignment-id org-canvas-submissions--assignment-id))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    ;; Grading is the \"submissions\" word of the allowlist, its own
+    ;; axis beside the files: checked before the plan and the question,
+    ;; so a scoped identity is refused before any read or send (#550).
+    (org-canvas--check-write-feature 'submissions "a grade push")
     (let* ((plan (org-canvas--submissions-push-plan assignment-id only))
            (comments (plist-get plan :comments)))
       (cond ((not (org-canvas--submissions-plan-sends-p plan))
@@ -5571,6 +5581,7 @@ nil when declined, else the plist of
   (let ((assignment-id org-canvas-submissions--assignment-id))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    (org-canvas--check-write-feature 'submissions "a comment-edit push")
     (let ((comments (org-canvas--submissions-pending-comment-edits assignment-id)))
       (cond ((not (car comments))
              (message "No sent comment to change%s"
@@ -5766,6 +5777,9 @@ each student's POSTED_AT."
 (defun org-canvas--submissions-post-assignment (assignment-id)
   "Post ASSIGNMENT-ID's grades; return non-nil when the request was sent.
 Under `org-canvas--dry-run' nothing is sent and nil comes back."
+  ;; The one post path every poster reaches: P, the post commands of
+  ;; the status table, and a script's POST argument (issue #550).
+  (org-canvas--check-write-feature 'submissions "posting grades")
   (let ((reply (org-canvas--graphql-mutate
                 (format "post the grades of assignment %s" assignment-id)
                 org-canvas--submissions-post-grades-mutation

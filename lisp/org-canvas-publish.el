@@ -341,6 +341,11 @@ or `dry-run' (issue #466)."
          (feature (plist-get target :feature))
          (title (plist-get target :title))
          (verb (if published "publish" "unpublish")))
+    ;; One flag sent is still a write to the heading's file, so the
+    ;; allowlist gates it by that file (issue #550).
+    (org-canvas--check-write-scope
+     (org-canvas--feature-file feature)
+     (format "%sing '%s'" verb title))
     (unless org-canvas--dry-run
       (org-canvas--check-writable 'PUT (format "%sing '%s'" verb title)))
     (let ((remote (org-canvas--pull-item-read feature (plist-get target :id))))

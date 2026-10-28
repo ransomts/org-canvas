@@ -603,6 +603,8 @@ tier has yet to upload, which `org-canvas--settings-heal-file-links'
 retries after it (issue #477).  Run alone, such a link is warned
 about as it is sent."
   (interactive)
+  (org-canvas--check-write-scope
+   (expand-file-name org-canvas-settings-file) "the settings sync")
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((settings-file (expand-file-name org-canvas-settings-file))

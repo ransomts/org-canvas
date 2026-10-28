@@ -844,6 +844,56 @@ Only GET is allowed through; everything else signals
             (list (format "This course is marked read-only (org-canvas-read-only is t), so %s was refused.  Pull, status and diff still work; set org-canvas-read-only to nil in org-canvas-credentials.el to allow writes"
                           (or what (format "a %s request" method)))))))
 
+(defun org-canvas--write-scope-refused-p (name)
+  "Return non-nil when `org-canvas-write-allowlist' refuses NAME.
+Nil when the allowlist is empty or absent, since that scopes nothing
+and `org-canvas-read-only' alone decides (issue #550).  NAME nil is
+refused whenever a list is set: a writer that cannot name what it
+writes is not in it.  A symbol entry matches its own name."
+  (and org-canvas-write-allowlist
+       (not (cl-some (lambda (entry)
+                       (equal (if (symbolp entry) (symbol-name entry) entry)
+                              name))
+                     org-canvas-write-allowlist))))
+
+(defun org-canvas--write-scope-signal (name what)
+  "Signal `org-canvas-write-scope-error' that NAME is outside the allowlist.
+WHAT names the operation refused, for the message."
+  (org-canvas--signal 'org-canvas-write-scope-error
+    "This credentials file may write only what org-canvas-write-allowlist names, so %s was refused: %s is not in it.  Pull, status and diff still work; add %s to org-canvas-write-allowlist in org-canvas-credentials.el to allow writing it"
+    (or what "this write") name name))
+
+(defun org-canvas--check-write-scope (file &optional what)
+  "Refuse to write FILE when `org-canvas-write-allowlist' does not name it.
+WHAT names the operation for the message (\"a sync\").  The file is
+matched by its basename, the way the allowlist names it.  Nothing is
+checked when the allowlist is empty or absent: every write is allowed
+then, exactly as before.
+
+Unlike `org-canvas--check-writable', this guard is called from the
+command and sync layer, never the transport: which Org file a push
+belongs to is known only there, and one API route does not say it — a
+grading push writes through assignment endpoints (issue #550)."
+  (cond
+   ((not (and file (not (string-empty-p file))))
+    ;; A buffer visiting no file can be named by no allowlist entry;
+    ;; fail closed rather than write unnamed (issue #550).
+    (when org-canvas-write-allowlist
+      (org-canvas--signal 'org-canvas-write-scope-error
+        "%s was refused: this buffer visits no file, so no org-canvas-write-allowlist entry can name it.  Save the buffer into the course directory first"
+        (or what "This write"))))
+   ((org-canvas--write-scope-refused-p (file-name-nondirectory file))
+    (org-canvas--write-scope-signal (file-name-nondirectory file) what))))
+
+(defun org-canvas--check-write-feature (feature &optional what)
+  "Refuse to write FEATURE when `org-canvas-write-allowlist' does not name it.
+FEATURE is a feature word, \"submissions\" for grading, as a string or
+a symbol; WHAT names the operation for the message.  Nothing is
+checked when the allowlist is empty or absent (issue #550)."
+  (let ((name (if (symbolp feature) (symbol-name feature) feature)))
+    (when (org-canvas--write-scope-refused-p name)
+      (org-canvas--write-scope-signal name what))))
+
 (cl-defun org-canvas-api-request (method url &key params data timeout as)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.

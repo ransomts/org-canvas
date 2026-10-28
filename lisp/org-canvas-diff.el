@@ -2811,12 +2811,30 @@ which leaves nothing to snapshot.  A module item has no guard."
               "Canvas returned nothing to snapshot"
             (and guard (funcall guard entry object))))))
 
+(defun org-canvas--diff-delete-scope-file (row entry)
+  "Return the Org file whose allowlist entry governs deleting ROW's ENTRY.
+A module item is claimed by a heading in modules.org, though its drift
+feature \"Module Items\" is no registry entry; anything else is its
+feature's own file, or the feature's name when no file resolves, so a
+refusal still names what to grant (issue #550)."
+  (if (plist-get entry :module-id)
+      ;; The Modules entry is registered by the module's own load; without
+      ;; it, the nil file is refused fail-closed by the check.
+      (org-canvas--feature-file (org-canvas--registry-find-feature "Modules"))
+    (or (org-canvas--feature-file
+         (org-canvas--diff-find-feature (plist-get row :feature)))
+        (plist-get row :feature))))
+
 (defun org-canvas--diff-delete-execute (row entry object)
   "Snapshot OBJECT, then delete the object ENTRY of ROW names.
 Returns the snapshot's path.  A course marked read-only is refused
 before the snapshot is written, as the transport would refuse the
-DELETE (issue #163)."
+DELETE (issue #163); so is an identity whose allowlist does not name
+the row's feature file (issue #550)."
   (org-canvas--check-writable 'DELETE "a drift-report delete")
+  (org-canvas--check-write-scope
+   (org-canvas--diff-delete-scope-file row entry)
+   "a drift-report delete")
   (let* ((target (org-canvas--diff-delete-target row entry))
          (delete-data (cdr target))
          (file (org-canvas--diff-snapshot-write

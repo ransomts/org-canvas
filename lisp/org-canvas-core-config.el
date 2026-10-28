@@ -68,6 +68,14 @@
   "Org-canvas configuration or required file is missing" 'org-canvas-error)
 (define-error 'org-canvas-read-only-error
   "Course is marked read-only" 'org-canvas-error)
+;; A child of the read-only error, because a scope refusal is a write
+;; refusal and a handler written for "this course may not be written"
+;; should cover it; `org-canvas--safe-sync' names it ahead of the
+;; parent so a scoped identity's sync skips the file with a warning
+;; rather than failing it (issue #550).
+(define-error 'org-canvas-write-scope-error
+  "Write is outside this credentials file's allowlist"
+  'org-canvas-read-only-error)
 
 (defmacro org-canvas--signal (type format-string &rest args)
   "Signal a TYPE error whose message comes from FORMAT-STRING and ARGS.
@@ -288,6 +296,40 @@ inherits it."
   :type 'boolean
   :group 'org-canvas)
 
+(defcustom org-canvas-write-allowlist nil
+  "The files and features this credentials file may write, or nil.
+Set it in `org-canvas-credentials.el', beside the course it scopes,
+to give a collaborator or a grader less than the whole course:
+
+  (setq org-canvas-write-allowlist '(\"assignments.org\" \"rubrics.org\"))
+  (setq org-canvas-write-allowlist '(\"submissions\"))
+
+An entry names an Org file by its basename, the way the
+multi-instructor workflow divides them (documentation/workflows.org),
+or a feature by its word: \"submissions\" is grading — scores, Rubric
+rows, late statuses, comments, the Comment Bank, posting — which is
+separated from the content of the same assignments.org by being its
+own commands, so a grader needs no content file to grade (issue #550).
+A symbol entry reads as its name.
+
+An empty or absent list scopes nothing: every write is allowed and
+`org-canvas-read-only' alone decides, exactly as before — the whole
+course stays the zero-entry case.  A non-empty list refuses every
+write outside it before a push starts — a sync, a push at point, a
+delete, a publish, a grading push — naming the file and where to
+grant it; reads (pull, status, diff, validate) are never refused, and
+`org-canvas-sync' skips a refused file with a warning rather than
+aborting the run.
+
+The check runs at the command and sync layer, where the Org file a
+push belongs to is known; the transport guard stays whole-course,
+because an API route does not say which file asked for it — a grading
+push writes through assignment endpoints.  Setting
+`org-canvas-read-only' beside a non-empty list refuses everything
+regardless of it: the two do not combine into an exception."
+  :type '(repeat string)
+  :group 'org-canvas)
+
 (defun org-canvas--require-optional (feature what)
   "Require FEATURE, reporting rather than aborting when it will not load.
 WHAT names, for the message, what is lost.  Returns the feature symbol
@@ -460,6 +502,14 @@ in a course buffer can tell which feature it is looking at without
 being told — whichever spelling of a symlinked directory either side
 uses (issue #97)."
   (org-canvas--registry-entry-for-file file org-canvas--feature-registry))
+
+(defun org-canvas--feature-file (feature)
+  "Return the Org file FEATURE's registry entry writes, or nil.
+The expanded value of its `:file-var'; nil when the entry declares no
+file or its variable is unbound, so a caller scoping writes falls back
+to naming the feature itself (issue #550)."
+  (let ((var (plist-get feature :file-var)))
+    (and var (boundp var) (symbol-value var))))
 
 (defvar org-canvas--web-page-registry nil
   "Web-page entries for course files the feature registry does not hold.

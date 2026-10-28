@@ -83,6 +83,53 @@ Resolution order, on every request:
 
 The credentials file remains fully supported and is still where =org-canvas-directory=, =org-canvas-base-url= and =org-canvas-course-id= live; to use authinfo, leave its =(setq org-canvas-api-token ...)= line out or set the value to ="".  =~/.authinfo.gpg= is encrypted by Emacs's EasyPG, so the token never rests on disk in plaintext, and unlike the credentials file it is not Lisp that =M-x org-canvas-activate-course= evaluates.  A resolved token is cached per host and course; activating a course, or changing =org-canvas-base-url= or =org-canvas-course-id=, drops the cache, so a rotated token takes effect without restarting Emacs (=auth-source= keeps a cache of its own -- see =auth-source-forget-all-cached= if a stale secret persists).  When no token resolves, the preflight check names the exact authinfo line for your host and course.
 
+** Scoping What a Collaborator May Write
+
+Write access is all-or-nothing per course only when nothing scopes it:
+=org-canvas-read-only= refuses every write for a whole course, and
+beside it =org-canvas-write-allowlist= names the files and features
+this credentials file may write (#550).  One credentials file per
+person is the recommended setup already, so the file is the natural
+home for what that person owns:
+
+#+begin_src elisp
+;; A TA who owns the assignments and their rubrics:
+(setq org-canvas-write-allowlist '("assignments.org" "rubrics.org"))
+
+;; A grader who writes submissions and no content:
+(setq org-canvas-write-allowlist '("submissions"))
+#+end_src
+
+An entry names an Org file by its basename, the way the
+multi-instructor workflow divides them (see
+[[file:workflows.org][workflows.org]]), or a feature by its word:
+="submissions"= is grading — scores, Rubric rows, late statuses,
+drafted and sent comments, the Comment Bank, posting — which is
+separated from the content of the same =assignments.org= by being its
+own commands, so a grader needs no content file to grade.  A symbol
+entry reads as its name.
+
+A write outside the list is refused before a push starts — a sync, a
+push at point, a delete, a prune, an orphan cleanup, a publish, a
+grading push — with a message naming the file and where to grant it:
+add it to =org-canvas-write-allowlist= in =org-canvas-credentials.el=.
+=M-x org-canvas-sync= skips a refused file with a warning and carries
+the run on, so a scoped collaborator's sync pushes their files and
+names the rest.  Reads are never refused: pull, status, diff, validate
+and the grading pulls all work unchanged.
+
+An empty or absent list scopes nothing — every write is allowed and
+=org-canvas-read-only= alone decides, exactly as before.  The two do
+not combine into an exception: setting =org-canvas-read-only= beside a
+non-empty list refuses everything regardless of it, so a scoped
+collaborator leaves it alone.  =M-x org-canvas-activate-course= clears
+the previous course's list before loading the next credentials file,
+so a file that does not mention scoping cannot inherit one.
+
+Conversations (=org-canvas-send-messages=) are deliberately out of
+scope: they are person-to-person mail, not course content, so any
+collaborator may send them.
+
 ** Testing Connection
 
 #+begin_src elisp

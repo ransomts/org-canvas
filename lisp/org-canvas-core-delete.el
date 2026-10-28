@@ -265,6 +265,10 @@ delete failed (issue #525)."
     (unless canvas-id
       (user-error "No %s property found for this heading" id-property))
 
+    ;; The heading's file is the buffer's; a delete is a write on it
+    ;; (issue #550).
+    (org-canvas--check-write-scope (buffer-file-name) "this delete")
+
     (cond
      (org-canvas--dry-run
       (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would delete %s '%s' (%s %s)"
@@ -283,6 +287,9 @@ delete failed (issue #525)."
   "Runtime body for generated delete-all functions.
 SPEC is a delete spec (`org-canvas--delete-spec-keys'), passed whole
 to `org-canvas--delete-all-items'."
+  ;; A delete is a write: the spec's file is what an allowlist must
+  ;; name for this identity to make it (issue #550).
+  (org-canvas--check-write-scope (plist-get spec :file) "a delete-all")
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
@@ -332,6 +339,9 @@ SPEC is a delete spec (`org-canvas--delete-spec-keys').  Lists the
 orphans and asks for confirmation before deleting; never touches items
 whose ID appears in :file or that :skip-fn protects.  Returns the
 number of deleted items."
+  ;; Before the listing reads and the snapshot question: the file's
+  ;; orphans stay on Canvas when this identity may not write it (#550).
+  (org-canvas--check-write-scope (plist-get spec :file) "a prune")
   (let* ((spec (org-canvas--delete-spec spec))
          (feature-name (plist-get spec :feature))
          (file (plist-get spec :file))

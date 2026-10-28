@@ -821,6 +821,10 @@ orchestrator can read what the run accumulated — the master sync
 collects the module items left pending — without a global."
   (org-canvas--sync-check-spec
    spec '(:feature :file :query :parse :build :push :finalize))
+  ;; Before the log header and before anything is read or sent: a file
+  ;; outside `org-canvas-write-allowlist' is refused at the start, so a
+  ;; scoped identity's run never previews or pushes it (issue #550).
+  (org-canvas--check-write-scope (plist-get spec :file) "a sync")
   (org-canvas-clear-log)
   (let* ((feature-name (plist-get spec :feature))
          (sync-file (plist-get spec :file))
@@ -2343,6 +2347,10 @@ to every later push at point (issue #141)."
   (org-canvas--sync-check-spec spec '(:feature :parse :build :push :finalize))
   (org-back-to-heading t)
   (org-canvas--sync-refuse-deleted)
+  ;; The heading's file is the buffer's, so the scope check needs no
+  ;; spec key here; a sync by heading funnels through this runtime and
+  ;; is covered with it (issue #550).
+  (org-canvas--check-write-scope (buffer-file-name) "a push at point")
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
          ;; Advances past the #+LAST_SYNCED header finalize may insert

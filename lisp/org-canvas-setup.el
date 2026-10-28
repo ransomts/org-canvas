@@ -127,6 +127,10 @@ is empty."
     (setq org-canvas-api-token token)
     (setq org-canvas-course-id course-id)
     (setq org-canvas-read-only read-only)
+    ;; A fresh course is scoped by nothing; leaving a previously
+    ;; activated course's allowlist in place would refuse this course's
+    ;; files with no entry naming them (issue #550).
+    (setq org-canvas-write-allowlist nil)
     (org-canvas--recompute-file-paths)
     ;; Offer to register in course registry
     (let ((course-name (read-string "Register as course (empty to skip): ")))
@@ -162,6 +166,11 @@ If NAME is nil and called interactively, prompt with completion."
     (let ((cred-file (expand-file-name "org-canvas-credentials.el" dir)))
       (unless (file-exists-p cred-file)
         (user-error "No org-canvas-credentials.el in %s" dir))
+      ;; The credentials file about to load sets what it scopes.  An
+      ;; allowlist left behind by a previously activated course would
+      ;; refuse this course's files, since a file that does not mention
+      ;; scoping cannot clear it (issue #550).
+      (setq org-canvas-write-allowlist nil)
       (load cred-file nil t)
       ;; Style settings live apart from the token (issue #499).
       (org-canvas-load-course-config dir)

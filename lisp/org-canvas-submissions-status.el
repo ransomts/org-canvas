@@ -691,6 +691,9 @@ two halves of an exam with
   (interactive)
   (unless org-canvas--dry-run
     (org-canvas--check-writable 'POST "posting grades"))
+  ;; Before the column is read: a scoped identity hears the refusal
+  ;; once, not per column (issue #550).
+  (org-canvas--check-write-feature 'submissions "posting grades")
   (mapcar #'org-canvas--submissions-post-one
           (if (and assignments (listp assignments)) assignments (list assignments))))
 
