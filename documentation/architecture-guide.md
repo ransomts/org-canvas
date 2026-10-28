@@ -179,6 +179,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - Pipeline macros
 - property registry (`:remote-fn` #61/#62, `:compare-p` #93)
 - the grading subsystem map
+- the pipeline as a data flow
 - the run context (#141)
 - the sync-state lifecycle diagram
 
@@ -200,6 +201,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - redaction reaches the user and never a backtrace (#154, #178)
 - the conflict sequence: who moves a heading's baseline and when
 - the shape of an error datum (#152)
+- the token's path and where redaction meets it
 - upload quirks
 
 **`decisions.org`**
