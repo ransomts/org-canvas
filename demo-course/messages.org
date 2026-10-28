@@ -6,6 +6,10 @@ message, and =TO= says who gets it.  A sent heading is stamped and never
 sent again: add a new heading to send again.  Sending is never part of
 =org-canvas-sync=.
 
+What students reply comes back with =org-canvas-pull-message-replies=:
+each reply lands as a level-2 heading beneath the message that started
+it, matched by the =CONVERSATION_IDS= the send stamped.
+
 * Welcome to DS 101
 :PROPERTIES:
 :TO: Self
@@ -24,6 +28,15 @@ token's owner, nobody else.
 :END:
 Proposals are due Friday at 23:59 through the Project Proposal
 assignment.  One page is enough.
+** Reply by Rivera, Rosa (2026-09-09 Wed 14:30)
+:PROPERTIES:
+:CONVERSATION_ID: 550021
+:MESSAGE_ID: 55002101
+:AUTHOR: Rivera, Rosa
+:AUTHOR_ID: 320104
+:POSTED_AT: <2026-09-09 Wed 14:30>
+:END:
+Does the one page include the timeline, or is that extra?
 
 * Section B: room change for Thursday
 :PROPERTIES:

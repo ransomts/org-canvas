@@ -612,7 +612,7 @@ These files have no outgoing links to other course files:
 | =announcements.org=     | Announcements      | Course announcements          |
 | =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
 | =sections.org=          | Sections           | Course sections               |
-| =messages.org=          | Messages           | Inbox messages to students, sent on command and stamped; never part of a sync |
+| =messages.org=          | Messages           | Inbox messages to students, sent on command and stamped, their replies pulled back on command; never part of a sync |
 
 *** Tier 1: Depends on Tier 0
 
@@ -3095,13 +3095,16 @@ Messages to students through the Canvas Inbox, sent with
 is wanted is the moment =gradebook.org= shows who has missing work:
 name them in =TO=, write the text, send.  A sent heading is stamped and
 never sent again, so the file is also the record of what went out and
-when.
+when; =org-canvas-pull-message-replies= reads the other half of the
+conversation back in beneath it.
 
 *** Structure
 
 - Level 1 headings = Messages; the heading is the subject
-- Body = the message, sent as plain text (Canvas renders no markup in
+- Body text = the message, sent as plain text (Canvas renders no markup in
   a conversation, so write it as prose)
+- Level 2 headings = replies to the message, written by the reply pull
+  beneath it
 
 #+begin_example
 ,* Reminder: proposals due Friday
@@ -3122,6 +3125,16 @@ assignment.  One page is enough.
 | =RECIPIENTS=         | string    | Set by the send: the user ids or the Canvas context the message went to |
 | =CONVERSATION_IDS=   | string    | Set by the send, when Canvas answers with the conversations it made |
 | =PAYLOAD_HASH=       | string    | Set by the send, so validation can tell an edited message from the one that went out |
+
+On a reply heading (set by the reply pull, never typed):
+
+| Property           | Type      | Description                                                        |
+|--------------------+-----------+--------------------------------------------------------------------|
+| =CONVERSATION_ID=    | string    | The conversation the reply belongs to, one of the message's =CONVERSATION_IDS= |
+| =MESSAGE_ID=         | string    | Canvas id of the reply; a re-pull matches it and updates in place  |
+| =AUTHOR=             | string    | Display name of whoever wrote the reply                           |
+| =AUTHOR_ID=          | number    | Canvas user id of the author                                       |
+| =POSTED_AT=          | timestamp | When the reply was posted                                          |
 
 =TO= is one of:
 
@@ -3153,6 +3166,49 @@ and every tier: a full sync never mails anyone.  A course marked
 To send a message again, add a new heading: editing a stamped one changes
 nothing on Canvas, and =org-canvas-validate= says so when the text no
 longer matches the hash stamped at the send.
+
+*** Reading replies
+
+=M-x org-canvas-pull-message-replies= reads what came back: every
+heading stamped =CONVERSATION_IDS= is looked up in the Canvas Inbox,
+and each conversation's messages after the one the send wrote become
+level-2 headings beneath the message, headed =Reply by NAME (date
+time)= with who wrote them and when.
+
+#+begin_example
+,* Reminder: proposals due Friday
+:PROPERTIES:
+:TO: Students: Adams, Alice; Beta, Bob
+:SENT_AT: <2026-10-01 Thu 09:00>
+:RECIPIENTS: 11, 22
+:CONVERSATION_IDS: 5001, 5002
+:END:
+Proposals are due Friday at 23:59 through the Project Proposal
+assignment.  One page is enough.
+,** Reply by Adams, Alice (2026-10-02 Fri 10:00)
+:PROPERTIES:
+:CONVERSATION_ID: 5001
+:MESSAGE_ID: 601
+:AUTHOR: Adams, Alice
+:AUTHOR_ID: 11
+:POSTED_AT: <2026-10-02 Fri 10:00>
+:END:
+When you say Friday, do you mean end of day?
+#+end_example
+
+A heading sent to several recipients carries one conversation per
+recipient, and all of them are read back: each student's replies stay
+together under the message.  A re-pull matches replies by =MESSAGE_ID=
+and updates them in place; nothing local is deleted, and a conversation
+Canvas no longer returns, or whose read fails, is skipped and named in
+the log rather than aborting the rest.
+
+The command only reads: it is allowed on a course marked
+=org-canvas-read-only=, and reading a reply back leaves the Inbox's
+unread state alone.  Like sending, it is never part of =org-canvas-sync=,
+=org-canvas-pull-all= or any tier — messages.org is the half of the
+conversation that lives in Org, and both halves of it are commanded,
+not synced.
 
 *** Personal Data
 
@@ -4976,6 +5032,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
 | =org-canvas-pull-discussion-replies=  | Pull entries and replies under topics |
+| =org-canvas-pull-message-replies=      | Pull what students replied to sent messages, into messages.org (read-only, never in a tier) |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
@@ -5627,6 +5684,7 @@ skipped, for a script that wants the data rather than the report.
 | =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
 | =org-canvas-pull-discussion-replies=  | Pull entries and replies under topics |
+| =org-canvas-pull-message-replies=      | Pull what students replied to sent messages, into messages.org (read-only, never in a tier) |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
@@ -5781,6 +5839,7 @@ See [[*Grading Submissions]] for the workflow.
 |---|---|
 | =org-canvas-send-messages= | Send every unsent heading in =messages.org= after one confirmation; =C-u= rehearses without sending (=e= in the menu) |
 | =org-canvas-send-message-at-point= | Send the message heading at point; =C-u= rehearses (=E=) |
+| =org-canvas-pull-message-replies= | Pull what students replied beneath the sent headings, matched by =CONVERSATION_IDS= (read-only) |
 
 Never part of a sync; see [[*messages.org][messages.org]].
 
@@ -6461,6 +6520,16 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =MAX_MEMBERSHIP= | number |  |  | Member limit for the group, when Canvas sets one (pull-only) |
 | =JOIN_LEVEL= | enum | parent_context_auto_join, parent_context_request, invitation_only |  | Who may join the group (pull-only) |
 | =MEMBERS_COUNT= | number |  |  | Number of members Canvas reports for the group (pull-only) |
+
+** Message Replies
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =CONVERSATION_ID= | string |  |  | Conversation the reply belongs to, one of the heading's CONVERSATION_IDS (set by the reply pull) |
+| =MESSAGE_ID= | string |  |  | Canvas id of the reply (set by the reply pull) |
+| =AUTHOR= | string | set by Canvas (read-only) |  | Display name of the reply's author (set by the reply pull) |
+| =AUTHOR_ID= | number |  |  | Canvas user id of the reply's author (set by the reply pull) |
+| =POSTED_AT= | timestamp | set by Canvas (read-only) |  | When the reply was posted (set by the reply pull) |
 
 ** Messages
 

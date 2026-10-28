@@ -46,7 +46,7 @@ lisp/
 ├── org-canvas-submissions-ruling.el # Apply a grading ruling to listed students: rubric rows, scores and drafted comments rewritten, everything local (requires submissions, submissions-comments)
 ├── org-canvas-submissions-uploads.el # Read a column's downloaded uploads and pair students by shared document, everything local (requires submissions)
 ├── org-canvas-submissions-reports.el # Similarity and AI Writing across every column with a processor, one row per student, read-only (requires submissions)
-├── org-canvas-messages.el       # Send Canvas conversations from messages.org; never part of org-canvas-sync
+├── org-canvas-messages.el       # Send Canvas conversations from messages.org and pull the replies back beneath them; never part of org-canvas-sync
 ├── org-canvas-new-quiz-items.el # New Quizzes item/question pipeline (sub-module of new-quizzes)
 ├── org-canvas-announcements.el     # Course announcements
 ├── org-canvas-assignment-groups.el # Grade weighting categories
