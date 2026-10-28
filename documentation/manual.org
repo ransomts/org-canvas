@@ -5767,6 +5767,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-test-connection=      | Test API connection (prints course and user)  |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
 | =org-canvas-activate-course=      | Switch to another course in =org-canvas-courses= |
+| =org-canvas-new-semester=         | Carry a copied course directory into its next semester: dry run, then strip every registry-known sync stamp and retarget credentials (local only; see [[*Semester-to-Semester Course Copy][Semester-to-Semester Course Copy]]) |
 | =org-canvas-version=              | Show the org-canvas version                   |
 | =org-canvas-submit-bug-report=    | Open a buffer of diagnostic information for a bug report (the token redacted) |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
@@ -5912,13 +5913,12 @@ Adopting org-canvas for a course that already has content on Canvas.
 
 Reusing last semester's Org files for a new section.
 
-1. *Copy the directory.*  Duplicate your course folder and update =org-canvas-credentials.el= with the new course ID.
+1. *Copy the directory.*  Duplicate your course folder, leaving the original as the record of the semester that ended.
 
-2. *Strip sync state.*  Delete all =CANVAS_ID=, =CANVAS_URL=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH= properties from every heading.  This tells org-canvas to create fresh items instead of trying to update the old course:
+2. *Run the rollover.*  In the copy, run =M-x org-canvas-new-semester= and answer the prompt with the new course's ID.  It prints a dry run first — every heading whose sync stamps it would strip, the new course ID, and the credentials retarget — and writes nothing until you confirm.  On confirmation it strips every sync stamp the property registries name (=CANVAS_ID=, =CANVAS_URL=, the companion id stamps, =CANVAS_UPDATED_AT=, =PAYLOAD_HASH=, the legacy per-entry =LAST_SYNCED= and the =CANVAS_DELETED= mark) from every =.org= file in the directory, drops each file's =#+LAST_SYNCED= header, and retargets =org-canvas-credentials.el= at the new course ID and directory, so the first sync creates every item instead of updating the old course's:
 
-   #+begin_src bash
-   # Remove sync properties from all .org files
-   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d' *.org
+   #+begin_src elisp
+   M-x org-canvas-new-semester
    #+end_src
 
 3. *Update dates.*  Search for Org timestamps (=<2025-...>=) and update them to the new semester.  Per-section overrides in =assignments.org= need updated dates too.

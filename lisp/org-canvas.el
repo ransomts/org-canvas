@@ -117,6 +117,7 @@
 (require 'org-canvas-orphans)
 (require 'org-canvas-browse)
 (require 'org-canvas-search)
+(require 'org-canvas-new-semester)
 ;; The menu is a convenience, and a batch or CI run must not die for it.
 ;; This covers transient failing to load as well as being absent (#157).
 (org-canvas--require-optional 'org-canvas-transient
