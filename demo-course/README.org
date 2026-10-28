@@ -32,7 +32,7 @@ This directory contains a complete, self-contained demo course that showcases ev
 | =sections.org=          | Sections          | Pull-only, date restrictions, meeting times (=MEETS=) |
 | =grading-schemes.org=   | Grading schemes   | Letter-grade cutoffs and a points-based 4.0 scale; created, never edited in place |
 | =grading-periods.org=   | Grading periods   | Pull-only: dates, weights, a closed period    |
-| =messages.org=          | Messages          | Inbox messages to students; one sent, one to try on yourself, one group conversation |
+| =messages.org=          | Messages           | Inbox messages to students; one sent with its reply pulled back, one to try on yourself, one group conversation |
 
 ** Quiz Question Types
 
