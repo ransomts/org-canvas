@@ -1,0 +1,13 @@
+* Added
+- #544 Two data flow diagrams. Design.org's pipeline section gains a
+  level-1 view of the push and pull as data flows — the stores named
+  (the Org files, the property registry, the run context, the remote
+  snapshot) and the reading no other diagram states directly: the Org
+  file is at once the pipeline's input, output and database, the
+  stamps driving the next run written back into the text that was
+  parsed, which is why the conflict machinery exists. Api-interaction.org
+  gains the token's path: from authinfo or the gitignored credentials
+  file, through the header builder, to Canvas, with the redaction
+  layers (masked headers, the curl config on stdin, log-redact)
+  named at every point a flow could otherwise leave with it — the
+  one diagram that doubles as a checklist.

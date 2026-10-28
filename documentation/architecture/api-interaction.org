@@ -31,6 +31,48 @@ Every API call flows through a single entry point:
               └─ Other → signal error with response body
 #+end_example
 
+** The Token's Path
+
+The lifecycle above is one call's story; this is the token's, as a
+data flow — the one flow in the package where the diagram is a
+checklist rather than documentation.  The token lives in exactly two
+places: =org-canvas-credentials.el= (gitignored, on =load-path=), or
+the user's =authinfo=, which =org-canvas--api-token-from-auth-source=
+reads and caches per host and course (a cache a course switch
+forgets).  From there it reaches Canvas once, as the
+=Authorization: Bearer= header built by
+=org-canvas--api-request-headers= — and every other path it could take
+meets a redaction layer first:
+
+- the log line for a request carries that function's *masked* headers
+  (=org-canvas--mask-token=), never the real ones
+- the curl PATCH fallback passes its whole config on stdin, so the
+  token never reaches the command line (the same trick plz uses; a
+  process listing cannot see it)
+- whatever does reach logging passes through =org-canvas--log-redact=
+  before it is written, and redaction reaches the user and never a
+  backtrace (issues #154, #178): an error's message names what failed
+  and which request, never what authorized it
+
+#+begin_src mermaid
+graph LR
+    AUTH[("authinfo<br/>or org-canvas-credentials.el<br/>gitignored")]
+    ENSURE(["ensure-credentials<br/>auth-source cache, per host and course"])
+    HEADERS(["api-request-headers<br/>real, or masked for the log"])
+    SEND(["plz — and curl for PATCH<br/>config on stdin, token off the command line"])
+    REDACT(["log-redact<br/>mask-token"])
+    OUT["the log buffer and file,<br/>user messages, errors"]
+    CANVAS["Canvas LMS"]
+
+    AUTH -->|"token"| ENSURE
+    ENSURE -->|"token, course, base URL"| HEADERS
+    HEADERS -->|"Authorization: Bearer"| SEND
+    SEND -->|"request"| CANVAS
+    SEND -.->|"the masked request line"| REDACT
+    ENSURE -.->|"what is missing,<br/>never the token"| REDACT
+    REDACT -->|"redacted lines"| OUT
+#+end_src
+
 ** Endpoint Construction
 
 =org-canvas-api-course-endpoint= builds course-scoped URLs:

@@ -109,6 +109,70 @@ logic (type coercion, boolean handling, timestamp formatting) as pure
 functions without touching Org buffers. Separating execute from
 finalize means you can verify state saving with a canned response.
 
+** The Pipeline as a Data Flow
+
+The stage table says what each stage takes and returns; this is the
+same pipeline as a data flow diagram, the stores naming where data
+rests between stages.  The reading worth pausing on: the Org file is
+at once the pipeline's input, its output *and* its database — the
+stamps that drive the next run (=CANVAS_ID=, =CANVAS_UPDATED_AT=,
+=PAYLOAD_HASH=) are written back into the very text that was parsed.
+That one fact is why the conflict and drift machinery exists: the
+store is editable by the instructor and by Canvas while the pipeline
+runs (issues #48, #104, #124).
+
+#+begin_src mermaid
+graph LR
+    INSTRUCTOR["instructor in Emacs"]
+    ORG[("the course Org files<br/>source of truth, and the database")]
+    REG[("property registry<br/>Org property and Canvas field")]
+    CTX[("run context<br/>per run: answers, counters")]
+    SNAP[("remote snapshot<br/>per run: list state")]
+    PARSE(["Parse<br/>parse-entry"])
+    BUILD(["Build payload<br/>specs to JSON"])
+    EXEC(["Execute<br/>guards, conflict check, plz or curl"])
+    FIN(["Finalize<br/>stamps the heading"])
+    CANVAS["Canvas LMS"]
+    LOG[("the log<br/>redacted")]
+
+    ORG -->|"entry text"| PARSE
+    REG -->|"specs"| PARSE
+    PARSE -->|"plist"| BUILD
+    BUILD -->|"payload, PAYLOAD_HASH"| EXEC
+    ORG -->|"CANVAS_UPDATED_AT<br/>the baseline"| EXEC
+    SNAP -->|"remote titles,<br/>the modified field"| EXEC
+    CTX -->|"apply-all answers"| EXEC
+    EXEC -->|"JSON, Bearer token"| CANVAS
+    CANVAS -->|"reply"| FIN
+    FIN -->|"CANVAS_ID, LAST_SYNCED,<br/>CANVAS_UPDATED_AT, PAYLOAD_HASH"| ORG
+    EXEC -.->|"masked request"| LOG
+    INSTRUCTOR -.->|"edits between runs"| ORG
+#+end_src
+
+A pull runs the same stores in reverse, with two renderings instead
+of one: properties are spelled by the registry
+(`org-canvas--registry-remote-as-org`), and a body is Canvas's HTML
+made Org — pandoc for the text, the file-URL rewriter for links.  A
+pull drops =PAYLOAD_HASH= (the next push verifies content afresh) and
+restamps =CANVAS_UPDATED_AT= from Canvas's clock: the store's sync
+state is rewritten, not merged.
+
+#+begin_src mermaid
+graph LR
+    CANVAS["Canvas LMS"]
+    LIST(["list or item read<br/>pull-item-read"])
+    SPELL(["registry spelling<br/>remote-as-org"])
+    HTML(["HTML to Org<br/>pandoc, file-URL rewriter"])
+    ORG[("the course Org files")]
+
+    CANVAS -->|"replies, as alists"| LIST
+    LIST -->|"item fields"| SPELL
+    SPELL -->|"property text"| ORG
+    LIST -->|"body HTML"| HTML
+    HTML -->|"Org text"| ORG
+    ORG -->|"existing headings:<br/>pairing, fresh-buffer check"| LIST
+#+end_src
+
 ** The Sync Macro (org-canvas-define-sync)
 
 For modules with standard API patterns, the macro generates the
