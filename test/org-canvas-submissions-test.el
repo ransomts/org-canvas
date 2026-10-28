@@ -1637,7 +1637,39 @@
             (let ((org-canvas-submissions-write-gitignore nil))
               (org-canvas--submissions-ensure-directory))
             (expect (file-exists-p gi) :to-be nil))
-        (delete-directory dir t)))))
+        (delete-directory dir t))))
+
+  (it "warns when git tracks files under the submissions directory (issue #549)"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (warned nil))
+      (unwind-protect
+          (progn
+            ;; A work tree with a tracked file under the directory:
+            ;; ls-files answers 0, and the .gitignore does not untrack.
+            (cl-letf (((symbol-function 'process-file)
+                       (lambda (_program _in _out _display &rest args)
+                         (if (equal (car args) "ls-files") 0 1)))
+                      ((symbol-function 'org-canvas--log-warning)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) warned))))
+              (org-canvas--submissions-ensure-directory))
+            (expect (car warned) :to-match "git tracks"))
+            ;; Nothing tracked (ls-files answers 1): no warning.
+            (let ((org-canvas-submissions-write-gitignore nil))
+              (cl-letf (((symbol-function 'process-file)
+                         (lambda (_program _in _out _display &rest args)
+                           (if (equal (car args) "ls-files") 1 0)))
+                        ((symbol-function 'org-canvas--log-warning)
+                         (lambda (&rest _) (error "no warning expected"))))
+                (org-canvas--submissions-ensure-directory)))
+            ;; Without git: no warning, never an error.
+            (let ((org-canvas-submissions-write-gitignore nil))
+              (cl-letf (((symbol-function 'process-file)
+                         (lambda (&rest _)
+                           (signal 'file-missing '("Searching for program" "git")))))
+                (org-canvas--submissions-ensure-directory))))
+        (delete-directory dir t))))
 
 (describe "pushing from a reopened grading file"
   (it "recovers the assignment id, pushes, updates CANVAS_SCORE, and saves"

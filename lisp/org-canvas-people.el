@@ -56,9 +56,11 @@
 ;; out for a person whose record Canvas omits them from.  An email
 ;; address or a grade is never written (the enrollment object carries
 ;; current scores; this module does not read them).  A name is personal
-;; data all the same: treat people.org as you treat the submissions
-;; directory and keep it out of a course repository (add it to
-;; .gitignore) and out of anything shared.  The module writes only
+;; data all the same: keep people.org out of anything shared.  In a
+;; git work tree the pull keeps it out of a course repository itself
+;; (issue #549): it adds people.org to the .gitignore beside it unless
+;; git ignores the file already, and warns when git tracks it, since a
+;; .gitignore does not untrack.  The module writes only
 ;; `org-canvas-people-file' itself.
 ;;
 ;; API NOTES
@@ -87,7 +89,8 @@
 
 (defcustom org-canvas-people-file (org-canvas--path "people.org")
   "Path to the people.org file.
-It holds the course roster once pulled; keep it out of a course repository."
+It holds the course roster once pulled; the pull keeps it out of a
+course repository (issue #549)."
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-people-file "people.org")
@@ -561,8 +564,8 @@ for being absent on Canvas: a heading the roster no longer lists is
 looked up in every enrollment state and marked with the state Canvas
 gives, or `absent', and DEPARTED, and the closing line names it.  A
 roster read that comes back empty leaves an existing file alone.  The
-file holds a roster of names afterwards; keep it out of a course
-repository."
+file holds a roster of names afterwards; the pull keeps it out of a
+course repository."
   (interactive)
   (org-canvas--start-operation "PULLING PEOPLE")
   (let* ((file (expand-file-name org-canvas-people-file))
@@ -572,6 +575,9 @@ repository."
          (was-fresh (org-canvas--pull-was-fresh-p file))
          (departures nil))
     (org-canvas--pull-confirm-unsaved file "people")
+    ;; A roster of names is student data: the pull keeps it out of git
+    ;; itself rather than by a comment (issue #549).
+    (org-canvas--student-data-ignore file)
     (cond
      (people (setq departures (org-canvas--people-write file people)))
      ((org-canvas--people-file-has-people-p file)

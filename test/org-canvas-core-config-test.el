@@ -1057,5 +1057,71 @@ ran alone (issue #260)."
   (it "returns nil for an unregistered feature"
     (expect (org-canvas--registry-find-feature "not-a-feature") :to-be nil)))
 
+;;;; Student-Data Files (issue #549)
+
+(defmacro test-core-config--with-git (answers &rest body)
+  "Run BODY in a temp DIR where git answers ANSWERS.
+ANSWERS maps a git subcommand string to its exit status; CALLS
+collects each (DIRECTORY . ARGS) git was run with."
+  (declare (indent 1))
+  `(let ((dir (file-name-as-directory (make-temp-file "core-config-git-" t)))
+         (calls nil))
+     (unwind-protect
+         (cl-letf (((symbol-function 'process-file)
+                    (lambda (program _in _out _display &rest args)
+                      (expect program :to-equal "git")
+                      (push (cons default-directory args) calls)
+                      (alist-get (car args) ,answers 1 nil #'equal))))
+           ,@body)
+       (delete-directory dir t))))
+
+(describe "org-canvas--student-data-files"
+  (it "names every course file a pull fills with student data, and the submissions directory"
+    (expect org-canvas--student-data-files
+            :to-equal '("people.org" "groups.org" "gradebook.org"
+                        "gradebook-scores.eld" "discussion-replies.org"
+                        "submissions/"))))
+
+(describe "org-canvas--student-data-ignore"
+  (it "adds the file to the .gitignore beside it, creating the file"
+    (test-core-config--with-git '(("rev-parse" . 0))
+      (expect (org-canvas--student-data-ignore (expand-file-name "people.org" dir))
+              :to-be 'added)
+      (expect (with-temp-buffer (insert-file-contents (expand-file-name ".gitignore" dir))
+                                (buffer-string))
+              :to-equal "people.org\n")
+      (expect (cdr (car calls)) :to-equal '("check-ignore" "-q" "--" "people.org"))
+      (expect (car (car calls)) :to-equal dir)))
+
+  (it "appends to an existing .gitignore without a final newline"
+    (test-core-config--with-git '(("rev-parse" . 0))
+      (with-temp-file (expand-file-name ".gitignore" dir) (insert "gradebook.org"))
+      (org-canvas--student-data-ignore (expand-file-name "gradebook-scores.eld" dir))
+      (expect (with-temp-buffer (insert-file-contents (expand-file-name ".gitignore" dir))
+                                (buffer-string))
+              :to-equal "gradebook.org\ngradebook-scores.eld\n")))
+
+  (it "leaves an ignored file alone, and warns about a tracked one without touching it"
+    (test-core-config--with-git '(("rev-parse" . 0) ("check-ignore" . 0))
+      (expect (org-canvas--student-data-ignore (expand-file-name "groups.org" dir))
+              :to-be 'ignored)
+      (expect (file-exists-p (expand-file-name ".gitignore" dir)) :to-be nil))
+    (test-core-config--with-git '(("rev-parse" . 0) ("ls-files" . 0))
+      (spy-on 'org-canvas--log-warning)
+      (expect (org-canvas--student-data-ignore (expand-file-name "people.org" dir))
+              :to-be 'tracked)
+      (expect (spy-calls-count 'org-canvas--log-warning) :to-equal 1)
+      (expect (file-exists-p (expand-file-name ".gitignore" dir)) :to-be nil)))
+
+  (it "does nothing outside a work tree or without git"
+    (test-core-config--with-git '(("rev-parse" . 128))
+      (expect (org-canvas--student-data-ignore (expand-file-name "people.org" dir))
+              :to-be nil)
+      (expect (length calls) :to-equal 1))
+    (cl-letf (((symbol-function 'process-file)
+               (lambda (&rest _) (signal 'file-missing '("Searching for program" "git")))))
+      (expect (org-canvas--student-data-ignore "/tmp/nowhere/people.org")
+              :to-be nil))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

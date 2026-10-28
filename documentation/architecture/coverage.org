@@ -62,6 +62,15 @@ and comments, posts grades held by a manual policy, downloads
 attachments, and reads and pushes each student's rubric assessment
 through the grading file's Rubric section.
 
+Every pull in the table that fills a file with student data — the
+roster, the groups, the gradebook and its scores file, the discussion
+replies, and everything under the submissions directory (grading files,
+quiz attempts, peer reviews) — keeps that file out of a course
+repository itself (#549): =org-canvas--student-data-files= in
+core-config names them, the pull adds the file's name to the course
+=.gitignore= unless git ignores it already, and a file git tracks is
+warned about rather than touched.
+
 *Course settings synced* (the registry in =org-canvas-settings.el= is
 the authority): the syllabus body, whether it is public, the home page
 view, licence, start and end dates, the student discussion and

@@ -58,7 +58,8 @@
 ;; =======
 ;; Grading files are student work.  The directory gets a .gitignore
 ;; when created (`org-canvas-submissions-write-gitignore') so they never
-;; travel with a course repository.
+;; travel with a course repository; a file git tracked before that
+;; warns, since a .gitignore does not untrack (issue #549).
 
 ;;; Code:
 
@@ -404,7 +405,9 @@ naming both, and nothing is written."
   "Create the submissions directory and return it.
 Write a .gitignore there once, when
 `org-canvas-submissions-write-gitignore' is non-nil, so the student
-work the directory holds never travels with a course repository."
+work the directory holds never travels with a course repository.
+Warn when git already tracks files under it — a .gitignore does not
+untrack (issue #549)."
   (let ((dir (org-canvas--submissions-dir)))
     (make-directory dir t)
     (when org-canvas-submissions-write-gitignore
@@ -413,6 +416,13 @@ work the directory holds never travels with a course repository."
           (with-temp-file gitignore
             (insert "# Student work pulled by org-canvas.  Never commit it.\n"
                     "*\n!.gitignore\n")))))
+    ;; Grading files, quiz attempts and peer reviews are student data
+    ;; (issue #549); a tracked one warns, since the .gitignore above
+    ;; does not untrack what was committed before it existed.
+    (when (eql 0 (org-canvas--git dir "ls-files" "--error-unmatch" "--" "."))
+      (org-canvas--log-warning org-canvas--logger
+        "[Submissions] git tracks files under %s: student work travels with the repository.  Run git rm --cached on them"
+        dir))
     dir))
 
 (defun org-canvas--submissions-file-property (name)

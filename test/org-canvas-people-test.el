@@ -176,6 +176,22 @@ when the token's role may see it, and omits it otherwise."
         (expect text :not :to-match "LOGIN_ID")
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
 
+  (it "keeps people.org out of git when the course directory is a work tree (issue #549)"
+    (test-people--with-course
+        (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10))
+        nil
+      ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+      ;; answer 1 (not tracked, not ignored), so the pull adds the name.
+      (cl-letf (((symbol-function 'process-file)
+                 (lambda (_program _in _out _display &rest args)
+                   (if (equal (car args) "rev-parse") 0 1))))
+        (org-canvas-pull-people))
+      (expect (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name ".gitignore" (file-name-directory org-canvas-people-file)))
+                (buffer-string))
+              :to-equal "people.org\n")))
+
   (it "links a section to its sections.org heading when that file holds the id"
     (test-people--with-course
         (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10))

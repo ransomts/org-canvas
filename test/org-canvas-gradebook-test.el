@@ -288,6 +288,22 @@ The gradebook and roster files live in a temp directory."
         (expect text :not :to-match "user_id\\|:PROPERTIES:")
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
 
+  (it "keeps gradebook.org out of git when the course directory is a work tree (issue #549)"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+      ;; answer 1 (not tracked, not ignored), so the pull adds the name.
+      (cl-letf (((symbol-function 'process-file)
+                 (lambda (_program _in _out _display &rest args)
+                   (if (equal (car args) "rev-parse") 0 1))))
+        (org-canvas-pull-gradebook))
+      (expect (with-temp-buffer
+                (insert-file-contents (expand-file-name ".gitignore" dir))
+                (buffer-string))
+              :to-equal "gradebook.org\n")))
+
   (it "links a student to the roster heading when people.org holds the user id"
     (test-gradebook--with-course
         (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
@@ -598,6 +614,25 @@ EXTRA pairs come first, so an explicit value shadows the default."
           (expect summary :to-match
                   "\n\nMe: 3 assignments, 1 missing; current 87.5; final 60.2\n\\'")))))
 
+  (it "keeps gradebook.org out of git for a student's own grades too (issue #549)"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0))
+        '(((id . 10) (name . "Lecture")))
+        'refuse
+      (let ((test-gradebook--course (test-gradebook--self-course
+                                      (test-gradebook--student-enrollment)))
+            (test-gradebook--submissions (test-gradebook--self-subs)))
+        ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+        ;; answer 1 (not tracked, not ignored), so the pull adds the name.
+        (cl-letf (((symbol-function 'process-file)
+                   (lambda (_program _in _out _display &rest args)
+                     (if (equal (car args) "rev-parse") 0 1))))
+          (org-canvas-pull-gradebook)))
+      (expect (with-temp-buffer
+                (insert-file-contents (expand-file-name ".gitignore" dir))
+                (buffer-string))
+              :to-equal "gradebook.org\n")))
+
   (it "marks an excused submission and writes No assignments for none"
     (test-gradebook--with-course nil nil nil
       (let ((test-gradebook--course (test-gradebook--self-course
@@ -886,6 +921,20 @@ EXTRA pairs come first, so an explicit value shadows the default."
       (expect test-gradebook--course-reads :to-equal '((("include[]" . "total_scores"))))
       (expect (test-gradebook--groups-row "Adams, Alice") :to-be-truthy)))
 
+  (it "keeps gradebook.org and the scores file out of git in a work tree (issue #549)"
+    (test-gradebook--with-scores 50.0
+      ;; rev-parse answers 0 (a work tree); ls-files and check-ignore
+      ;; answer 1 (not tracked, not ignored), so the pull adds both
+      ;; names, the file's before the scores file's.
+      (cl-letf (((symbol-function 'process-file)
+                 (lambda (_program _in _out _display &rest args)
+                   (if (equal (car args) "rev-parse") 0 1))))
+        (org-canvas-pull-gradebook))
+      (expect (with-temp-buffer
+                (insert-file-contents (expand-file-name ".gitignore" dir))
+                (buffer-string))
+              :to-equal "gradebook.org\ngradebook-scores.eld\n")))
+
   (it "reads the course itself when it was not handed one"
     (test-gradebook--with-scores 40.0
       (let ((scores (org-canvas--gradebook-fetch-scores
@@ -958,63 +1007,6 @@ EXTRA pairs come first, so an explicit value shadows the default."
           (expect (org-canvas--gradebook-fetch-scheme '((grading_standard_id . 5)) nil)
                   :to-be nil)
           (expect (spy-calls-count 'org-canvas--log-warning) :to-equal 1))))))
-
-(defmacro test-gradebook--with-git (answers &rest body)
-  "Run BODY in a temp DIR where git answers ANSWERS.
-ANSWERS maps a git subcommand string to its exit status; CALLS
-collects each (DIRECTORY . ARGS) git was run with."
-  (declare (indent 1))
-  `(let ((dir (file-name-as-directory (make-temp-file "gradebook-git-" t)))
-         (calls nil))
-     (unwind-protect
-         (cl-letf (((symbol-function 'process-file)
-                    (lambda (program _in _out _display &rest args)
-                      (expect program :to-equal "git")
-                      (push (cons default-directory args) calls)
-                      (alist-get (car args) ,answers 1 nil #'equal))))
-           ,@body)
-       (delete-directory dir t))))
-
-(describe "org-canvas--gradebook-ignore-scores"
-  (it "adds the file to the .gitignore beside it, creating the file"
-    (test-gradebook--with-git '(("rev-parse" . 0))
-      (expect (org-canvas--gradebook-ignore-scores (expand-file-name "gradebook-scores.eld" dir))
-              :to-be 'added)
-      (expect (with-temp-buffer (insert-file-contents (expand-file-name ".gitignore" dir))
-                                (buffer-string))
-              :to-equal "gradebook-scores.eld\n")
-      (expect (cdr (car calls)) :to-equal '("check-ignore" "-q" "--" "gradebook-scores.eld"))
-      (expect (car (car calls)) :to-equal dir)))
-
-  (it "appends to an existing .gitignore without a final newline"
-    (test-gradebook--with-git '(("rev-parse" . 0))
-      (with-temp-file (expand-file-name ".gitignore" dir) (insert "gradebook.org"))
-      (org-canvas--gradebook-ignore-scores (expand-file-name "gradebook-scores.eld" dir))
-      (expect (with-temp-buffer (insert-file-contents (expand-file-name ".gitignore" dir))
-                                (buffer-string))
-              :to-equal "gradebook.org\ngradebook-scores.eld\n")))
-
-  (it "leaves an ignored file alone, and warns about a tracked one without touching it"
-    (test-gradebook--with-git '(("rev-parse" . 0) ("check-ignore" . 0))
-      (expect (org-canvas--gradebook-ignore-scores (expand-file-name "gradebook-scores.eld" dir))
-              :to-be 'ignored)
-      (expect (file-exists-p (expand-file-name ".gitignore" dir)) :to-be nil))
-    (test-gradebook--with-git '(("rev-parse" . 0) ("ls-files" . 0))
-      (spy-on 'org-canvas--log-warning)
-      (expect (org-canvas--gradebook-ignore-scores (expand-file-name "gradebook-scores.eld" dir))
-              :to-be 'tracked)
-      (expect (spy-calls-count 'org-canvas--log-warning) :to-equal 1)
-      (expect (file-exists-p (expand-file-name ".gitignore" dir)) :to-be nil)))
-
-  (it "does nothing outside a work tree or without git"
-    (test-gradebook--with-git '(("rev-parse" . 128))
-      (expect (org-canvas--gradebook-ignore-scores (expand-file-name "gradebook-scores.eld" dir))
-              :to-be nil)
-      (expect (length calls) :to-equal 1))
-    (cl-letf (((symbol-function 'process-file)
-               (lambda (&rest _) (signal 'file-missing '("Searching for program" "git")))))
-      (expect (org-canvas--gradebook-ignore-scores "/tmp/nowhere/gradebook-scores.eld")
-              :to-be nil))))
 
 (defconst test-gradebook--local-groups
   "* Assignment Groups
