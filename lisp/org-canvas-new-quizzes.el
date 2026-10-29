@@ -872,6 +872,9 @@ returns a plist whose :outcome is `pulled', `dry-run' or `deleted'."
   (org-canvas--log-warning org-canvas--logger "========================================")
   (let* ((endpoint (org-canvas--new-quiz-api-endpoint "quizzes"))
          (remote-items (org-canvas-api-request-all-pages 'GET endpoint))
+         ;; What is about to go is written down before the deletes
+         ;; (issue #555).
+         (snapshot (org-canvas--delete-all-snapshot "new-quizzes" remote-items))
          (deleted 0)
          (deleted-ids nil))
     (org-canvas--log-info org-canvas--logger "Found %d new-quizzes on Canvas"
@@ -895,7 +898,8 @@ returns a plist whose :outcome is `pulled', `dry-run' or `deleted'."
      (org-canvas--delete-kept-ids remote-items
                                   #'org-canvas--new-quiz-delete-id deleted-ids)
      "CANVAS_ASSIGNMENT_ID")
-    (message "New-quizzes deletion complete. %d removed." deleted)))
+    (message "New-quizzes deletion complete. %d removed%s."
+             deleted (org-canvas--delete-snapshot-note snapshot))))
 
 ;;;; Pull
 

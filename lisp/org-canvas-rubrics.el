@@ -952,6 +952,9 @@ On failure, fetches detailed rubric info for diagnostics."
   ;; Step 2: Fetch all rubrics and delete with diagnostics on failure
   (let* ((full-endpoint (org-canvas-api-course-endpoint "rubrics"))
          (remote-items (org-canvas-api-request-all-pages 'GET full-endpoint))
+         ;; What is about to go is written down before the deletes
+         ;; (issue #555).
+         (snapshot (org-canvas--delete-all-snapshot "rubrics" remote-items))
          (deleted-count 0)
          (deleted-ids nil))
 
@@ -974,7 +977,8 @@ On failure, fetches detailed rubric info for diagnostics."
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
     (org-canvas--log-info org-canvas--logger "========================================")
-    (message "Rubrics deletion complete. %d removed." deleted-count)))
+    (message "Rubrics deletion complete. %d removed%s."
+             deleted-count (org-canvas--delete-snapshot-note snapshot))))
 
 ;;;; Pull
 

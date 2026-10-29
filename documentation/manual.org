@@ -204,6 +204,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |
 | =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
 | =delete --yes FEATURE:TITLE...= | =org-canvas-delete-headings= (=-n=: prints what would go, sends nothing) | any heading failed |
+| =cleanup-orphans [--yes]= | =org-canvas-cleanup-orphans=: the orphan report on stdout; =--yes= deletes what it lists, =-n= or no =--yes= the report alone | a delete failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
 | =post ASSIGNMENT...= | =org-canvas-post-grades=, no grading file needed (=--queue=: every column the queue marks =post=) | a column was not posted |
@@ -223,6 +224,8 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
+| =search REGEXP= | =org-canvas-search-live=: every match of REGEXP in the live course's text, with its object, field and context |   |
+| =search-dates= | =org-canvas-search-live-dates=: every date the live course's text and date fields say, by object |   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back; =--json=: one JSON object) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
 | =check=                       | =org-canvas-connection-info=: reads the token's user and the course, GETs only | a read failed (a 401 exits 3) |
@@ -252,6 +255,16 @@ heading's sync properties (see [[*Deleting a Single Item][Deleting a
 Single Item]]); it needs =--yes= (=-y=), which answers the delete
 confirmation and nothing else, or =--dry-run=, which prints one
 =Would delete FEATURE 'TITLE' (CANVAS_ID ID)= line per heading.
+=search REGEXP= greps the live course's text and lists every match
+with its object, field and context, and =search-dates= lists every
+date the course says, by object; both read only, print their report on
+standard output and exit 0 whatever the hit count, which the report's
+closing line names (see [[*Searching the Live Course][Searching the
+Live Course]]).  =cleanup-orphans= scans for Canvas items no Org
+heading claims and prints the orphan report (see [[*Orphan
+Cleanup][Orphan Cleanup]]); =--yes= (=-y=) deletes what the report
+lists — answering the orphan confirmation and nothing else — and a
+=--dry-run=, or a run without =--yes=, prints the report alone.
 =--dry-run= (=-n=)
 before the command makes =push=, =publish=, =unpublish=, =delete=,
 =push-comments= and =sync= send nothing, =adopt= write nothing, and
@@ -2744,17 +2757,21 @@ submissions are missing or late, when Canvas last saw them, a
 summary per section, and the class's score spread on each
 assignment.  It answers "who is falling behind?" and "how did the
 class do on Homework 3?" without opening the Canvas gradebook or
-pulling one grading file per assignment.  Nothing in this file is pushed, and the tables are
-derived: every pull rewrites them, so anything you write under its
-headings is gone at the next pull.
+pulling one grading file per assignment.  Every table but one is
+derived: every pull rewrites it, so anything you write under its
+headings is gone at the next pull.  The exception is the Final grade
+overrides table, which =org-canvas-sync-final-grade-overrides= pushes
+(see [[*Final Grade Overrides][Final Grade Overrides]]).
 
 *** Structure
 
 - =* Students=: one table, sorted by name, with the columns Student,
-  Sections, Current, Final, Missing, Late and Last activity, then one
-  column per custom gradebook column the course has (the Notes column,
-  anything added in the gradebook), titled as in Canvas and in
-  Canvas's order.  A student is one row however many sections they
+  Sections, Current, Final, Override, Missing, Late and Last activity,
+  then one column per custom gradebook column the course has (the Notes
+  column, anything added in the gradebook), titled as in Canvas and in
+  Canvas's order.  Override is the Final Grade Override column, the
+  percentage the registrar receives in place of the computed total when
+  the course has one set for the student; =-= when it does not.  A student is one row however many sections they
   sit in.  The Student cell links to the person's heading in
   =people.org= when that file holds their user id (pull the roster
   first)
@@ -2765,6 +2782,11 @@ headings is gone at the next pull.
   course analytics.  The quartiles stay =-= until enough work is
   graded.  The Assignment cell links to the heading in
   =assignments.org= when that file holds the id
+- =* Final grade overrides=: one table with Student and Override, one
+  row per student Canvas holds an override for, or a line saying there
+  are none.  The table is edited by hand and pushed by
+  =org-canvas-sync-final-grade-overrides=; see
+  [[*Final Grade Overrides][Final Grade Overrides]]
 - =* Groups=: only with =org-canvas-gradebook-groups= set (default
   nil).  One table with Student, one column per assignment group in
   Canvas's order, Computed and Canvas.  A group's cell is the
@@ -2834,6 +2856,54 @@ the file that Canvas does not have yet, or one on Canvas the file
 lacks (which keeps Canvas's weight and rules), is listed above the
 tables.  Nothing is sent, and the what-if makes no request at all;
 pull the gradebook again for newer scores.
+
+*** Final Grade Overrides
+
+The grade the registrar receives is not the computed total: when the
+course has the Final Grade Override column on (Canvas's gradebook
+setting), a percentage entered there supersedes both Current and Final
+for that student.  The pull shows it in the Students table's Override
+column and writes it under =* Final grade overrides= as a table:
+
+#+begin_example
+* Final grade overrides
+#+NAME: final-grade-overrides
+| Student      | Override |
+|--------------+----------|
+| Adams, Alice |    93.5  |
+| #5002        |     70   |
+#+end_example
+
+Student is a person's heading title in =people.org= (pull the roster
+first) or a literal =#id=; Override is a percentage, and a blank cell
+means no override.  Edit the table — add rows, change numbers, blank a
+cell — then run =M-x org-canvas-sync-final-grade-overrides= (=l= in the
+dispatch menu's Submissions group).  The table is the whole set, as the
+accommodations table is: a row whose percentage differs from Canvas's
+is sent, a blank cell clears that student's override, and a student
+with an override on Canvas and no row is cleared too.  A missing table
+sends nothing; an emptied one (header, no rows) clears everyone, so
+delete the table rather than emptying it when Canvas should be left
+alone.  The pull rewrites the table from Canvas, so pull after a sync
+to see what stuck, and hand edits do not survive a pull in between.
+
+The push sends one request per change through Canvas's own gradebook
+mutation (=setOverrideScore=), which requires the course's Final Grade
+Override setting to be on and the token to manage grades; a student
+with several enrollments (two sections) is written once.  Under a dry
+run nothing is sent and each change is logged; a token whose
+=org-canvas-write-allowlist= does not name =submissions= is refused, and
+a refused enrollments read aborts before anything is sent.  Writing
+final grades is grading: the allowlist's one word =submissions= covers
+it (see [[*Scoping What a Collaborator May Write][Scoping What a
+Collaborator May Write]]).
+
+What org-canvas does not do there: a per-grading-period override (only
+the course total is written, the number the registrar receives), and a
+CSV export of the gradebook — Canvas publishes no API for either the
+override write beyond this mutation or the export, so the web UI's
+export stays the browser's business.  The pull itself is org-canvas's
+export: =gradebook.org= holds every student's scores.
 
 *** A Student's Own Grades
 
@@ -4332,7 +4402,9 @@ object is deleted at the URL =k= would use.  The rules:
   returned it, is written to =<time>-<feature>-<id>.json= under
   =org-canvas-diff-delete-snapshot-directory= (default
   =canvas-snapshots/= in the course directory), so a mistaken delete can
-  be rebuilt.  =k= writes one too.
+  be rebuilt.  =k= writes one too.  A delete-all writes its own snapshot
+  under the same directory before its first DELETE (#555); see
+  [[*Deleting All Items of a Type][Deleting All Items of a Type]].
 - *Dry run and read-only.*  Under a dry run the objects are read and
   checked, and nothing is written or sent (=dry-run=); a course marked
   =org-canvas-read-only= refuses each delete before its snapshot
@@ -5532,6 +5604,17 @@ This command:
 4. Displays an orphan report in a =*canvas-orphans*= buffer
 5. Prompts whether to delete the orphaned items from Canvas
 
+From the shell, =scripts/org-canvas cleanup-orphans= prints the same
+report on standard output and deletes nothing; =--yes= (=-y=) deletes
+what the report lists, answering the orphan confirmation and nothing
+else, and a =--dry-run=, before the command or after it, prints the
+report alone whatever =--yes= says.  It exits 1 when a delete failed,
+each failure logged and the next item still tried, while a feature
+outside the credentials file's write allowlist is left alone, named,
+and does not fail the run.  In a batch Emacs there is nobody to ask,
+so an unconfirmed run deletes nothing, saying how to confirm (#554);
+interactively the prompt stands as before.
+
 ** Orphan Report
 
 The report buffer shows each orphan grouped by content type:
@@ -5698,17 +5781,20 @@ grouped by object.  One call reads every date a student can see.
 
 Both commands read only.  A surface the token's role cannot read, or
 a service the course has off (New Quizzes), is skipped and named in
-the closing line; the rest of the walk goes on.  From a script:
+the closing line; the rest of the walk goes on.  From the shell:
 
 #+begin_src sh
-emacs --batch -l /path/to/init.el \
-      --eval '(org-canvas-search-live "Sep\\(tember\\)? 30\\|09-30")'
+scripts/org-canvas search "Sep\\(tember\\)? 30\\|09-30"
+scripts/org-canvas search-dates
 #+end_src
 
-The command returns the number of hits, so a wrapper can exit non-zero
-on any.  =org-canvas--search-live= is the same walk as a function,
-returning the hits as a list with the object count and what was
-skipped, for a script that wants the data rather than the report.
+The same report prints on standard output, so a CI job that exits
+non-zero on drift (=diff=) can also grep the course for the stale
+value behind it.  From Lisp the command returns the number of hits,
+so a wrapper can exit non-zero on any.  =org-canvas--search-live= is
+the same walk as a function, returning the hits as a list with the
+object count and what was skipped, for a script that wants the data
+rather than the report.
 
 * Commands Reference
 
@@ -6157,7 +6243,9 @@ scripts/org-canvas delete --yes "assignment:Journal 06" "assignment#2497507"
 *** Deleting All Items of a Type
 
 1. Run =M-x org-canvas-delete-all-assignments= (or the equivalent for another type).
-2. Confirm the deletion.  All items of that type are removed from Canvas and sync properties are cleared.  An item left on Canvas -- the front page, one a skip rule protects (such as a quiz's or a graded discussion's assignment), one whose DELETE failed -- keeps its stamps, and the headings below it keep theirs; the log names the reason beside each.
+2. Confirm the deletion.  Before the first DELETE goes out, a JSON snapshot of the items about to go is written — =<time>-<type>-all.json= under =org-canvas-diff-delete-snapshot-directory= (default =canvas-snapshots/= in the course directory), the same file the drift report's batch delete writes (#345) — holding each item as Canvas's listing returned it, an item no Org heading claims included, since that is the half a re-push cannot rebuild.  All items of that type are then removed from Canvas and sync properties are cleared.  An item left on Canvas -- the front page, one a skip rule protects (such as a quiz's or a graded discussion's assignment), one whose DELETE failed -- keeps its stamps, is kept out of the snapshot, and the log names the reason beside each.  A scoped identity refused the file's write, a read-only course, or an empty listing writes no snapshot: no file claims a delete that did not happen.
+
+The completion message names the snapshot's path.  =M-x org-canvas-delete-all=, which deletes every type in reverse dependency order after its two confirmations, writes one snapshot per type it actually deletes and names the directory they are under in its completion message; a type its identity was refused for writes none.
 
 *** Finding and Removing Orphans
 

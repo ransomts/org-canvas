@@ -374,11 +374,12 @@ Canvas keeps some operations out of REST: the grade post policies and
 posting grades (#202), discussion checkpoints, a submission's late
 policy status, the comment bank, a submission's attempt history, the
 document processor and its reports, the per-column score statistics,
-an assignment's posting schedule and a module item's move between
-modules (#350, #351, #352).  They go to =/api/graphql= through the same
-=org-canvas-api-request= as everything else, so a GraphQL request
-inherits the token handling, redaction, rate-limit retries and the
-read-only guard (core-api.el, "GraphQL").
+an assignment's posting schedule, a module item's move between
+modules (#350, #351, #352), and the final grade override (#556,
+itself the gradebook's own write path).  They go to =/api/graphql=
+through the same =org-canvas-api-request= as everything else, so a
+GraphQL request inherits the token handling, redaction, rate-limit
+retries and the read-only guard (core-api.el, "GraphQL").
 
 - *One sender.*  =org-canvas--graphql-send= POSTs the document with its
   variables and returns the reply's =data=.  GraphQL answers 200 with a
@@ -979,15 +980,23 @@ logs. The result is a single continuous log for the entire sync session.
    logged by name with their =:skip-reason=, and the prune tally counts
    them as =protected= — an item held back silently is
    indistinguishable from one that was not there
-3. Delete each item via =org-canvas--delete-items-queued=
-4. Clean the local sync properties of each heading whose item was
+3. Write a JSON snapshot of the queued items before the first DELETE
+   (=org-canvas--delete-all-snapshot=, issue #555): one file per run,
+   =<time>-<feature>-all.json= under
+   =org-canvas-diff-delete-snapshot-directory= as the drift delete's
+   writer leaves it, holding the items as the listing returned them —
+   Canvas-only material included, since that is what no re-push
+   rebuilds.  A run refused by the write scope never reaches the
+   write; a read-only course and an empty listing write nothing
+4. Delete each item via =org-canvas--delete-items-queued=
+5. Clean the local sync properties of each heading whose item was
    deleted, and only those: an item skipped or whose DELETE failed
    keeps its stamps, with the headings below it (#324).  The clean
    covers every id stamp a module registered with
    =org-canvas-register-id-property= (=CANVAS_ASSIGNMENT_ID=,
    =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates
    the object again rather than updating the deleted one (#331)
-5. Log summary (N succeeded, M failed)
+6. Log summary (N succeeded, M failed)
 
 Each item is deleted independently — failures on one item don't stop
 the others. Progress messages show =[N/M]= counts.

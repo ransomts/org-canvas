@@ -423,7 +423,18 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
               (expect (org-canvas-delete-all) :not :to-throw)))))
       (expect (cl-some (lambda (w) (string-match-p "\\[Skip\\] Pages" w))
                        warnings)
-              :to-be-truthy))))
+              :to-be-truthy)))
+
+  (it "writes no snapshot when every file is refused (issue #555)"
+    (with-sync-test-env
+      (with-delete-snapshot-dir
+        (let ((org-canvas--inhibit-log-clear t)
+              (org-canvas-write-allowlist '("nowhere.org")))
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
+            (expect (org-canvas-delete-all) :not :to-throw)))
+        ;; Refusal happens before each feature's listing, so no run ever
+        ;; reached the snapshot write.
+        (expect (directory-files snapshot-dir nil "\\.json\\'") :to-be nil)))))
 
 ;;;; Grading: the submissions word
 

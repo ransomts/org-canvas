@@ -943,6 +943,30 @@ Content.
         (when (file-exists-p temp-file)
           (delete-file temp-file)))))
 
+  (it "snapshots the groups it is about to delete (issue #555)"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                    ((symbol-function 'org-canvas--delete-items-queued)
+                     (lambda (_items _endpoint-fn _id-field _title-field
+                               &optional _skip-fn _delete-data)
+                       (cons 1 nil)))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest _args)
+                       (cond
+                        ((string-match "root_outcome_group" url)
+                         '((id . 1000)))
+                        ((string-match "subgroups" url)
+                         ;; A group made in the web UI that Org never held.
+                         [((id . 7) (title . "Web-made Group"))])))))
+            (let ((org-canvas-outcomes-file "/nonexistent"))
+              (org-canvas-delete-all-outcomes)))
+          (let ((files (directory-files snapshot-dir t "-outcomes-all\\.json\\'")))
+            (expect (length files) :to-equal 1)
+            (expect (test-org-canvas-delete--snapshot-titles (car files))
+                    :to-equal '("Web-made Group")))))))
+
   (it "aborts when user cancels"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))

@@ -491,6 +491,9 @@ Warning: This will remove all learning outcomes from the course."
   (let* ((root-group-id (org-canvas--outcome-get-root-group-id))
          (endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/subgroups" root-group-id))
          (subgroups (org-canvas-api-request-all-pages 'GET endpoint))
+         ;; What is about to go is written down before the deletes
+         ;; (issue #555).
+         (snapshot (org-canvas--delete-all-snapshot "outcomes" subgroups))
          (result (progn
                    (org-canvas--log-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
                    (org-canvas--delete-items-queued
@@ -508,7 +511,8 @@ Warning: This will remove all learning outcomes from the course."
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d groups removed" deleted-groups)
     (org-canvas--log-info org-canvas--logger "========================================")
-    (message "Outcome deletion complete. %d groups removed." deleted-groups)))
+    (message "Outcome deletion complete. %d groups removed%s."
+             deleted-groups (org-canvas--delete-snapshot-note snapshot))))
 
 ;;;; Pull
 

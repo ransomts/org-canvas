@@ -292,6 +292,27 @@ pushes (issue #163)."
                 #'test-org-canvas-mock-api-request))
        ,@body)))
 
+(defmacro with-delete-snapshot-dir (&rest body)
+  "Run BODY with delete snapshots going to a fresh temporary directory.
+The directory is bound to `snapshot-dir' and removed afterwards, so a
+spec never depends on, or leaves files in, the course directory the
+rest of the suite shares (issue #555)."
+  (declare (indent 0) (debug let))
+  `(let* ((snapshot-dir (make-temp-file "delete-snapshots-" t))
+          (org-canvas-diff-delete-snapshot-directory snapshot-dir))
+     (unwind-protect
+         (progn ,@body)
+       (delete-directory snapshot-dir t))))
+
+(defun test-org-canvas-delete--snapshot-files (dir)
+  "Return DIR's delete-all snapshots, the <time>-<feature>-all.json files."
+  (directory-files dir t "-all\\.json\\'"))
+
+(defun test-org-canvas-delete--snapshot-titles (file)
+  "Return the title of every item the snapshot FILE holds."
+  (mapcar (lambda (item) (alist-get 'title item))
+          (append (json-read-file file) nil)))
+
 (defconst test-org-canvas--sync-fn-labels
   '((settings . org-canvas-sync-settings)
     (outcomes . org-canvas-sync-outcomes)

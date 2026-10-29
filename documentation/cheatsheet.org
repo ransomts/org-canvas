@@ -31,7 +31,7 @@ From Lisp: =(org-canvas-pull-page TITLE)= and the same for each feature (=org-ca
 
 | Key | Command                      | Description               |
 |-----+------------------------------+---------------------------|
-| =D=   | =org-canvas-delete-all=        | Delete ALL course content |
+| =D=   | =org-canvas-delete-all=        | Delete ALL course content (JSON snapshot first) |
 | =O=   | =org-canvas-cleanup-orphans=   | Find and remove orphans   |
 | =X=   | /delete-at-point submenu/      | Delete single heading     |
 

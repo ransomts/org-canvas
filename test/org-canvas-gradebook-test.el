@@ -63,7 +63,10 @@ ARGS are the keyword arguments; a course read's :params are recorded."
 (defun test-gradebook--api (_method url &optional _params)
   "Answer URL from the fake tables, as the paginated helper would."
   (cond
-   ((string-match "/enrollments" url) test-gradebook--enrollments)
+   ((string-match "/enrollments" url)
+    (if (eq test-gradebook--enrollments 'refuse)
+        (signal 'org-canvas-permission-error (list "403 Forbidden"))
+      test-gradebook--enrollments))
    ((string-match "/sections\\'" url) test-gradebook--sections)
    ((string-match "/analytics/student_summaries" url)
     (if (eq test-gradebook--summaries 'refuse)
@@ -134,6 +137,13 @@ counts; a score field not given is null, a count not given is 0."
   "Fold SUMMARIES as the fetch does: an alist of user id to tardiness."
   (mapcar (lambda (s) (cons (alist-get 'id s) (alist-get 'tardiness_breakdown s)))
           summaries))
+
+(defun test-gradebook--with-override (enrollment override)
+  "Return ENROLLMENT with OVERRIDE, a percentage, in its grades."
+  (let ((copy (copy-alist enrollment)))
+    (setcdr (assq 'grades copy)
+            (cons (cons 'override_score override) (cdr (assq 'grades copy))))
+    copy))
 
 (defmacro test-gradebook--with-course (enrollments sections summaries &rest body)
   "Run BODY with the fake API serving ENROLLMENTS, SECTIONS and SUMMARIES.
@@ -275,13 +285,13 @@ The gradebook and roster files live in a temp directory."
         (expect text :to-match "^\\* Students\n")
         (expect text :to-match "^\\* Sections\n")
         (expect (string-match "\\* Students" text) :to-be-less-than (string-match "\\* Sections" text))
-        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Missing +| Late +| Last activity +|$")
+        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Override +| Missing +| Late +| Last activity +|$")
         (expect (string-match "Adams, Alice" text) :to-be-less-than (string-match "Beta, Bob" text))
         (expect (test-gradebook--row "Adams, Alice")
-                :to-equal '("Lecture, Recitation" "91.5" "88.0" "0" "2" "-"))
+                :to-equal '("Lecture, Recitation" "91.5" "88.0" "-" "0" "2" "-"))
         (expect (nthcdr 1 (test-gradebook--row "Beta, Bob"))
-                :to-equal '("70.0" "65.2" "3" "1" "<2026-09-05 Sat 10:00>"))
-        (expect (test-gradebook--row "Cruz, Cal") :to-equal '("Recitation" "-" "-" "-" "-" "-"))
+                :to-equal '("70.0" "65.2" "-" "3" "1" "<2026-09-05 Sat 10:00>"))
+        (expect (test-gradebook--row "Cruz, Cal") :to-equal '("Recitation" "-" "-" "-" "-" "-" "-"))
         (expect text :to-match "^| Section +| Students +| Mean current +| Mean final +| Missing +|$")
         (expect (test-gradebook--row "Lecture") :to-equal '("2" "80.8" "76.6" "3"))
         (expect (test-gradebook--row "Recitation") :to-equal '("2" "91.5" "88.0" "0"))
@@ -326,7 +336,7 @@ The gradebook and roster files live in a temp directory."
           (org-canvas-pull-gradebook))
         (expect (car warned) :to-match "Could not read the student summaries"))
       (let ((text (test-gradebook--file)))
-        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "" "" "-"))
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "" "" "-"))
         (expect (test-gradebook--row "Lecture") :to-equal '("1" "91.5" "88.0" ""))
         (expect text :to-match "^Missing and Late are blank: Canvas refused"))))
 
@@ -346,7 +356,7 @@ The gradebook and roster files live in a temp directory."
             (list (test-gradebook--enrollment 1 "Adams, Alice" 10 95.0 95.0)))
       (org-canvas-pull-gradebook)
       (let ((text (test-gradebook--file)))
-        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "95.0" "95.0" "-" "-" "-"))
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "95.0" "95.0" "-" "-" "-" "-"))
         (expect text :not :to-match "Beta, Bob")
         (expect text :not :to-match "A note I wrote")
         (expect (length (split-string text "^\\* Students" t)) :to-equal 2))))
@@ -362,13 +372,13 @@ The gradebook and roster files live in a temp directory."
                   (test-gradebook--column 7 "Advisor" 1 '(1 . "Dr. Chen") '(2 . ""))))
       (org-canvas-pull-gradebook)
       (let ((text (test-gradebook--file)))
-        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Missing +| Late +| Last activity +| Advisor +| Notes +|$")
+        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Override +| Missing +| Late +| Last activity +| Advisor +| Notes +|$")
         (expect (test-gradebook--row "Adams, Alice")
-                :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-" "Dr. Chen" "Sees me Tue afternoons"))
+                :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-" "-" "Dr. Chen" "Sees me Tue afternoons"))
         (expect (test-gradebook--row "Beta, Bob")
-                :to-equal '("Lecture" "70.0" "65.0" "-" "-" "-" "" ""))
+                :to-equal '("Lecture" "70.0" "65.0" "-" "-" "-" "-" "" ""))
         ;; The separator row has one more cell per custom column.
-        (expect text :to-match "^|-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+|$")
+        (expect text :to-match "^|-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+|$")
         (expect (test-gradebook--row "Lecture") :to-equal '("2" "80.8" "76.5" "0"))
         (expect test-gradebook--columns-params :to-be nil))))
 
@@ -394,8 +404,8 @@ The gradebook and roster files live in a temp directory."
         (expect (length warned) :to-equal 1)
         (expect (car warned) :to-match "Could not read the custom gradebook columns"))
       (let ((text (test-gradebook--file)))
-        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Missing +| Late +| Last activity +|$")
-        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
+        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Override +| Missing +| Late +| Last activity +|$")
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-" "-"))
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
 
   (it "writes the assignments table in Canvas order with the spread, links and dashes"
@@ -439,7 +449,7 @@ The gradebook and roster files live in a temp directory."
       (let ((text (test-gradebook--file)))
         (expect text :to-match "^\\* Assignments\n+Canvas refused the assignment analytics")
         (expect text :not :to-match "^| Assignment ")
-        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-" "-"))
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
 
   (it "writes a No assignments line when the course has none"
@@ -488,6 +498,300 @@ The gradebook and roster files live in a temp directory."
     (let ((names (mapcar #'car (apply #'append org-canvas--pull-tiers))))
       (expect (cl-position 'org-canvas-pull-people names)
               :to-be-less-than (cl-position 'org-canvas-pull-gradebook names)))))
+
+;;;; Final grade overrides (issue #556)
+
+(defun test-gradebook--write-people (dir)
+  "Write people.org with Adams, Beta and Doe in DIR; return its path."
+  (let ((file (expand-file-name "people.org" dir)))
+    (with-temp-file file
+      (insert "* Students\n"
+              "** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n"
+              "** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n:END:\n"
+              "** Doe, Dee\n:PROPERTIES:\n:USER_ID: 4\n:END:\n"))
+    file))
+
+(defun test-gradebook--overrides-table ()
+  "Return the final grade overrides table's text, or nil without one."
+  (let ((text (test-gradebook--file)))
+    (when (string-match
+           "^#\\+NAME: final-grade-overrides\n\\(\\(?:.*\n\\)*?\\)\n" text)
+      (match-string 1 text))))
+
+(defun test-gradebook--write-overrides-table (rows)
+  "Write gradebook.org's overrides table with ROWS, (NAME . CELL) pairs."
+  (with-temp-file org-canvas-gradebook-file
+    (insert "* Final grade overrides\n"
+            "#+NAME: final-grade-overrides\n"
+            "| Student | Override |\n"
+            "|---+---|\n")
+    (dolist (row rows)
+      (insert (format "| %s | %s |\n" (car row) (cdr row))))))
+
+(describe "the Students table's override column"
+  (it "shows the override the enrollment carries beside Final, one per student"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0) 93.25)
+              (test-gradebook--enrollment 1 "Adams, Alice" 20 91.5 88.0)
+              (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0))
+        '(((id . 10) (name . "Lecture")) ((id . 20) (name . "Recitation")))
+        nil
+      (org-canvas-pull-gradebook)
+      (let ((text (test-gradebook--file)))
+        (expect text
+                :to-match "^| Student +| Sections +| Current +| Final +| Override +| Missing +| Late +| Last activity +|$")
+        (expect (test-gradebook--row "Adams, Alice")
+                :to-equal '("Lecture, Recitation" "91.5" "88.0" "93.2" "-" "-" "-"))
+        (expect (test-gradebook--row "Beta, Bob")
+                :to-equal '("Lecture" "70.0" "65.0" "-" "-" "-" "-"))))))
+
+(describe "the final grade overrides table"
+  (it "writes one row per student Canvas holds an override for"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0) 93.5)
+              (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (org-canvas-pull-gradebook)
+      (let ((text (test-gradebook--file))
+            (table (test-gradebook--overrides-table)))
+        (expect text :to-match "^\\* Final grade overrides\n")
+        (expect table :to-match "^| Student +| Override +|$")
+        (expect table :to-match "^| Adams, Alice +| +93.5 |$")
+        (expect table :not :to-match "Beta"))))
+
+  (it "falls back to the user id when people.org lacks the student"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 5 "Nobody, Noe" 10 50.0 50.0) 70.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (org-canvas-pull-gradebook)
+      (expect (test-gradebook--overrides-table) :to-match "^| #5 +| +70.0 |$")))
+
+  (it "says none when no student has one, replacing a stale table"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0) 93.5))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (org-canvas-pull-gradebook)
+      (setq test-gradebook--enrollments
+            (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0)))
+      (org-canvas-pull-gradebook)
+      (let ((text (test-gradebook--file)))
+        (expect text :to-match "^\\* Final grade overrides\n")
+        (expect text :to-match "No final grade overrides")
+        (expect text :not :to-match "#\\+NAME: final-grade-overrides")
+        (expect text :not :to-match "Adams, Alice +| 93"))))
+
+  (it "a student's pull removes the heading a teacher pull left"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0) 93.5))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (setq test-gradebook--course
+            (test-gradebook--self-course (test-gradebook--student-enrollment)))
+      (setq test-gradebook--submissions (test-gradebook--self-subs))
+      (org-canvas-pull-gradebook)
+      (expect (test-gradebook--file) :not :to-match "Final grade overrides"))))
+
+(describe "org-canvas-sync-final-grade-overrides"
+  (it "sends one mutation per row that differs and one clear per missing row"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0) 93.5)
+              (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0)
+              (test-gradebook--with-override
+               (test-gradebook--enrollment 3 "Cruz, Cal" 10 88.0 88.0) 88.0)
+              (test-gradebook--enrollment 4 "Doe, Dee" 10 60.0 60.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table
+       '(("Adams, Alice" . "93.5") ("Beta, Bob" . "") ("#4" . "70")))
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what doc vars)
+                     (push (list what doc vars) sent) nil)))
+          (org-canvas-sync-final-grade-overrides))
+        ;; A row matching Canvas, and one whose blank says no override,
+        ;; are sent nothing; Cruz on Canvas with no row is cleared.
+        (expect (length sent) :to-equal 2)
+        (let* ((clear (cl-find-if (lambda (call)
+                                    (null (alist-get 'overrideScore (nth 2 call))))
+                                  sent))
+               (set (cl-find-if (lambda (call)
+                                   (equal (alist-get 'overrideScore (nth 2 call)) 70))
+                                 sent)))
+          (expect (alist-get 'enrollmentId (nth 2 clear)) :to-equal "1103")
+          (expect (car clear) :to-match "clear Cruz, Cal")
+          (expect (alist-get 'enrollmentId (nth 2 set)) :to-equal "1104")
+          (expect (car set) :to-match "set Doe, Dee")
+          (expect (nth 1 set) :to-match "setOverrideScore")))))
+
+  (it "runs the mutation for real, reading back what Canvas stored"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0)
+              (test-gradebook--with-override
+               (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0) 70.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "93.5")))
+      (let ((said nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-send)
+                   (lambda (&rest _)
+                     '((setOverrideScore
+                        . ((grades . ((overrideScore . 93.5))))))))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+          (org-canvas-sync-final-grade-overrides))
+        ;; Adams's row is sent, Beta's Canvas override is cleared, and
+        ;; both reads come back through the reply: two successes.
+        (expect (car said) :to-match "1 set, 1 cleared, 0 failed"))))
+
+  (it "counts a payload that answers errors as a failed request"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "93.5")))
+      (let ((said nil) (errored nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-send)
+                   (lambda (&rest _)
+                     '((setOverrideScore
+                        . ((errors
+                            . (((attribute . "enrollment")
+                                (message . "has no score")))))))))
+                   ((symbol-function 'org-canvas--log-error)
+                   (lambda (_ fmt &rest args) (push (apply #'format fmt args) errored)))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+          (org-canvas-sync-final-grade-overrides))
+        (expect (car said) :to-match "0 set, 0 cleared, 1 failed")
+        (expect (car errored) :to-match "setOverrideScore: has no score"))))
+
+  (it "reads the Override column by its title, falling back to position 1"
+    (expect (org-canvas--gradebook-overrides-column '("Student" "Override")) :to-equal 1)
+    (expect (org-canvas--gradebook-overrides-column '("Student" "Grade")) :to-equal 1)
+    (expect (org-canvas--gradebook-overrides-column '("Override" "Student")) :to-equal 0))
+
+  (it "sends nothing when the table says what Canvas already holds"
+    (test-gradebook--with-course
+        (list (test-gradebook--with-override
+               (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0) 93.5))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "93.5")))
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (push 'called sent) nil)))
+          (org-canvas-sync-final-grade-overrides))
+        (expect sent :to-be nil))))
+
+  (it "skips a row that names nobody, and counts roster gaps and failed requests"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table
+       '(("Adams, Alice" . "93.5") ("Ghost, Gus" . "70") ("#9" . "80")))
+      (let ((said nil) (warned nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (signal 'org-canvas-api-error (list "403"))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_ fmt &rest args) (push (apply #'format fmt args) warned)))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+          (org-canvas-sync-final-grade-overrides))
+        (expect (car said) :to-match "0 set, 0 cleared, 2 failed")
+        (expect (car warned) :to-match "Could not resolve student 'Ghost, Gus'"))))
+
+  (it "refuses an override cell that is not a number, before anything is sent"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "high")))
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (push 'called sent) nil)))
+          (expect (org-canvas-sync-final-grade-overrides)
+                  :to-throw 'org-canvas-config-error))
+        (expect sent :to-be nil))))
+
+  (it "sends nothing under the dry run, and says what it would"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "93.5")))
+      (let ((sent nil) (lines nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-send)
+                   (lambda (&rest _) (push 'sent t) nil))
+                  ((symbol-function 'org-canvas--log-info)
+                   (lambda (_ fmt &rest args) (push (apply #'format fmt args) lines))))
+          (let ((org-canvas--dry-run t))
+            (org-canvas-sync-final-grade-overrides)))
+        (expect sent :to-be nil)
+        (expect (cl-find-if (lambda (l) (string-match-p "\\[DRY-RUN\\].*Adams, Alice" l))
+                            lines)
+                :to-be-truthy))))
+
+  (it "refuses a token whose allowlist does not name submissions, and allows one that does"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "93.5")))
+      (let ((org-canvas-write-allowlist '("assignments.org")))
+        (expect (org-canvas-sync-final-grade-overrides)
+                :to-throw 'org-canvas-write-scope-error))
+      (let ((sent nil) (org-canvas-write-allowlist '("submissions")))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (push 'called sent) nil)))
+          (org-canvas-sync-final-grade-overrides))
+        (expect sent :to-be-truthy))))
+
+  (it "aborts without sending when the enrollments read fails"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (test-gradebook--write-people dir)
+      (test-gradebook--write-overrides-table '(("Adams, Alice" . "93.5")))
+      (setq test-gradebook--enrollments 'refuse)
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (push 'called sent) nil)))
+          (expect (org-canvas-sync-final-grade-overrides) :to-throw))
+        (expect sent :to-be nil))))
+
+  (it "does nothing without a table, and refuses without the file"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (expect (org-canvas-sync-final-grade-overrides)
+              :to-throw 'org-canvas-config-error)
+      (with-temp-file org-canvas-gradebook-file
+        (insert "* Final grade overrides\nNo final grade overrides.\n"))
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (push 'called sent) nil)))
+          (org-canvas-sync-final-grade-overrides))
+        (expect sent :to-be nil)))))
 
 ;;;; Per-group scores and the what-if (#452)
 
@@ -686,7 +990,7 @@ EXTRA pairs come first, so an explicit value shadows the default."
                                       w))
                          warned)
                 :to-be-truthy)
-        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-" "-"))
         (expect (test-gradebook--file) :not :to-match "My grades\\|Homework 1")))))
 
 (defun test-gradebook--ids (items)

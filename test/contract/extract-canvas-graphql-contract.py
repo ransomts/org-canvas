@@ -88,6 +88,7 @@ SOURCES = [
     "lisp/org-canvas-submissions-reports.el",
     "lisp/org-canvas-discussions.el",
     "lisp/org-canvas-modules.el",
+    "lisp/org-canvas-gradebook.el",
 ]
 DOCUMENT = re.compile(r'"((?:query|mutation) \([^"\\]*)"')
 

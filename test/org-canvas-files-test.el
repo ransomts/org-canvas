@@ -1497,6 +1497,29 @@
                   (expect deleted-folders :to-equal 3)))))
         (delete-directory temp-dir t))))
 
+  (it "snapshots the files it is about to delete (issue #555)"
+    (with-org-canvas-test-config
+      (with-delete-snapshot-dir
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (when (and (eq method 'GET)
+                                  (string-match "courses/.*/files$" url))
+                         ;; A file uploaded through the web UI that Org
+                         ;; never held: no re-push can bring it back.
+                         [((id . 333) (display_name . "web-upload.png"))])))
+                    ((symbol-function 'org-canvas--file-delete-all-folders)
+                     (lambda () 0)))
+            (let ((org-canvas-files-file "/nonexistent"))
+              (org-canvas-delete-all-files)))
+          (let ((files (directory-files snapshot-dir t "-files-all\\.json\\'")))
+            (expect (length files) :to-equal 1)
+            ;; The snapshot holds the item as the listing returned it.
+            (let ((items (append (json-read-file (car files)) nil)))
+              (expect (alist-get 'display_name (car items))
+                      :to-equal "web-upload.png")))))))
+
   (it "clears local CANVAS_ID properties for deleted files"
     (let ((temp-dir (make-temp-file "files-test" t)))
       (unwind-protect
@@ -5055,6 +5078,10 @@ or :fail to signal.  Returns (COUNTERS . FINAL-MESSAGE)."
               (with-temp-file files-file (insert "* Files\n"))
               (let ((org-canvas-files-file files-file))
                 (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                          ;; The snapshot's path is pinned so the message
+                          ;; below can stay a full equality (issue #555).
+                          ((symbol-function 'org-canvas--delete-all-snapshot)
+                           (lambda (_feature _items) "/tmp/snapshot.json"))
                           ((symbol-function 'org-canvas-clear-log) #'ignore)
                           ((symbol-function 'display-buffer) #'ignore)
                           ((symbol-function 'org-canvas-api-request-all-pages)
@@ -5079,7 +5106,8 @@ or :fail to signal.  Returns (COUNTERS . FINAL-MESSAGE)."
           (delete-directory dir t))
         ;; Full equality, not a substring match: "2 files" also matches
         ;; "-2 files", so a negated counter would slip through a regex.
-        (expect said :to-equal "Deletion complete. 2 files, 0 folders removed.")))))
+        (expect said
+                :to-equal "Deletion complete. 2 files, 0 folders removed; its JSON is in /tmp/snapshot.json.")))))
 
 (describe "file conflict and finalize use modified_at (issue #94)"
   (it "does not raise a conflict for a metadata-only touch"

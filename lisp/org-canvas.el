@@ -429,7 +429,10 @@ Deletion order is reverse of sync order to respect dependencies."
                  (org-canvas--log-warning org-canvas--logger "[Skip] %s: %s"
                    label (error-message-string err)))))))
     (org-canvas--log-info org-canvas--logger "Global Delete Complete.")
-    (message "Global Delete Complete. See *canvas-log*.")))
+    ;; Each feature's run wrote its own snapshot there before deleting
+    ;; (issue #555), so the message names the directory holding them.
+    (message "Global Delete Complete. Snapshots of what went are under %s; see *canvas-log*."
+             (org-canvas--diff-snapshot-dir))))
 
 ;;;; Force Push (Bypass Conflict Detection)
 

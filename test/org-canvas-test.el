@@ -191,7 +191,35 @@
                   (expect (org-canvas-delete-all) :to-throw 'user-error))))
             (expect count-arg-file
                     :to-equal (expand-file-name assignments-file)))
-        (delete-directory tmp-dir t)))))
+        (delete-directory tmp-dir t))))
+
+  (it "names the snapshot directory in the completion message (issue #555)"
+    (let ((messages nil))
+      (with-sync-test-env
+        (with-delete-snapshot-dir
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (push (apply #'format fmt args) messages)))
+                    ((symbol-function 'org-canvas-delete-all-modules) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-assignments) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-quizzes) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-new-quizzes) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-files) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-announcements) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-discussions) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-pages) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-assignment-groups) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-group-categories) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-rubrics) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-outcomes) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-calendar-events) #'ignore))
+            (org-canvas-delete-all))
+          ;; The run names where every feature's JSON snapshot went.
+          (expect (car messages) :to-match "Global Delete Complete")
+          (expect (string-match-p (regexp-quote snapshot-dir)
+                                  (car messages))
+                  :to-be-truthy))))))
 
 ;;;; org-canvas--safe-sync
 
@@ -615,8 +643,107 @@
                      (when (eq method 'DELETE)
                        (push url deleted-ids))
                      nil)))
-          (org-canvas-cleanup-orphans)
-          (expect (length deleted-ids) :to-be-greater-than 0))))))
+          ;; The confirm asks only where there is someone to ask; the
+          ;; batch refusal is the spec below it (#554).
+          (let ((noninteractive nil))
+            (org-canvas-cleanup-orphans))
+          (expect (length deleted-ids) :to-be-greater-than 0)))))
+
+  (it "deletes orphans without asking when the confirmation is bound (#554)"
+    (let ((deleted-ids nil))
+      (with-org-canvas-test-config
+        (let ((org-canvas-orphans-confirmed t))
+          (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                    ((symbol-function 'display-buffer) (lambda (_) nil))
+                    ((symbol-function 'org-canvas--find-orphans-for-feature)
+                     (lambda (feature)
+                       (when (equal (plist-get feature :name) "Assignments")
+                         '(((id . 200) (name . "Orphan"))))))
+                    ((symbol-function 'yes-or-no-p)
+                     (lambda (&rest _) (error "The confirmation must not ask")))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (when (eq method 'DELETE)
+                         (push url deleted-ids))
+                       nil)))
+            (org-canvas-cleanup-orphans)
+            (expect (length deleted-ids) :to-be-greater-than 0))))))
+
+  (it "deletes nothing in batch without the confirmation, saying how to (#554)"
+    (let ((deleted-ids nil) (said nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil))
+                  ((symbol-function 'org-canvas--find-orphans-for-feature)
+                   (lambda (feature)
+                     (when (equal (plist-get feature :name) "Assignments")
+                       '(((id . 200) (name . "Orphan"))))))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (push (apply #'format fmt args) said)))
+                  ((symbol-function 'yes-or-no-p)
+                   (lambda (&rest _) (error "A batch Emacs cannot ask")))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (when (eq method 'DELETE)
+                       (push url deleted-ids))
+                     nil)))
+          (let ((noninteractive t))
+            (org-canvas-cleanup-orphans))))
+      (expect deleted-ids :to-be nil)
+      (expect (cl-some (lambda (m) (string-match-p
+                                     "confirm with org-canvas-orphans-confirmed"
+                                     m))
+                       said)
+              :to-be-truthy)))
+
+  (it "returns how many deletes failed, none tried counting zero (#554)"
+    (let ((said nil))
+      (with-org-canvas-test-config
+        (let ((org-canvas-orphans-confirmed t))
+          (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                    ((symbol-function 'display-buffer) (lambda (_) nil))
+                    ((symbol-function 'org-canvas--find-orphans-for-feature)
+                     (lambda (feature)
+                       (when (equal (plist-get feature :name) "Assignments")
+                         '(((id . 200) (name . "Orphan"))))))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (push (apply #'format fmt args) said)))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       (signal 'org-canvas-api-error '("delete refused")))))
+            (expect (org-canvas-cleanup-orphans) :to-equal 1)
+            (expect (cl-some (lambda (m) (string-match-p
+                                          "0 deleted, 1 failed" m))
+                             said)
+                    :to-be-truthy)))))))
+
+(describe "org-canvas--orphan-confirm (issue #554)"
+  (it "answers yes without asking when the confirmation is bound"
+    (let ((org-canvas-orphans-confirmed t) (asked nil))
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (&rest _) (setq asked t) nil)))
+        (expect (org-canvas--orphan-confirm 3) :to-be t)
+        (expect asked :to-be nil))))
+
+  (it "asks when interactive and unconfirmed"
+    (let ((noninteractive nil) (asked nil))
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (question) (setq asked question) t)))
+        (expect (org-canvas--orphan-confirm 3) :to-be t)
+        (expect asked :to-match "Found 3 orphan(s).*Delete them from Canvas\\?"))))
+
+  (it "refuses in batch, where there is nobody to ask"
+    (let ((noninteractive t) (said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (push (apply #'format fmt args) said)))
+                ((symbol-function 'yes-or-no-p)
+                 (lambda (&rest _) (error "A batch Emacs cannot ask"))))
+        (expect (org-canvas--orphan-confirm 3) :to-be nil)
+        (expect (car said)
+                :to-match "scripts/org-canvas cleanup-orphans --yes")))))
 
 ;;;; org-canvas-pull-all
 

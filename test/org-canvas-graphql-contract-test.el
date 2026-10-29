@@ -78,7 +78,8 @@
     org-canvas--submissions-bank-delete-mutation
     org-canvas--submissions-history-query
     org-canvas--module-item-home-query
-    org-canvas--module-items-move-mutation)
+    org-canvas--module-items-move-mutation
+    org-canvas--gradebook-override-mutation)
   "The documents, by symbol.  A new one is added here and to the
 extractor's SOURCES when its file is new.")
 
@@ -519,6 +520,7 @@ page of discussions."
       (expect (gethash "generated" provenance) :to-match "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'"))
     (expect (gethash "documents" org-canvas-graphql-contract--data)
             :to-equal '("lisp/org-canvas-assignments.el" "lisp/org-canvas-discussions.el"
+                        "lisp/org-canvas-gradebook.el"
                         "lisp/org-canvas-modules.el"
                         "lisp/org-canvas-settings.el"
                         "lisp/org-canvas-submissions-reports.el"

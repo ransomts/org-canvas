@@ -56,7 +56,7 @@ lisp/
 ├── org-canvas-discussion-replies.el # Pull-only archive of what was written under discussion topics
 ├── org-canvas-discussions.el       # Discussion boards
 ├── org-canvas-files.el             # File uploads (two-half hash, re-upload tiers)
-├── org-canvas-gradebook.el         # Pull-only course-wide grade overview
+├── org-canvas-gradebook.el         # Course-wide grade overview; final grade overrides pushed on command (GraphQL)
 ├── org-canvas-grading-periods.el   # Pull-only grading periods
 ├── org-canvas-grading-schemes.el   # Letter-grade schemes (custom push: compared and skipped, never PUT)
 ├── org-canvas-group-categories.el  # Group sets for group assignments/discussions
@@ -259,6 +259,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - Canvas-owned submission types (#167)
 - comments and drafts as paragraphs and short CONFLICT values (#264)
 - cross-course links are the validator's business (#172), and a pull never fetches a file link into another course nor refetches a failed file id within one command (#390)
+- delete-all commands write a JSON snapshot of what they are about to delete, through the drift delete's own writer, before the first DELETE (#555)
 - document processors read by GraphQL once per command, REST `asset_processors` the fallback (#350)
 - drift report bodies (#83)
 - drift report rows deleted in batch, EXTRA only, after safety checks and a JSON snapshot (#345)
