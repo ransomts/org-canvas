@@ -120,35 +120,64 @@ Returns the buffer."
 
 (defun org-canvas--orphan-delete-all (all-orphans)
   "Delete all orphaned items in ALL-ORPHANS from Canvas.
-ALL-ORPHANS is a list of (FEATURE . ITEMS) pairs."
-  (dolist (entry all-orphans)
-    (let* ((feature (car entry))
-           (orphans (cdr entry))
-           (name (plist-get feature :name))
-           (delete-data (plist-get feature :delete-data))
-           (id-field (plist-get feature :id-field)))
-      (if (org-canvas--write-scope-refused-p
-           (file-name-nondirectory
-            (or (org-canvas--feature-file feature) "")))
-          ;; A feature whose file this identity may not write keeps its
-          ;; orphans, named here rather than failed, as a sync skips
-          ;; the file (issue #550).
-          (org-canvas--log-warning org-canvas--logger
-            "[Orphan] Left %d %s orphan(s) alone: outside this credentials file's write allowlist"
-            (length orphans) name)
-        (dolist (item orphans)
-          (let* ((id (alist-get id-field item))
-                 (url (org-canvas--feature-item-url feature id)))
-            (condition-case err
-                (progn
-                  (apply #'org-canvas-api-request 'DELETE url
-                         (and delete-data (list :data delete-data)))
-                  (org-canvas--log-info org-canvas--logger
-                    "[Orphan] Deleted %s #%s" name id))
-              (error
-               (org-canvas--log-warning org-canvas--logger
-                 "[Orphan] Failed to delete %s #%s: %s"
-                 name id (error-message-string err))))))))))
+ALL-ORPHANS is a list of (FEATURE . ITEMS) pairs.  Return how many
+deletes failed: an item whose DELETE errors is logged, never an abort,
+and the next item still runs; a feature this identity may not write is
+skipped whole and counts nothing, as a sync skips its file (#550)."
+  (let ((failed 0))
+    (dolist (entry all-orphans)
+      (let* ((feature (car entry))
+             (orphans (cdr entry))
+             (name (plist-get feature :name))
+             (delete-data (plist-get feature :delete-data))
+             (id-field (plist-get feature :id-field)))
+        (if (org-canvas--write-scope-refused-p
+             (file-name-nondirectory
+              (or (org-canvas--feature-file feature) "")))
+            ;; A feature whose file this identity may not write keeps its
+            ;; orphans, named here rather than failed, as a sync skips
+            ;; the file (issue #550).
+            (org-canvas--log-warning org-canvas--logger
+              "[Orphan] Left %d %s orphan(s) alone: outside this credentials file's write allowlist"
+              (length orphans) name)
+          (dolist (item orphans)
+            (let* ((id (alist-get id-field item))
+                   (url (org-canvas--feature-item-url feature id)))
+              (condition-case err
+                  (progn
+                    (apply #'org-canvas-api-request 'DELETE url
+                           (and delete-data (list :data delete-data)))
+                    (org-canvas--log-info org-canvas--logger
+                      "[Orphan] Deleted %s #%s" name id))
+                (error
+                 (cl-incf failed)
+                 (org-canvas--log-warning org-canvas--logger
+                   "[Orphan] Failed to delete %s #%s: %s"
+                   name id (error-message-string err)))))))))
+    failed))
+
+(defvar org-canvas-orphans-confirmed nil
+  "When non-nil, answer yes to the orphan cleanup confirmation alone.
+Bind it around a call to `org-canvas-cleanup-orphans' to confirm the
+delete in advance; `scripts/org-canvas cleanup-orphans --yes' binds it
+for its run.  Unlike stubbing `yes-or-no-p', it leaves every other
+question in the call asked, so a batch caller can tell the orphan
+confirmation from any other safety prompt (issue #554).")
+
+(defun org-canvas--orphan-confirm (total)
+  "Return non-nil when deleting TOTAL orphan(s) from Canvas is confirmed.
+Yes without asking when `org-canvas-orphans-confirmed' is non-nil, else
+the answer `yes-or-no-p' reads; in batch, where there is nobody to
+ask, an unconfirmed run deletes nothing and says how to
+confirm (issue #554)."
+  (cond
+   (org-canvas-orphans-confirmed t)
+   (noninteractive
+    (message "Nothing deleted: confirm with org-canvas-orphans-confirmed bound to t (scripts/org-canvas cleanup-orphans --yes)")
+    nil)
+   (t (yes-or-no-p
+       (format "Found %d orphan(s) (listed in *canvas-orphans*).  Delete them from Canvas? "
+               total)))))
 
 ;;;###autoload
 (defun org-canvas-cleanup-orphans ()
@@ -157,7 +186,14 @@ Scans all pushable features, compares remote Canvas items against local
 CANVAS_ID/CANVAS_URL properties, and reports orphaned items.
 
 Orphans are Canvas items that exist remotely but have no corresponding
-Org heading locally (e.g., because the heading was deleted from the Org file)."
+Org heading locally (e.g., because the heading was deleted from the Org
+file).
+
+The delete asks first, unless `org-canvas-orphans-confirmed' is bound
+non-nil, which answers that question and no other; in batch, where
+there is nobody to ask, an unconfirmed run deletes nothing and the
+report stands (issue #554).  Return how many deletes failed, 0 when
+none were tried or all succeeded."
   (interactive)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
@@ -182,14 +218,16 @@ Org heading locally (e.g., because the heading was deleted from the Org file)."
     (if (= total-orphans 0)
         (progn
           (org-canvas--log-info org-canvas--logger "[Orphan] No orphans found.")
-          (message "No orphaned items found."))
+          (message "No orphaned items found.")
+          0)
       (let ((buf (org-canvas--orphan-format-buffer all-orphans)))
         (display-buffer buf)
-        (when (yes-or-no-p
-               (format "Found %d orphan(s) (listed in *canvas-orphans*).  Delete them from Canvas? "
-                       total-orphans))
-          (org-canvas--orphan-delete-all all-orphans)
-          (message "Orphan cleanup complete. %d item(s) deleted." total-orphans))))))
+        (if (org-canvas--orphan-confirm total-orphans)
+            (let ((failed (org-canvas--orphan-delete-all all-orphans)))
+              (message "Orphan cleanup complete: %d deleted, %d failed."
+                       (- total-orphans failed) failed)
+              failed)
+          0)))))
 
 (provide 'org-canvas-orphans)
 ;;; org-canvas-orphans.el ends here

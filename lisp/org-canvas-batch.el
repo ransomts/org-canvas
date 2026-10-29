@@ -14,8 +14,9 @@
 ;; course directory, it loads the credentials file found there and sets
 ;; the batch-safe variables.  `org-canvas-batch' is the other half, a
 ;; command line with subcommands (status, grades, gradebook, student,
-;; person, pull, pull-all, push, publish, delete, diff, adopt, show,
-;; validate, sync, check ...), which `scripts/org-canvas' wraps:
+;; person, pull, pull-all, push, publish, delete, cleanup-orphans,
+;; diff, adopt, show, search, validate, sync, check ...), which
+;; `scripts/org-canvas' wraps:
 ;;
 ;;   $ scripts/org-canvas -C ~/courses/ethics status
 ;;   $ "$EMACS" --batch -l org-canvas-batch -f org-canvas-batch -- diff
@@ -223,6 +224,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Unpublish named headings, sending only the flag (#466).")
     ("delete" org-canvas-batch--cmd-delete 1 nil "[--yes] FEATURE:TITLE..."
      "Delete named headings from Canvas; --yes confirms (#525).")
+    ("cleanup-orphans" org-canvas-batch--cmd-cleanup-orphans 0 nil "[--yes]"
+     "Scan for Canvas items no heading claims; --yes deletes them (#554).")
     ("extend" org-canvas-batch--cmd-extend 3 4 "ASSIGNMENT STUDENT DUE [LOCK]"
      "Give one student a new deadline, sending that override alone (#526).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
@@ -232,6 +235,10 @@ copy silently.  Return the credentials file loaded, or nil."
      "Write what CHANGED rows name into Org, nothing sent (#498).")
     ("show" org-canvas-batch--cmd-show 1 nil "FEATURE:TITLE..."
      "Print Canvas's version of named headings; writes nothing (#500).")
+    ("search" org-canvas-batch--cmd-search 1 1 "REGEXP"
+     "Search the live course's text for REGEXP and list every match (#554).")
+    ("search-dates" org-canvas-batch--cmd-search-dates 0 0 ""
+     "List every date the live course's text and date fields say (#554).")
     ("validate" org-canvas-batch--cmd-validate 0 1 "[--all]"
      "Validate the Org files offline; exit 1 on errors." json)
     ("sync" org-canvas-batch--cmd-sync 0 0 ""
@@ -885,6 +892,38 @@ command or after it, sends nothing and prints what would go."
                     results)
           0 1))))
 
+(defun org-canvas-batch--cleanup-orphans-args (args)
+  "Read cleanup-orphans ARGS into (CONFIRMED . DRY-RUN).
+CONFIRMED is non-nil for --yes or -y and DRY-RUN for --dry-run or -n,
+anywhere among ARGS; anything else is a usage error."
+  (let ((confirmed nil) (dry-run nil))
+    (dolist (arg args)
+      (cond ((member arg '("-y" "--yes")) (setq confirmed t))
+            ((member arg '("-n" "--dry-run")) (setq dry-run t))
+            (t (org-canvas-batch--usage "cleanup-orphans takes [--yes]"))))
+    (cons confirmed dry-run)))
+
+(defun org-canvas-batch--cmd-cleanup-orphans (parsed)
+  "Print the orphan report, deleting it all under PARSED's --yes.
+The scan and report are `org-canvas-cleanup-orphans' alone, the report
+on standard output as under --batch.  --yes binds
+`org-canvas-orphans-confirmed' and nothing else, so every other
+question still stands; a run without it, or under a --dry-run before
+the command or after it, deletes nothing — the report alone.  Return
+1 when a delete failed (#554)."
+  (let* ((args (org-canvas-batch--cleanup-orphans-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (cdr args)
+                                   (plist-get parsed :dry-run)))
+         (org-canvas-orphans-confirmed (and (car args)
+                                            (not org-canvas--dry-run))))
+    ;; The report printed is this run's: a buffer left by an earlier run
+    ;; in the same Emacs must not print as if this scan had found it.
+    (when (get-buffer "*canvas-orphans*") (kill-buffer "*canvas-orphans*"))
+    (let ((failed (org-canvas-cleanup-orphans))
+          (buf (get-buffer "*canvas-orphans*")))
+      (when buf (princ (with-current-buffer buf (buffer-string))))
+      (if (> failed 0) 1 0))))
+
 (defun org-canvas-batch--cmd-extend (parsed)
   "Give the student PARSED names a new deadline on its assignment.
 The arguments are ASSIGNMENT (a title, or #CANVAS_ID), STUDENT (a
@@ -940,6 +979,24 @@ is ever sent (`org-canvas-diff-adopt-drifts')."
   "Print the Canvas version of each heading PARSED names; return 0."
   (org-canvas-show-headings (mapcar #'org-canvas-batch-heading-entry
                                     (plist-get parsed :args)))
+  0)
+
+(defun org-canvas-batch--cmd-search (parsed)
+  "Search the live course for the regexp PARSED names; return 0.
+Every match is listed with its object, field and the text around it,
+the report on standard output as under --batch
+\(`org-canvas-search-live', #554).  Return 0 whatever the hit count:
+a search is a read, not a check, and the report's closing line names
+the count."
+  (org-canvas-search-live (car (plist-get parsed :args)))
+  0)
+
+(defun org-canvas-batch--cmd-search-dates (_parsed)
+  "List every date the live course's text and date fields say; return 0.
+An ISO date, a month name and day, a numeric month/day in any field
+`org-canvas-search-live' reads, and every date field as an Org
+timestamp, grouped by object (`org-canvas-search-live-dates', #554)."
+  (org-canvas-search-live-dates)
   0)
 
 (defun org-canvas-batch--cmd-validate (parsed)

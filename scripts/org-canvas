@@ -5,10 +5,14 @@
 #   scripts/org-canvas --help | --version
 #   scripts/org-canvas push [--conflict push|pull|skip] FEATURE:TITLE...
 #   scripts/org-canvas delete --yes | --dry-run FEATURE:TITLE...
+#   scripts/org-canvas search REGEXP | search-dates
+#   scripts/org-canvas cleanup-orphans [--yes]
 #
 # --help lists every command.  push's --conflict sets
 # org-canvas-conflict-strategy for that run (issue #470).  delete's
-# --yes answers the delete confirmation and nothing else (issue #525).
+# --yes answers the delete confirmation and nothing else (issue #525);
+# cleanup-orphans' --yes answers its own confirmation the same way, and
+# without it the report prints and nothing is deleted (issue #554).
 # --json makes validate and diff print one JSON object (issue #531).
 #
 # The course directory defaults to the current one; its

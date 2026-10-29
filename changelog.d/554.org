@@ -1,0 +1,25 @@
+* Added
+- #554 =scripts/org-canvas search REGEXP= and =search-dates= run the
+  live search from the shell, printing the report on standard output
+  exactly as =M-x org-canvas-search-live= does under =--batch=: every
+  match of a regexp with its object, field and context, or every date
+  the course's text and date fields say, by object.  Both read only
+  and exit 0 whatever the hit count, which the report's closing line
+  names, so a CI job that exits non-zero on drift (=diff=) can also
+  grep the course for the stale value behind it.
+- #554 =scripts/org-canvas cleanup-orphans= prints the orphan report
+  on standard output and deletes nothing; =--yes= (=-y=) deletes what
+  the report lists, binding =org-canvas-orphans-confirmed= for the
+  run alone — the orphan confirmation and no other prompt — and a
+  =--dry-run=, before the command or after it, keeps the report alone.
+  It exits 1 when a delete failed, each failure still logged and the
+  next item still tried; a feature outside the credentials file's
+  write allowlist is left alone, named, and does not fail the run.
+
+* Changed
+- #554 =org-canvas-cleanup-orphans= deletes nothing in a batch Emacs,
+  where there is nobody to ask, saying how to confirm, instead of
+  failing on its question; interactively the prompt stands as before.
+  It returns how many deletes failed, 0 when none were tried or all
+  succeeded, and its closing line counts the deletions apart from the
+  failures.
