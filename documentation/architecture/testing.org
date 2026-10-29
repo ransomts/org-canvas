@@ -673,6 +673,29 @@ hook, the same number in CI's =complexity= job) allows the two
 pre-existing macros above the threshold, =org-canvas-define-sync= and
 =org-canvas-define-push-at-point=; any other function above 15 blocks.
 
+Gates 3 and 4 capture the suite's stderr as well as its stdout
+(=> "$LOG" 2>&1=, the redirect order the lint log always used):
+buttercup prints its FAILED blocks and its "Ran N specs, F failed"
+tally on stderr, and a log that missed them let a red suite push with
+"All checks passed" (#560).  Their first grep reads the file directly
+(=grep -qE ... "$LOG"=), never =echo "$(cat ...)" | grep -q=: on a
+log this size =grep -q= exits at its first match while =echo= is
+still writing, =echo= dies of SIGPIPE, and under the hook's
+=pipefail= the condition read false — the gate was unreachable.  The
+count it then compares comes from buttercup's tally line alone: the
+suite's own stdout logs an "N failed" summary for every sync a spec
+runs ("0 failed" on a green run), and a count taken from every match
+came out multi-line, so the comparison against zero errored its way
+to false.  The same two gates scrub =GIT_DIR=, =GIT_WORK_TREE= and
+the other git environment variables from the subshell before
+=nix-shell= runs: git invokes the hook with them set, =nix-shell=
+passes the environment through, and specs that shell out to git then
+saw the repository being pushed instead of the filesystem — a temp
+directory "outside a checkout" resolved to the pushed commit, and
+#549's tracked-files guard fired under =/tmp= — so with the
+redirects fixed alone, every push would have been blocked by three
+failures that were not the code's (#560).
+
 * Eldev Test Configuration
 
 Key settings in the =Eldev= file:

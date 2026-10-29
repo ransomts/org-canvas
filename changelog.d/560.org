@@ -1,0 +1,18 @@
+* Fixed
+- #560 The pre-push hook blocks a push with failing tests again.  Four
+  defects together let a red suite push with "All checks passed": the
+  Emacs 29 and Emacs 30 runs wrote only the suite's stdout to the log
+  the gate reads, while buttercup reports failures on stderr; the
+  gate's first grep ran as =echo \"$(cat ...)\" | grep -q= over the
+  whole log, which under the hook's =pipefail= dies of SIGPIPE once
+  grep -q exits at its first match, so the condition read false and
+  the gate was unreachable; the failure count was then taken from
+  every "N failed" the log holds — every spec that runs a sync logs a
+  "0 failed" summary of its own — so the count came out many lines
+  and the comparison against zero errored to false; and git's hook
+  environment (GIT_DIR, GIT_WORK_TREE and friends) leaked through
+  nix-shell into specs that shell out to git, which then saw the
+  repository being pushed instead of the filesystem.  Both logs now
+  capture stderr too, the gate greps the file directly and reads
+  buttercup's tally line ("Ran N specs, F failed") alone for its
+  count, and the git environment is scrubbed from the test runs.
