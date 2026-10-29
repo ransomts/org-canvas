@@ -1,0 +1,22 @@
+* Added
+- #556 The gradebook pull shows each student's final grade override
+  beside Current and Final, and writes the overrides it holds under
+  =* Final grade overrides= in gradebook.org as an editable table.
+  =M-x org-canvas-sync-final-grade-overrides= (=l= in the dispatch
+  menu) pushes it: the table is the whole set — a row whose percentage
+  differs is sent, a blank cell clears the student's override, and a
+  student with an override on Canvas and no row is cleared too.  With
+  =C-u= every change is logged and nothing is sent.  Writing final
+  grades is grading, so a token whose write allowlist names
+  =submissions= may push it.
+- #556 The End-of-Semester workflow's Final Grade Check step no longer
+  defers to Canvas: it says what org-canvas does there (pull the
+  standing, grade and post the queue, push the overrides) and what
+  stays in the browser (the gradebook CSV export, per-grading-period
+  overrides).
+
+* Changed
+- #556 A final grade override is written through Canvas's own
+  =setOverrideScore= GraphQL mutation — the bulk REST route is
+  undocumented and gated on an account flag — and the enrollments read
+  the pull already makes is now pinned in the read-parameter contract.

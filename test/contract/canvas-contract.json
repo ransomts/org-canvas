@@ -487,6 +487,24 @@
   "gradebook": {
     "pull_only": true,
     "reads": {
+      "enrollments": {
+        "operationId": "list_enrollments_courses",
+        "params": [
+          "enrollment_term_id",
+          "grading_period_id",
+          "include",
+          "page",
+          "per_page",
+          "role",
+          "sis_account_id",
+          "sis_course_id",
+          "sis_section_id",
+          "sis_user_id",
+          "state",
+          "type",
+          "user_id"
+        ]
+      },
       "item": {
         "operationId": "get_single_course_courses",
         "params": [

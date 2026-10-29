@@ -138,6 +138,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("C" "Push only edited and deleted sent comments" org-canvas-push-submission-comment-edits
     :inapt-if-not org-canvas--transient-writable-p)
    ("T" "Post grades to students" org-canvas-submissions-post-grades
+    :inapt-if-not org-canvas--transient-writable-p)
+   ("l" "Push final grade overrides (gradebook.org)" org-canvas-sync-final-grade-overrides
     :inapt-if-not org-canvas--transient-writable-p)]
   ["Messages"
    :inapt-if-not org-canvas--transient-writable-p

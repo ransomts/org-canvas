@@ -56,7 +56,7 @@ lisp/
 ├── org-canvas-discussion-replies.el # Pull-only archive of what was written under discussion topics
 ├── org-canvas-discussions.el       # Discussion boards
 ├── org-canvas-files.el             # File uploads (two-half hash, re-upload tiers)
-├── org-canvas-gradebook.el         # Pull-only course-wide grade overview
+├── org-canvas-gradebook.el         # Course-wide grade overview; final grade overrides pushed on command (GraphQL)
 ├── org-canvas-grading-periods.el   # Pull-only grading periods
 ├── org-canvas-grading-schemes.el   # Letter-grade schemes (custom push: compared and skipped, never PUT)
 ├── org-canvas-group-categories.el  # Group sets for group assignments/discussions

@@ -2744,17 +2744,21 @@ submissions are missing or late, when Canvas last saw them, a
 summary per section, and the class's score spread on each
 assignment.  It answers "who is falling behind?" and "how did the
 class do on Homework 3?" without opening the Canvas gradebook or
-pulling one grading file per assignment.  Nothing in this file is pushed, and the tables are
-derived: every pull rewrites them, so anything you write under its
-headings is gone at the next pull.
+pulling one grading file per assignment.  Every table but one is
+derived: every pull rewrites it, so anything you write under its
+headings is gone at the next pull.  The exception is the Final grade
+overrides table, which =org-canvas-sync-final-grade-overrides= pushes
+(see [[*Final Grade Overrides][Final Grade Overrides]]).
 
 *** Structure
 
 - =* Students=: one table, sorted by name, with the columns Student,
-  Sections, Current, Final, Missing, Late and Last activity, then one
-  column per custom gradebook column the course has (the Notes column,
-  anything added in the gradebook), titled as in Canvas and in
-  Canvas's order.  A student is one row however many sections they
+  Sections, Current, Final, Override, Missing, Late and Last activity,
+  then one column per custom gradebook column the course has (the Notes
+  column, anything added in the gradebook), titled as in Canvas and in
+  Canvas's order.  Override is the Final Grade Override column, the
+  percentage the registrar receives in place of the computed total when
+  the course has one set for the student; =-= when it does not.  A student is one row however many sections they
   sit in.  The Student cell links to the person's heading in
   =people.org= when that file holds their user id (pull the roster
   first)
@@ -2765,6 +2769,11 @@ headings is gone at the next pull.
   course analytics.  The quartiles stay =-= until enough work is
   graded.  The Assignment cell links to the heading in
   =assignments.org= when that file holds the id
+- =* Final grade overrides=: one table with Student and Override, one
+  row per student Canvas holds an override for, or a line saying there
+  are none.  The table is edited by hand and pushed by
+  =org-canvas-sync-final-grade-overrides=; see
+  [[*Final Grade Overrides][Final Grade Overrides]]
 - =* Groups=: only with =org-canvas-gradebook-groups= set (default
   nil).  One table with Student, one column per assignment group in
   Canvas's order, Computed and Canvas.  A group's cell is the
@@ -2834,6 +2843,54 @@ the file that Canvas does not have yet, or one on Canvas the file
 lacks (which keeps Canvas's weight and rules), is listed above the
 tables.  Nothing is sent, and the what-if makes no request at all;
 pull the gradebook again for newer scores.
+
+*** Final Grade Overrides
+
+The grade the registrar receives is not the computed total: when the
+course has the Final Grade Override column on (Canvas's gradebook
+setting), a percentage entered there supersedes both Current and Final
+for that student.  The pull shows it in the Students table's Override
+column and writes it under =* Final grade overrides= as a table:
+
+#+begin_example
+* Final grade overrides
+#+NAME: final-grade-overrides
+| Student      | Override |
+|--------------+----------|
+| Adams, Alice |    93.5  |
+| #5002        |     70   |
+#+end_example
+
+Student is a person's heading title in =people.org= (pull the roster
+first) or a literal =#id=; Override is a percentage, and a blank cell
+means no override.  Edit the table — add rows, change numbers, blank a
+cell — then run =M-x org-canvas-sync-final-grade-overrides= (=l= in the
+dispatch menu's Submissions group).  The table is the whole set, as the
+accommodations table is: a row whose percentage differs from Canvas's
+is sent, a blank cell clears that student's override, and a student
+with an override on Canvas and no row is cleared too.  A missing table
+sends nothing; an emptied one (header, no rows) clears everyone, so
+delete the table rather than emptying it when Canvas should be left
+alone.  The pull rewrites the table from Canvas, so pull after a sync
+to see what stuck, and hand edits do not survive a pull in between.
+
+The push sends one request per change through Canvas's own gradebook
+mutation (=setOverrideScore=), which requires the course's Final Grade
+Override setting to be on and the token to manage grades; a student
+with several enrollments (two sections) is written once.  Under a dry
+run nothing is sent and each change is logged; a token whose
+=org-canvas-write-allowlist= does not name =submissions= is refused, and
+a refused enrollments read aborts before anything is sent.  Writing
+final grades is grading: the allowlist's one word =submissions= covers
+it (see [[*Scoping What a Collaborator May Write][Scoping What a
+Collaborator May Write]]).
+
+What org-canvas does not do there: a per-grading-period override (only
+the course total is written, the number the registrar receives), and a
+CSV export of the gradebook — Canvas publishes no API for either the
+override write beyond this mutation or the export, so the web UI's
+export stays the browser's business.  The pull itself is org-canvas's
+export: =gradebook.org= holds every student's scores.
 
 *** A Student's Own Grades
 

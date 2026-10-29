@@ -82,7 +82,9 @@ A pull-only module with no feature registry entry lists its read in
 `PULL_ONLY_READ_OPS`; the fixture marks it `"pull_only": true` and the
 generic loop skips it, leaving a spec of its own to check the module's
 parameter constants. Currently only people (issue #290): the roster read
-and the per-person departure read, both on `list_enrollments_courses`.
+and the per-person departure read, both on `list_enrollments_courses`;
+and the gradebook (issue #556): its submissions and course reads, and
+the enrollments read the override column and table ride.
 
 # GraphQL contract (issue #269)
 
@@ -99,7 +101,8 @@ posting schedules query (assignments, issue #352), the grading file's
 `updateSubmissionGradeStatus` mutation, its comment bank query and
 create, update and delete mutations, and its attempt history query
 (submissions, issue #352), and the module item home query and
-`reorderModuleItems` mutation (modules, issue #352).
+`reorderModuleItems` mutation (modules, issue #352), and the final
+grade override mutation `setOverrideScore` (gradebook, issue #556).
 `org-canvas-graphql-contract-test.el` checks each — every selected field
 exists on its parent type and is not deprecated, every argument exists and
 a variable's declared type fits it, every non-null input field is supplied,
@@ -246,7 +249,9 @@ and the reports query's `LtiAsset` and `DiscussionEntryVersion`, read
 to keep only the current attempt's reports (issue #436, canvas-lms
 `318f2ad0`), and the cross-column report's `Enrollment`,
 `EnrollmentConnection` and `Section`, the students' sections (issue
-#437, the same ref):
+#437, the same ref), and the override mutation's `Grades`,
+`SetOverrideScoreInput` and `SetOverrideScorePayload` (gradebook,
+issue #556, canvas-lms `1c9f0bb8`):
 
 ```bash
 python3 test/contract/extract-canvas-graphql-contract.py --supplement \

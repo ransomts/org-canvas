@@ -497,9 +497,30 @@ Tasks to wrap up a course and prepare for the next semester.
 
 ** Final Grade Check
 
-1. Run =M-x org-canvas-status= to verify all content is synced.
-2. Open Canvas to confirm final grades are posted.
-3. Run =M-x org-canvas-validate= one last time.
+1. Run =M-x org-canvas-status= to verify all content is synced, and
+   =M-x org-canvas-validate= one last time.
+2. Pull the standing: =M-x org-canvas-pull-gradebook= writes every
+   student's current and final scores — and any final grade override
+   already set — into =gradebook.org=, and the grading queue
+   (=M-x org-canvas-submissions-status=) names every column with work
+   left to grade or post.
+3. Grade and post what is left: the queue opens each grading file;
+   =org-canvas-submissions-push-grades= (=G=) sends the scores and
+   comments, =org-canvas-submissions-post-grades= (=T=) posts a
+   column's grades to students.  Nothing here needs the browser.
+4. Where the computed total is not the grade the registrar should
+   receive, set a final grade override: edit the =* Final grade
+   overrides= table the pull wrote in =gradebook.org= (one row per
+   student, a percentage) and run =M-x
+   org-canvas-sync-final-grade-overrides= (=l= in the dispatch menu),
+   or with =C-u= first to preview every change without sending.  The
+   course's Final Grade Override setting must be on in Canvas for the
+   column to exist.
+5. What stays in Canvas: a CSV export of the gradebook (the web UI's
+   export button — org-canvas writes no file Canvas reads back, and
+   =gradebook.org= is its own record of every score), and
+   per-grading-period overrides.  Synchronizing with the registrar
+   (SIS) is the registrar's pipeline, not the gradebook.
 
 ** Archive the Course
 

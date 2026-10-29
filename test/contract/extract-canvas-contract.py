@@ -77,8 +77,12 @@ PULL_ONLY_READ_OPS = {
                "users": "list_users_in_course_users"},
     # gradebook: a student's own submissions, and the course read that
     # tells the caller's role and carries their totals (issue #488).
+    # The enrollments read (issue #556) is the same index the people
+    # pull uses: the grades object it answers carries each student's
+    # final grade override, which the override column and table read.
     "gradebook": {"list": "list_submissions_for_multiple_assignments_courses",
-                  "item": "get_single_course_courses"},
+                  "item": "get_single_course_courses",
+                  "enrollments": "list_enrollments_courses"},
 }
 
 # Modules whose read (pull) response object is documented as a component
