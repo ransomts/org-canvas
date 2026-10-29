@@ -427,6 +427,13 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
   (it "the one-student standing read sends only documented parameters (issue #542)"
     (org-canvas-contract--check-read-params "gradebook" 'list (org-canvas--gradebook-student-params 7)))
 
+  (it "the gradebook's enrollments read sends only documented parameters (issue #556)"
+    ;; The override column and table ride the same enrollments index the
+    ;; roster pull reads; the read itself was unpinned before, since
+    ;; only people's roster parameters were checked.
+    (org-canvas-contract--check-read-params
+     "gradebook" 'enrollments org-canvas--gradebook-enrollment-params))
+
   (it "the question banks pull sends only documented parameters on its three reads (issue #492)"
     ;; The vendored spec lacks the bank reads; the fixture carries them
     ;; as a pull-only supplement from Canvas's published API docs.

@@ -2,6 +2,7 @@
  "documents": [
   "lisp/org-canvas-assignments.el",
   "lisp/org-canvas-discussions.el",
+  "lisp/org-canvas-gradebook.el",
   "lisp/org-canvas-modules.el",
   "lisp/org-canvas-settings.el",
   "lisp/org-canvas-submissions-reports.el",
@@ -132,6 +133,17 @@
      "Enrollment",
      "EnrollmentConnection",
      "Section"
+    ]
+   },
+   {
+    "generated": "2026-10-28",
+    "ref": "1c9f0bb8013ed69c4f2efe11fd483025469b7e6c",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "Grades",
+     "SetOverrideScoreInput",
+     "SetOverrideScorePayload"
     ]
    }
   ]
@@ -2737,6 +2749,91 @@
   "Float": {
    "kind": "SCALAR"
   },
+  "Grades": {
+   "fields": {
+    "assignmentGroup": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentGroup"
+    },
+    "currentGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "currentScore": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "customGradeStatusId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "enrollment": {
+     "args": {},
+     "deprecated": null,
+     "type": "Enrollment"
+    },
+    "finalGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "finalScore": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "gradingPeriod": {
+     "args": {},
+     "deprecated": null,
+     "type": "GradingPeriod"
+    },
+    "htmlUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "overrideGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "overrideScore": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "state": {
+     "args": {},
+     "deprecated": null,
+     "type": "GradeState!"
+    },
+    "unpostedCurrentGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "unpostedCurrentScore": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "unpostedFinalGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "unpostedFinalScore": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "GradingType": {
    "kind": "ENUM",
    "values": {
@@ -4687,6 +4784,41 @@
      "args": {},
      "deprecated": null,
      "type": "PostPolicy"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "SetOverrideScoreInput": {
+   "fields": {
+    "enrollmentId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID!"
+    },
+    "gradingPeriodId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID"
+    },
+    "overrideScore": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "Float"
+    }
+   },
+   "kind": "INPUT_OBJECT"
+  },
+  "SetOverrideScorePayload": {
+   "fields": {
+    "errors": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ValidationError!]"
+    },
+    "grades": {
+     "args": {},
+     "deprecated": null,
+     "type": "Grades"
     }
    },
    "kind": "OBJECT"

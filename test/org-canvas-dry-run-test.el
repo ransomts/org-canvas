@@ -55,6 +55,7 @@
     org-canvas-sync-files
     org-canvas-sync-overrides
     org-canvas-sync-quiz-accommodations
+    org-canvas-sync-final-grade-overrides
     org-canvas-send-messages
     org-canvas-send-message-at-point)
   "Every feature sync entry point, macro-generated or hand-written,
@@ -150,19 +151,22 @@ caught by the checksum comparison instead of dirtying the repo."
        (org-canvas-dry-run--kill-buffers-under tmp-root)
        (delete-directory tmp-root t))))
 
-(defun org-canvas-dry-run--exercise (command dir)
+(defun org-canvas-dry-run--exercise (command dir &optional api-stub)
   "Run COMMAND as a dry run against the course in DIR.
 Returns a plist of (:writes :log :before :after).  COMMAND is allowed to
 error -- the stubbed API returns nothing, so some preflights give up --
 because the assertions are about what it did on the way, not whether it
-finished."
+finished.  API-STUB, when given, replaces the default API stand-in for a
+sync whose push path needs one read answered with data (the final grade
+overrides sync reads the enrollments to address its mutation); it should
+record what it is handed through `org-canvas-dry-run--record'."
   (let ((org-canvas-dry-run--calls nil)
         (org-canvas-dry-run--log nil)
         (before (org-canvas-dry-run--org-checksums dir)))
     (with-org-canvas-test-config
       (with-sync-test-env
         (cl-letf (((symbol-function 'org-canvas-api-request)
-                   #'org-canvas-dry-run--record)
+                   (or api-stub #'org-canvas-dry-run--record))
                   ((symbol-function 'org-canvas--log-info)
                    #'org-canvas-dry-run--capture-log)
                   ((symbol-function 'message) (lambda (&rest _) nil))
@@ -226,6 +230,41 @@ finished."
                                     (plist-get result :log))))
         (expect (seq-filter (lambda (l) (string-match-p "Would set accommodation" l)) dry-lines)
                 :not :to-equal nil))))
+
+  (it "reaches the push path in the final grade overrides sync"
+    ;; The demo course carries no gradebook.org, since it holds student
+    ;; data; the sync needs one written for it, as the roster it reads
+    ;; from people.org needs.
+    (org-canvas-dry-run--with-course dir
+      (let ((org-canvas-gradebook-file (expand-file-name "gradebook.org" dir))
+            (org-canvas-people-file (expand-file-name "people.org" dir)))
+        (with-temp-file org-canvas-people-file
+          (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n"
+                  ":ROLE: student\n:END:\n"))
+        (with-temp-file org-canvas-gradebook-file
+          (insert "* Final grade overrides\n"
+                  "#+NAME: final-grade-overrides\n"
+                  "| Student | Override |\n"
+                  "|---+---|\n"
+                  "| Adams, Alice | 93.5 |\n"))
+        (let* ((stub (lambda (method url &rest args)
+                       (if (string-match-p "/enrollments" url)
+                           (vector '((id . 1101) (user_id . 1)
+                                     (type . "StudentEnrollment")
+                                     (user . ((id . 1)
+                                              (name . "Adams, Alice")
+                                              (sortable_name . "Adams, Alice")))
+                                     (grades . ((current_score . 91.5)))))
+                         (apply #'org-canvas-dry-run--record method url args))))
+               (result (org-canvas-dry-run--exercise
+                        'org-canvas-sync-final-grade-overrides dir stub))
+               (dry-lines (seq-filter (lambda (l) (string-match-p "\\[DRY-RUN\\]" l))
+                                      (plist-get result :log))))
+          (expect (plist-get result :writes) :to-be nil)
+          (expect (plist-get result :after) :to-equal (plist-get result :before))
+          (expect (seq-filter (lambda (l) (string-match-p "Would set Adams, Alice" l))
+                              dry-lines)
+                  :not :to-equal nil)))))
 
   ;; Giving one student a deadline (issue #526) takes arguments, so it
   ;; is run here by name rather than from the list above.

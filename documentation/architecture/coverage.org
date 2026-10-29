@@ -43,7 +43,7 @@ pull-at-point and prune.
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
 | People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org; the institution's SIS and login ids opt-in, read from the course's user records; one person's entry printed, not written (`scripts/org-canvas person`, #543) |
-| Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, and each assignment's score spread, in gradebook.org; one student's standing — every column, the still-open ones, the best possible total — printed, not written (`scripts/org-canvas student`, #542) |
+| Gradebook         | overrides | no | yes | no | no | pull-only overview: current and final score, the final grade override, missing and late, custom gradebook columns, per student and per section, and each assignment's score spread, in gradebook.org; one student's standing — every column, the still-open ones, the best possible total — printed, not written (`scripts/org-canvas student`, #542); the Final Grade Override column is written, on command and never in a tier, from the overrides table under the same file's heading, by Canvas's own `setOverrideScore` mutation (#556) |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, and a published survey's answers by text (#347), in quiz-results.org |
 | Question banks    | no   | no       | yes  | no     | no       | pull-only: each classic bank's id and count, the quiz groups drawing from it, and its questions with answer keys, in question-banks.org; a bank a group names that the course does not own is read by id (#492) |
@@ -103,6 +103,12 @@ disturbs them.
   gradebook columns are pulled into the overview, grading periods are
   pulled and post policies are managed (see the covered table);
   creating a custom column is the web UI's business.
+- *A gradebook CSV export:* the web UI's export button.  The route is
+  a browser action (=POST /courses/:id/gradebook_csv=, no =/api/v1=
+  form, nothing in the vendored spec), and what it downloads
+  org-canvas already holds: the pull writes every student's scores to
+  gradebook.org (probed against canvas-lms's routes 2026-10-28,
+  #556).
 - *Enrolling and removing people.*  The roster and section
   membership are pulled (see the covered table); changing them is the
   registrar's and the web UI's business.

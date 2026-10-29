@@ -17,12 +17,18 @@
 ;; ==============
 ;; In gradebook.org:
 ;;   * Students   one table, sorted by name: Student, Sections, Current,
-;;                Final, Missing, Late, Last activity, then one column
-;;                per custom gradebook column the course has
+;;                Final, Override, Missing, Late, Last activity, then one
+;;                column per custom gradebook column the course has
 ;;   * Sections   one table: Section, Students, Mean current, Mean final,
 ;;                Missing
 ;;   * Assignments one table, in Canvas order: Assignment, Due, Points,
 ;;                Min, Q1, Median, Q3, Max, Missing, Late
+;;   * Final grade overrides  one table, one row per student Canvas holds
+;;                an override for: Student, Override.  Written by the pull,
+;;                edited by hand, pushed by
+;;                `org-canvas-sync-final-grade-overrides' (issue #556);
+;;                the table is the whole set, as the accommodations table
+;;                is.  "No final grade overrides." when none
 ;;   * Groups     with `org-canvas-gradebook-groups' only: Student, one
 ;;                column per assignment group (its percentage after the
 ;;                drop rules), Computed, Canvas, and a line naming the
@@ -77,7 +83,12 @@
 ;;   GET /courses/:id/enrollments?type[]=StudentEnrollment
 ;;       each enrollment carries a `grades' object (current_score,
 ;;       final_score, their unposted_* twins, letter grades when the
-;;       course has a scheme).  Paginated by bookmark.
+;;       course has a scheme) and, when the caller may manage grades and
+;;       the student has one, `override_score' — the Final Grade
+;;       Override column, the percentage the registrar receives in place
+;;       of the computed total.  Paginated by bookmark.  The same read
+;;       answers the Final grade overrides table, so the override side
+;;       costs no extra request (issue #556).
 ;;   GET /courses/:id/analytics/student_summaries
 ;;       per student: tardiness_breakdown (missing, late, on_time,
 ;;       floating, total), page views, participations.  Permission
@@ -108,6 +119,27 @@
 ;;   GET /courses/:id/grading_standards/:id
 ;;       the letter cutoffs, as fractions; a refusal leaves the letters
 ;;       out of the what-if.
+;;
+;;   The override push (issue #556) sends nothing over REST: Canvas
+;;   publishes no API for writing the Final Grade Override column, and
+;;   the bulk route in canvas-lms
+;;   (PUT /courses/:id/update_final_grade_overrides) is undocumented,
+;;   gated on the Import Override Scores flag and absent from the
+;;   vendored spec, so the push rides the gradebook's own GraphQL
+;;   mutation instead:
+;;   POST /api/graphql  setOverrideScore(input: {enrollmentId,
+;;       overrideScore}) — one enrollment id per student (Canvas updates
+;;       every active enrollment the student holds in the course), the
+;;       score a percentage, null clearing the override.  Requires
+;;       manage grades, and the course's Final Grade Override setting
+;;       on; a grading-period override is not written, only the course
+;;       total the registrar receives.  Checked against the Canvas
+;;       schema by the GraphQL contract test (issue #269).
+;;
+;;   A CSV export of the gradebook has no API route at all
+;;   (coverage.org): the web UI's export is a browser action, and the
+;;   pull is org-canvas's answer — gradebook.org holds every student's
+;;   scores.  No code path here downloads one.
 
 ;;   For one student's standing (issue #542), in place of all the above:
 ;;   GET /courses/:id/enrollments?type[]=StudentEnrollment
@@ -201,12 +233,19 @@ repository."
 
 ;;;; Fetching
 
+(defconst org-canvas--gradebook-enrollment-params
+  '(("type[]" . "StudentEnrollment")
+    ("state[]" . "active") ("state[]" . "inactive") ("state[]" . "completed"))
+  "Query parameters of the enrollments read.
+The students in any state the roster keeps, so the tables and the
+override column see the class the gradebook does.  Pinned by the
+read-parameter contract test (issue #273).")
+
 (defun org-canvas--gradebook-fetch-enrollments ()
   "Return the course's student enrollments, active, inactive and completed."
   (append (org-canvas-api-request-all-pages
            'GET (org-canvas-api-course-endpoint "enrollments")
-           '(("type[]" . "StudentEnrollment")
-             ("state[]" . "active") ("state[]" . "inactive") ("state[]" . "completed")))
+           org-canvas--gradebook-enrollment-params)
           nil))
 
 (defun org-canvas--gradebook-fetch-section-names ()
@@ -291,12 +330,35 @@ KEY is `current' or `final'; nil when Canvas has no number."
          (value (alist-get (intern name) grades)))
     (and (numberp value) value)))
 
+(defun org-canvas--gradebook-user-name (user user-id)
+  "Return USER's roster name: sortable, plain, or a placeholder for USER-ID."
+  (or (alist-get 'sortable_name user)
+      (alist-get 'name user)
+      (format "User %s" user-id)))
+
+(defun org-canvas--gradebook-override (enrollment)
+  "Return ENROLLMENT's final grade override, a percentage, or nil.
+Nil when Canvas holds none for the student, when the course has the
+Final Grade Override column off, or when the caller cannot see grades."
+  (org-canvas--gradebook-stat (alist-get 'grades enrollment) 'override_score))
+
+(defun org-canvas--gradebook-fold-scores (row grades enrollment)
+  "Fold into ROW the scores GRADES and ENROLLMENT carry.
+Current, final and the override each take the first of the student's
+enrollments to carry one, so a student in two sections is one row."
+  (unless (plist-get row :current)
+    (plist-put row :current (org-canvas--gradebook-score grades 'current)))
+  (unless (plist-get row :final)
+    (plist-put row :final (org-canvas--gradebook-score grades 'final)))
+  (unless (plist-get row :override)
+    (plist-put row :override (org-canvas--gradebook-override enrollment))))
+
 (defun org-canvas--gradebook-rows (enrollments summaries)
   "Fold ENROLLMENTS into one plist per student, sorted by name.
 Each plist has :user-id, :name, :section-ids, :current, :final,
-:missing, :late and :last-activity.  SUMMARIES is the alist from
-`org-canvas--gradebook-fetch-summaries', or `refused', in which case
-:missing and :late are nil."
+:override, :missing, :late and :last-activity.  SUMMARIES is the alist
+from `org-canvas--gradebook-fetch-summaries', or `refused', in which
+case :missing and :late are nil."
   (let ((rows (make-hash-table :test 'eql)))
     (dolist (e enrollments)
       (let* ((uid (alist-get 'user_id e))
@@ -304,21 +366,16 @@ Each plist has :user-id, :name, :section-ids, :current, :final,
              (grades (alist-get 'grades e))
              (row (or (gethash uid rows)
                       (puthash uid (list :user-id uid
-                                         :name (or (alist-get 'sortable_name user)
-                                                   (alist-get 'name user)
-                                                   (format "User %s" uid))
+                                         :name (org-canvas--gradebook-user-name user uid)
                                          :section-ids nil
-                                         :current nil :final nil
+                                         :current nil :final nil :override nil
                                          :missing nil :late nil
                                          :last-activity nil)
                                rows))))
         (let ((sid (alist-get 'course_section_id e)))
           (when (and sid (not (memq sid (plist-get row :section-ids))))
             (plist-put row :section-ids (append (plist-get row :section-ids) (list sid)))))
-        (unless (plist-get row :current)
-          (plist-put row :current (org-canvas--gradebook-score grades 'current)))
-        (unless (plist-get row :final)
-          (plist-put row :final (org-canvas--gradebook-score grades 'final)))
+        (org-canvas--gradebook-fold-scores row grades e)
         (let ((seen (org-canvas--alist-get-non-null 'last_activity_at e)))
           (when (and (stringp seen)
                      (or (null (plist-get row :last-activity))
@@ -394,19 +451,20 @@ NAMES maps section ids to names; SUMMARIES is `refused' when the
 Missing and Late columns are unavailable; COLUMNS are the custom
 gradebook columns from `org-canvas--gradebook-fetch-columns', one
 table column each after Last activity."
-  (insert (format "| Student | Sections | Current | Final | Missing | Late | Last activity |%s\n"
+  (insert (format "| Student | Sections | Current | Final | Override | Missing | Late | Last activity |%s\n"
                   (mapconcat (lambda (column)
                                (format " %s |" (org-canvas--gradebook-cell-text
                                                 (plist-get column :title))))
                              columns "")))
-  (insert (format "|---+---+---+---+---+---+---|%s\n"
+  (insert (format "|---+---+---+---+---+---+---+---|%s\n"
                   (mapconcat (lambda (_) "---|") columns "")))
   (dolist (row rows)
-    (insert (format "| %s | %s | %s | %s | %s | %s | %s |%s\n"
+    (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s |%s\n"
                     (org-canvas--gradebook-student-cell row)
                     (org-canvas--gradebook-sections-cell row names)
                     (org-canvas--gradebook-number (plist-get row :current))
                     (org-canvas--gradebook-number (plist-get row :final))
+                    (org-canvas--gradebook-number (plist-get row :override))
                     (if (eq summaries 'refused) "" (org-canvas--gradebook-number (plist-get row :missing)))
                     (if (eq summaries 'refused) "" (org-canvas--gradebook-number (plist-get row :late)))
                     (or (org-canvas--iso8601-to-org-timestamp (plist-get row :last-activity)) "-")
@@ -1057,7 +1115,8 @@ hold an unscored roster and refusal notes (issue #488)."
     (org-canvas--student-data-ignore file)
     (org-canvas--create-file file)
     (with-current-buffer (org-canvas--find-file-noselect file)
-      (dolist (title '("Students" "Sections" "Assignments" "Groups"))
+      (dolist (title '("Students" "Sections" "Assignments"
+                       "Final grade overrides" "Groups"))
         (org-canvas--gradebook-remove-heading title))
       (org-canvas--gradebook-rewrite-body
        "My grades" (lambda () (org-canvas--gradebook-insert-self submissions enrollment)))
@@ -1073,6 +1132,327 @@ hold an unscored roster and refusal notes (issue #488)."
                 :current (org-canvas--gradebook-stat enrollment 'computed_current_score)
                 :final (org-canvas--gradebook-stat enrollment 'computed_final_score)
                 :assignments (length submissions) :missing missing :self t))))
+
+;;;; Final Grade Overrides
+;;
+;; The grade the registrar receives is not the computed total: when the
+;; course has the Final Grade Override column on, a percentage there
+;; supersedes both.  The enrollments read the pull already makes
+;; carries it (`grades.override_score', only when set and the caller
+;; may manage grades), so the Students table shows it beside Current
+;; and Final and the pull writes it under `* Final grade overrides' as
+;; a table the instructor edits and `org-canvas-sync-final-grade-
+;; overrides' pushes.  The table is the whole set, as the quiz
+;; accommodations table is: a row whose percentage differs is sent, a
+;; blank cell clears the student's override, and a student with an
+;; override on Canvas and no row is cleared too.  A missing table —
+;; no `#+NAME: final-grade-overrides' under the heading — sends
+;; nothing, but an emptied one clears everyone, so delete the table
+;; rather than emptying it when Canvas should be left alone.  The
+;; table is rewritten by every pull, so hand edits do not survive one:
+;; edit, sync, then pull to see what stuck.
+;;
+;; The push rides Canvas's own gradebook mutation, setOverrideScore
+;; (see API NOTES above), one enrollment per student; Canvas updates
+;; every active enrollment the student holds in the course, and it
+;; records a grade change in the audit log the way the web UI does.
+;; Writing final grades is grading, so the write allowlist names
+;; `submissions' for it (issue #550), and a refused enrollments read
+;; aborts the sync before anything is sent: with the class unread
+;; there is no telling what a push would clear.
+
+(defconst org-canvas--gradebook-overrides-table-regexp
+  "^#\\+NAME:[ \t]+final-grade-overrides[ \t]*$"
+  "Match the `#+NAME:' line that opens a final grade overrides table.")
+
+(defun org-canvas--gradebook-first-enrollments (enrollments)
+  "Return an alist of user id to one of ENROLLMENTS, per student.
+The first the read lists for each: its id addresses the override
+mutation, which updates every enrollment the student holds in the
+course, and its grades carry the override Canvas holds."
+  (let ((map nil))
+    (dolist (e enrollments)
+      (let ((uid (alist-get 'user_id e)))
+        (unless (assq uid map)
+          (push (cons uid e) map))))
+    (nreverse map)))
+
+(defun org-canvas--gradebook-override-rows (enrollments)
+  "Return one plist per student ENROLLMENTS hold an override for.
+Each plist has :user-id, :name and :override, the percentage; a
+student without one is left out, so the table holds only what the
+next push would reconcile."
+  (delq nil
+        (mapcar (lambda (pair)
+                  (let ((e (cdr pair))
+                        (o (org-canvas--gradebook-override (cdr pair))))
+                    (when o
+                      (list :user-id (car pair)
+                            :name (org-canvas--gradebook-user-name
+                                   (alist-get 'user e) (car pair))
+                            :override o))))
+                (org-canvas--gradebook-first-enrollments enrollments))))
+
+(defun org-canvas--gradebook-override-student-cell (row)
+  "Return ROW's Student cell: the person's heading title, or #id."
+  (or (org-canvas--heading-title-by-property
+       (and (boundp 'org-canvas-people-file) org-canvas-people-file)
+       "USER_ID" (plist-get row :user-id) "LEVEL=2")
+      (format "#%s" (plist-get row :user-id))))
+
+(defun org-canvas--gradebook-insert-overrides (rows)
+  "Insert the final grade overrides table for ROWS at point.
+A line saying there are none when ROWS is empty; the table aligns
+itself once written."
+  (if (null rows)
+      (insert "No final grade overrides.\n")
+    (let ((start (point)))
+      (insert "#+NAME: final-grade-overrides\n| Student | Override |\n|---+---|\n")
+      (dolist (row rows)
+        (insert (format "| %s | %s |\n"
+                        (org-canvas--gradebook-override-student-cell row)
+                        (org-canvas--gradebook-number (plist-get row :override)))))
+      (save-excursion
+        (goto-char start)
+        (forward-line 1)
+        (when (org-at-table-p) (org-table-align))))))
+
+(defun org-canvas--gradebook-update-overrides (rows)
+  "Rewrite the Final grade overrides heading of the current buffer from ROWS."
+  (org-canvas--gradebook-rewrite-body
+   "Final grade overrides"
+   (lambda () (org-canvas--gradebook-insert-overrides rows))))
+
+;;;; Final Grade Overrides: Reading the Table
+
+(defun org-canvas--gradebook-overrides-find-table ()
+  "Return the overrides table under the Final grade overrides heading.
+What `org-table-to-lisp' gives, or nil when the current buffer's
+heading or its table is missing."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "^\\* Final grade overrides[ \t]*$" nil t)
+      (let ((end (save-excursion (org-end-of-subtree t) (point))))
+        (when (re-search-forward org-canvas--gradebook-overrides-table-regexp end t)
+          (forward-line 1)
+          (when (looking-at-p org-table-line-regexp)
+            (org-table-to-lisp)))))))
+
+(defun org-canvas--gradebook-overrides-column (header)
+  "Return the index of the Override column in HEADER.
+A header naming it by its title, case aside, reads by title; one
+naming none falls back to position 1.  The Student column is always
+first, as the pull writes it."
+  (let ((titles (mapcar (lambda (cell) (downcase (string-trim cell))) header)))
+    (or (cl-position "override" titles :test #'string=)
+        1)))
+
+(defun org-canvas--gradebook-overrides-resolve-student (text)
+  "Resolve TEXT, a person's heading title or #id, to a USER_ID string."
+  (if (string-match "\\`#\\([0-9]+\\)\\'" text)
+      (match-string 1 text)
+    (org-canvas--heading-property-by-title
+     (and (boundp 'org-canvas-people-file) org-canvas-people-file)
+     text "USER_ID" "LEVEL=2")))
+
+(defun org-canvas--gradebook-override-cell (cell)
+  "Return CELL as an override percentage, or nil when it is blank.
+A cell that is not a number signals `org-canvas-config-error', since
+a misread cell would set the wrong grade."
+  (let ((text (string-trim (or cell ""))))
+    (cond
+     ((string-empty-p text) nil)
+     ((string-match-p "\\`[0-9]+\\(?:\\.[0-9]*\\)?\\'" text) (string-to-number text))
+     (t (org-canvas--signal 'org-canvas-config-error
+          "Override cell '%s' is not a percentage" text)))))
+
+(defun org-canvas--gradebook-overrides-parse-row (row column)
+  "Parse one table ROW with its Override COLUMN into (USER-ID . OVERRIDE).
+USER-ID is a string; OVERRIDE a percentage or nil.  Nil, with one
+warning, when the student resolves to nothing."
+  (let* ((student (string-trim (or (nth 0 row) "")))
+         (user-id (and (not (string-empty-p student))
+                       (org-canvas--gradebook-overrides-resolve-student student))))
+    (if (not user-id)
+        (progn
+          (org-canvas--log-warning org-canvas--logger
+            "[Gradebook] Could not resolve student '%s' (pull people first, or write #id)"
+            student)
+          nil)
+      (cons user-id (org-canvas--gradebook-override-cell (nth column row))))))
+
+(defun org-canvas--gradebook-overrides-parse-table (table)
+  "Parse the overrides TABLE (from `org-table-to-lisp') into rows.
+Each row is (USER-ID . OVERRIDE); a row whose student resolves to
+nothing is skipped with one warning."
+  (let ((column (org-canvas--gradebook-overrides-column (car table)))
+        (rows nil))
+    (dolist (row (cdr table))
+      (unless (eq row 'hline)
+        (when-let* ((parsed (org-canvas--gradebook-overrides-parse-row row column)))
+          (push parsed rows))))
+    (nreverse rows)))
+
+;;;; Final Grade Overrides: Pushing
+
+(defconst org-canvas--gradebook-override-mutation
+  "mutation ($enrollmentId: ID!, $overrideScore: Float) { setOverrideScore(input: {enrollmentId: $enrollmentId, overrideScore: $overrideScore}) { grades { overrideScore } errors { attribute message } } }"
+  "The GraphQL mutation that sets one student's final grade override.
+The score is a percentage; null clears it, so the student's grade goes
+back to the computed total.  Checked against the Canvas schema by the
+GraphQL contract test (issue #269), which names it by this symbol.")
+
+(defun org-canvas--gradebook-overrides-fetch ()
+  "Return the course's student enrollments for the override sync.
+A refusal aborts the sync before anything is sent: with the class
+unread there is no telling what a push would clear."
+  (condition-case err
+      (org-canvas--gradebook-fetch-enrollments)
+    (org-canvas-api-error
+     (org-canvas--signal 'org-canvas-api-error
+       "Could not read the enrollments, so no override was sent: %s"
+       (error-message-string err)))))
+
+(defun org-canvas--gradebook-override-same-p (row current)
+  "Return non-nil when ROW's override equals CURRENT, Canvas's.
+Both nil agree; one number without the other differs."
+  (if (numberp row)
+      (and (numberp current) (= row current))
+    (null current)))
+
+(defun org-canvas--gradebook-overrides-send (enrollment override)
+  "Send ENROLLMENT's student the OVERRIDE, or preview it under a dry run.
+OVERRIDE nil clears the override.  Return non-nil when the request
+was sent (or previewed), nil when it failed, with one error logged
+and the other students still sent."
+  (let* ((name (org-canvas--gradebook-user-name
+                (alist-get 'user enrollment) (alist-get 'user_id enrollment)))
+         (label (format "%s %s's final grade override to %s"
+                        (if override "set" "clear") name
+                        (or (org-canvas--gradebook-number override) "none"))))
+    (condition-case err
+        (let ((data (org-canvas--graphql-mutate
+                     label org-canvas--gradebook-override-mutation
+                     (list (cons 'enrollmentId
+                                 (format "%s" (alist-get 'id enrollment)))
+                           (cons 'overrideScore override)))))
+          (if (org-canvas--dry-run-response-p data)
+              t
+            (org-canvas--gradebook-override-stored data)))
+      (error
+       (org-canvas--log-error org-canvas--logger
+         "[Gradebook] Could not %s: %s" label (error-message-string err))
+       nil))))
+
+(defun org-canvas--gradebook-override-stored (data)
+  "Return what Canvas stored, from DATA, the override mutation's reply.
+The percentage, nil when Canvas holds none; errors the payload
+carries signal `org-canvas-api-error' naming them."
+  (let* ((payload (alist-get 'setOverrideScore data))
+         (errors (org-canvas--alist-get-non-null 'errors payload))
+         (grades (org-canvas--alist-get-non-null 'grades payload)))
+    (when (and errors (> (length errors) 0))
+      (org-canvas--signal 'org-canvas-api-error
+        "setOverrideScore: %s" (org-canvas--graphql-errors-message errors)))
+    (and (consp grades) (org-canvas--gradebook-stat grades 'overrideScore))))
+
+(defun org-canvas--gradebook-overrides-sync-rows (rows by-user)
+  "Send each of ROWS that differs from what BY-USER's enrollments hold.
+BY-USER maps user id to enrollment, one per student.  Return
+\(SET . FAILED): the rows sent and the rows that failed, a row whose
+student has no enrollment or whose request failed.  A row matching
+Canvas is sent nothing."
+  (let ((set 0) (failed 0))
+    (dolist (row rows)
+      (let ((enrollment (alist-get (string-to-number (car row)) by-user)))
+        (cond
+         ((null enrollment)
+          (org-canvas--log-error org-canvas--logger
+            "[Gradebook] Student %s has no enrollment in this course; their override was not set"
+            (car row))
+          (cl-incf failed))
+         ((org-canvas--gradebook-override-same-p
+           (cdr row) (org-canvas--gradebook-override enrollment))
+          nil)
+         ((org-canvas--gradebook-overrides-send enrollment (cdr row)) (cl-incf set))
+         (t (cl-incf failed)))))
+    (cons set failed)))
+
+(defun org-canvas--gradebook-overrides-clear (rows by-user)
+  "Clear every override in BY-USER for a student with no row in ROWS.
+Return (CLEARED . FAILED).  The table is the whole set: a student
+with an override on Canvas and no row goes back to the computed total."
+  (let ((cleared 0) (failed 0))
+    (dolist (pair by-user)
+      (when (and (org-canvas--gradebook-override (cdr pair))
+                 (not (assoc (number-to-string (car pair)) rows)))
+        (if (org-canvas--gradebook-overrides-send (cdr pair) nil)
+            (cl-incf cleared)
+          (cl-incf failed))))
+    (cons cleared failed)))
+
+(defun org-canvas--gradebook-overrides-report (set cleared failed)
+  "Log and message the override sync's totals, and record the stats.
+SET, CLEARED and FAILED are the counts: the rows sent, the overrides
+cleared and the requests that failed."
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> FINAL GRADE OVERRIDE SYNC COMPLETE")
+  (org-canvas--log-info org-canvas--logger "Set: %d | Cleared: %d | Failed: %d"
+                        set cleared failed)
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--sync-record-feature-stats "Final Grade Overrides"
+    (if org-canvas--dry-run
+        (list :dry-run (+ set cleared) :fail failed)
+      (list :success (+ set cleared) :fail failed)))
+  (message "Final grade override sync: %d set, %d cleared, %d failed.%s"
+           set cleared failed
+           (if org-canvas--dry-run " (dry run — nothing sent)" "")))
+
+;;;###autoload
+(defun org-canvas-sync-final-grade-overrides (&optional dry-run)
+  "Sync the final grade overrides of gradebook.org with Canvas.
+Reads the `#+NAME: final-grade-overrides' table under the Final grade
+overrides heading, as the file stands unsaved edits included, and
+reconciles it with the overrides Canvas holds: the table is the whole
+set — a row whose percentage differs is sent, a blank cell clears the
+student's override, and a student with an override on Canvas and no
+row is cleared too.  Nothing is sent without a table, under a dry run
+nothing at all, and a refused enrollments read aborts before anything
+goes.  With a prefix argument, DRY-RUN: every change is logged and
+nothing is sent.  The override is the course total, the grade the
+registrar receives when the course has Final Grade Override on; the
+push rides Canvas's own setOverrideScore mutation (issue #556)."
+  ;; `(interactive "p")' rather than a sexp: edebug bails on the sexp
+  ;; form and takes undercover with it (see `org-canvas-version').
+  (interactive "p")
+  (let ((org-canvas--dry-run (or org-canvas--dry-run dry-run)))
+    (org-canvas--gradebook-overrides-command)))
+
+(defun org-canvas--gradebook-overrides-command ()
+  "Read the overrides table and reconcile it; the entry point's body.
+Split so the dry run can be bound around the whole run, the way
+`org-canvas-sync-dry-run' binds it around `org-canvas-sync'."
+  (org-canvas--check-write-feature 'submissions "pushing final grade overrides")
+  (let ((file (expand-file-name org-canvas-gradebook-file)))
+    (unless (file-exists-p file)
+      (org-canvas--signal 'org-canvas-config-error
+        "No %s: pull the gradebook first (org-canvas-pull-gradebook)"
+        (file-name-nondirectory file)))
+    (org-canvas-clear-log)
+    (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+    (let ((table (with-current-buffer (org-canvas--find-file-noselect file)
+                   (org-canvas--gradebook-overrides-find-table))))
+      (if (null table)
+          (message "No final grade overrides table in %s; nothing to sync"
+                   (file-name-nondirectory file))
+        (let* ((rows (org-canvas--gradebook-overrides-parse-table table))
+               (by-user (org-canvas--gradebook-first-enrollments
+                         (org-canvas--gradebook-overrides-fetch)))
+               (set-failed (org-canvas--gradebook-overrides-sync-rows rows by-user))
+               (clear-failed (org-canvas--gradebook-overrides-clear rows by-user)))
+          (org-canvas--gradebook-overrides-report
+           (car set-failed) (car clear-failed)
+           (+ (cdr set-failed) (cdr clear-failed))))))))
 
 ;;;; Pull
 
@@ -1094,10 +1474,12 @@ so a table nobody refreshes does not sit there going stale."
 ;;;###autoload
 (defun org-canvas-pull-gradebook ()
   "Pull a course-wide grade overview into gradebook.org.
-One table of students with their current and final scores, missing
-and late counts, last activity and the course's custom gradebook
-columns; one table of sections with their means; and one table of
-assignments with the class's score spread on each; with
+One table of students with their current and final scores, the final
+grade override where one is set, missing and late counts, last
+activity and the course's custom gradebook columns; one table of
+sections with their means; one table of assignments with the class's
+score spread on each; and the final grade overrides table, written
+from the same read, for `org-canvas-sync-final-grade-overrides'; with
 `org-canvas-gradebook-groups', one table of each student's percentage
 per assignment group, checked against Canvas's total.  Read-only, and
 the tables are derived: every pull rewrites them.  The file holds
@@ -1150,6 +1532,8 @@ reuses it.  A My grades heading left by a student pull is removed."
            "Sections" (lambda () (org-canvas--gradebook-insert-sections rows names summaries)))
           (org-canvas--gradebook-rewrite-body
            "Assignments" (lambda () (org-canvas--gradebook-insert-assignments assignments)))
+          (org-canvas--gradebook-update-overrides
+           (org-canvas--gradebook-override-rows enrollments))
           (org-canvas--gradebook-update-groups scores)
           (org-canvas--pull-write-file-header)
           (org-canvas--save-buffer))
