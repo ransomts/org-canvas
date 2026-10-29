@@ -96,22 +96,34 @@ COVERAGE_JSON=$(mktemp /tmp/org-canvas-coverage-XXXXXX.json)
 
 # Emacs 29: plain tests (no coverage overhead)
 (
+  # Git runs this hook with GIT_DIR, GIT_WORK_TREE and friends in the
+  # environment, and nix-shell passes them through to eldev test, so
+  # specs that shell out to git inherit the repository being pushed
+  # instead of the filesystem: a temp dir "outside a checkout" resolved
+  # to the pushed commit, and #549's tracked-files guard fired under
+  # /tmp (#560).  Scrub them so the suites see the world CI does.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES
   nix-shell \
     -I "nixpkgs=${NIX_ARCHIVES[29]}" \
     -p "${NIX_PACKAGES[29]}" \
     --keep PATH \
-    --run "emacs --version | head -1 && eldev test" 2>&1 > "$EMACS29_LOG"
+    --run "emacs --version | head -1 && eldev test" > "$EMACS29_LOG" 2>&1
   echo $? > "${EMACS29_LOG}.rc"
 ) &
 emacs29_pid=$!
 
 # Emacs 30: tests with coverage
 (
+  # Scrub git's hook environment here too, for the same reason as the
+  # Emacs 29 run above (#560).
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES
   nix-shell \
     -I "nixpkgs=${NIX_ARCHIVES[30]}" \
     -p "${NIX_PACKAGES[30]}" \
     --keep PATH \
-    --run "emacs --version | head -1 && eldev test -u \"on,codecov,dontsend\" -U \"$COVERAGE_JSON\"" 2>&1 > "$EMACS30_LOG"
+    --run "emacs --version | head -1 && eldev test -u \"on,codecov,dontsend\" -U \"$COVERAGE_JSON\"" > "$EMACS30_LOG" 2>&1
   echo $? > "${EMACS30_LOG}.rc"
 ) &
 emacs30_pid=$!
@@ -125,9 +137,19 @@ echo "========================================"
 cat "$EMACS29_LOG" || true
 echo ""
 
-if echo "$(cat "$EMACS29_LOG")" | grep -qE '[0-9]+ failed'; then
-  failed=$(grep -oP '\d+ failed' "$EMACS29_LOG" | grep -oP '^\d+')
-  if [ "$failed" -gt 0 ]; then
+# A direct file grep, never `echo "$(cat ...)" | grep -q`: on a log
+# this size grep -q exits at its first match while echo is still
+# writing, echo dies of SIGPIPE (141), and under `pipefail` above the
+# whole condition reads false — the gate was unreachable (#560).
+if grep -qE '[0-9]+ failed' "$EMACS29_LOG"; then
+  # Buttercup's tally line ("Ran N specs, F failed") carries the
+  # failure count.  The suite's own stdout logs an "N failed" summary
+  # for every sync a spec runs ("0 failed" on a green run), and a
+  # count taken from every match came out multi-line, so the
+  # comparison below errored its way to false and this gate never
+  # fired (#560).
+  failed=$(grep -oP 'specs, \K\d+(?= failed)' "$EMACS29_LOG" | head -1)
+  if [ "${failed:-0}" -gt 0 ]; then
     echo "BLOCKED: $failed test(s) failed on Emacs 29."
     grep -E 'FAILED|failed' "$EMACS29_LOG" | tail -20
     rm -f "$EMACS29_LOG" "${EMACS29_LOG}.rc" "$EMACS30_LOG" "${EMACS30_LOG}.rc" "$COVERAGE_JSON"
@@ -142,9 +164,11 @@ echo "========================================"
 cat "$EMACS30_LOG" || true
 echo ""
 
-if echo "$(cat "$EMACS30_LOG")" | grep -qE '[0-9]+ failed'; then
-  failed=$(grep -oP '\d+ failed' "$EMACS30_LOG" | grep -oP '^\d+')
-  if [ "$failed" -gt 0 ]; then
+# Direct file grep here too, as above (#560).
+if grep -qE '[0-9]+ failed' "$EMACS30_LOG"; then
+  # Buttercup's tally alone, as in the Emacs 29 gate above (#560).
+  failed=$(grep -oP 'specs, \K\d+(?= failed)' "$EMACS30_LOG" | head -1)
+  if [ "${failed:-0}" -gt 0 ]; then
     echo "BLOCKED: $failed test(s) failed on Emacs 30."
     grep -E 'FAILED|failed' "$EMACS30_LOG" | tail -20
     rm -f "$EMACS29_LOG" "${EMACS29_LOG}.rc" "$EMACS30_LOG" "${EMACS30_LOG}.rc" "$COVERAGE_JSON"
