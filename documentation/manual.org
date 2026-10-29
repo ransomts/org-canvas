@@ -204,6 +204,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |
 | =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
 | =delete --yes FEATURE:TITLE...= | =org-canvas-delete-headings= (=-n=: prints what would go, sends nothing) | any heading failed |
+| =cleanup-orphans [--yes]= | =org-canvas-cleanup-orphans=: the orphan report on stdout; =--yes= deletes what it lists, =-n= or no =--yes= the report alone | a delete failed |
 | =push-comments ASSIGNMENT...= | =org-canvas-push-submission-comment-edits= for each | a change not sent  |
 | =push-grades ASSIGNMENT [--only ID,ID] [--dry-run]= | =org-canvas-push-submission-grades=, never posting | anything left behind |
 | =post ASSIGNMENT...= | =org-canvas-post-grades=, no grading file needed (=--queue=: every column the queue marks =post=) | a column was not posted |
@@ -223,6 +224,8 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
+| =search REGEXP= | =org-canvas-search-live=: every match of REGEXP in the live course's text, with its object, field and context |   |
+| =search-dates= | =org-canvas-search-live-dates=: every date the live course's text and date fields say, by object |   |
 | =validate [--all]=            | =org-canvas-validate= (=--all=: hold nothing back; =--json=: one JSON object) | an error was found |
 | =sync=                        | =org-canvas-sync=                                  | any item failed    |
 | =check=                       | =org-canvas-connection-info=: reads the token's user and the course, GETs only | a read failed (a 401 exits 3) |
@@ -252,6 +255,16 @@ heading's sync properties (see [[*Deleting a Single Item][Deleting a
 Single Item]]); it needs =--yes= (=-y=), which answers the delete
 confirmation and nothing else, or =--dry-run=, which prints one
 =Would delete FEATURE 'TITLE' (CANVAS_ID ID)= line per heading.
+=search REGEXP= greps the live course's text and lists every match
+with its object, field and context, and =search-dates= lists every
+date the course says, by object; both read only, print their report on
+standard output and exit 0 whatever the hit count, which the report's
+closing line names (see [[*Searching the Live Course][Searching the
+Live Course]]).  =cleanup-orphans= scans for Canvas items no Org
+heading claims and prints the orphan report (see [[*Orphan
+Cleanup][Orphan Cleanup]]); =--yes= (=-y=) deletes what the report
+lists — answering the orphan confirmation and nothing else — and a
+=--dry-run=, or a run without =--yes=, prints the report alone.
 =--dry-run= (=-n=)
 before the command makes =push=, =publish=, =unpublish=, =delete=,
 =push-comments= and =sync= send nothing, =adopt= write nothing, and
@@ -5532,6 +5545,17 @@ This command:
 4. Displays an orphan report in a =*canvas-orphans*= buffer
 5. Prompts whether to delete the orphaned items from Canvas
 
+From the shell, =scripts/org-canvas cleanup-orphans= prints the same
+report on standard output and deletes nothing; =--yes= (=-y=) deletes
+what the report lists, answering the orphan confirmation and nothing
+else, and a =--dry-run=, before the command or after it, prints the
+report alone whatever =--yes= says.  It exits 1 when a delete failed,
+each failure logged and the next item still tried, while a feature
+outside the credentials file's write allowlist is left alone, named,
+and does not fail the run.  In a batch Emacs there is nobody to ask,
+so an unconfirmed run deletes nothing, saying how to confirm (#554);
+interactively the prompt stands as before.
+
 ** Orphan Report
 
 The report buffer shows each orphan grouped by content type:
@@ -5698,17 +5722,20 @@ grouped by object.  One call reads every date a student can see.
 
 Both commands read only.  A surface the token's role cannot read, or
 a service the course has off (New Quizzes), is skipped and named in
-the closing line; the rest of the walk goes on.  From a script:
+the closing line; the rest of the walk goes on.  From the shell:
 
 #+begin_src sh
-emacs --batch -l /path/to/init.el \
-      --eval '(org-canvas-search-live "Sep\\(tember\\)? 30\\|09-30")'
+scripts/org-canvas search "Sep\\(tember\\)? 30\\|09-30"
+scripts/org-canvas search-dates
 #+end_src
 
-The command returns the number of hits, so a wrapper can exit non-zero
-on any.  =org-canvas--search-live= is the same walk as a function,
-returning the hits as a list with the object count and what was
-skipped, for a script that wants the data rather than the report.
+The same report prints on standard output, so a CI job that exits
+non-zero on drift (=diff=) can also grep the course for the stale
+value behind it.  From Lisp the command returns the number of hits,
+so a wrapper can exit non-zero on any.  =org-canvas--search-live= is
+the same walk as a function, returning the hits as a list with the
+object count and what was skipped, for a script that wants the data
+rather than the report.
 
 * Commands Reference
 

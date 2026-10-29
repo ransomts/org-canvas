@@ -854,6 +854,144 @@
                 :to-equal 2))
       (expect (car messages) :to-match "person takes NAME-OR-USER-ID"))))
 
+(describe "the search command (issue #554)"
+  (it "takes exactly one regexp and runs the live search on it"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-search-live)
+                 (lambda (&rest args) (push args calls) 0)))
+        (expect (test-batch--run '("search" "Sep\\(tember\\)? 30\\|09-30"))
+                :to-equal 0)
+        (expect (test-batch--run '("search" "midterm")) :to-equal 0))
+      (expect (reverse calls)
+              :to-equal '(("Sep\\(tember\\)? 30\\|09-30") ("midterm")))))
+
+  (it "prints the report the Emacs command prints, on standard output"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--search-live)
+                 (lambda (&rest _)
+                   (list :hits (list (list :type "page" :id "syllabus"
+                                           :title "Syllabus" :field "body"
+                                           :context "...The midterm is Sep 30..."))
+                         :objects 14 :skipped nil)))
+                ((symbol-function 'display-buffer) #'ignore)
+                ((symbol-function 'message) #'ignore)
+                ((symbol-function 'org-canvas-batch-setup) #'ignore))
+        (let ((out (with-output-to-string
+                     (expect (org-canvas-batch-main '("search" "midterm"))
+                             :to-equal 0))))
+          (expect out :to-match "\\`org-canvas live search: \"midterm\"")
+          (expect out :to-match "page syllabus \"Syllabus\"")
+          (expect out :to-match "1 hit(s) in 1 object(s); 14 object(s) searched\\.")))))
+
+  (it "is a usage error with no argument or with two"
+    (let ((messages nil) (called nil))
+      (cl-letf (((symbol-function 'org-canvas-search-live)
+                 (lambda (&rest _) (setq called t) 0)))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("search")) :to-equal 2)
+          (expect (test-batch--run '("search" "a" "b")) :to-equal 2)))
+      (expect called :to-be nil)
+      (expect (car messages) :to-match "search takes REGEXP"))))
+
+(describe "the search-dates command (issue #554)"
+  (it "takes no arguments and lists every date the course says"
+    (let ((called nil))
+      (cl-letf (((symbol-function 'org-canvas-search-live-dates)
+                 (lambda () (setq called t) 0)))
+        (expect (test-batch--run '("search-dates")) :to-equal 0)
+        (expect called :to-be t))))
+
+  (it "is a usage error with an argument"
+    (let ((messages nil) (called nil))
+      (cl-letf (((symbol-function 'org-canvas-search-live-dates)
+                 (lambda () (setq called t) 0)))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("search-dates" "x")) :to-equal 2)))
+      (expect called :to-be nil)
+      (expect (car messages) :to-match "search-dates takes no arguments"))))
+
+(describe "the cleanup-orphans command (issue #554)"
+  (it "prints the orphan report and deletes nothing without --yes"
+    (let ((deleted nil) (out nil) (status nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas-batch-setup) #'ignore)
+                  ((symbol-function 'org-canvas--find-orphans-for-feature)
+                   (lambda (feature)
+                     (when (equal (plist-get feature :name) "Assignments")
+                       '(((id . 200) (name . "Orphan A"))))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (when (eq method 'DELETE) (push url deleted))
+                     nil)))
+          (setq out (with-output-to-string
+                      (setq status (org-canvas-batch-main '("cleanup-orphans")))))))
+      (expect status :to-equal 0)
+      (expect deleted :to-be nil)
+      (expect out :to-match "org-canvas Orphan Report")
+      (expect out :to-match "Assignments: 1 orphan")
+      (expect out :to-match "Total orphans: 1")))
+
+  (it "deletes the orphans under --yes, binding only the confirmation"
+    (let ((deleted nil) (status nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas--find-orphans-for-feature)
+                   (lambda (feature)
+                     (when (equal (plist-get feature :name) "Assignments")
+                       '(((id . 200) (name . "Orphan A"))))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (when (eq method 'DELETE) (push url deleted))
+                     nil)))
+          (setq status (test-batch--run '("cleanup-orphans" "--yes")))))
+      (expect status :to-equal 0)
+      (expect deleted :not :to-be nil)))
+
+  (it "exits 1 when a --yes delete failed (#554)"
+    (let ((status nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas--find-orphans-for-feature)
+                   (lambda (feature)
+                     (when (equal (plist-get feature :name) "Assignments")
+                       '(((id . 200) (name . "Orphan A"))))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (signal 'org-canvas-api-error '("delete refused")))))
+          (setq status (test-batch--run '("cleanup-orphans" "--yes")))))
+      (expect status :to-equal 1)))
+
+  (it "sends nothing under a dry run, whatever --yes says"
+    (let ((deleted nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas--find-orphans-for-feature)
+                   (lambda (feature)
+                     (when (equal (plist-get feature :name) "Assignments")
+                       '(((id . 200) (name . "Orphan A"))))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (when (eq method 'DELETE) (push url deleted))
+                     nil)))
+          (expect (test-batch--run '("-n" "cleanup-orphans" "--yes")) :to-equal 0)
+          (expect (test-batch--run '("cleanup-orphans" "--yes" "--dry-run"))
+                  :to-equal 0)))
+      (expect deleted :to-be nil)))
+
+  (it "is a usage error with an argument other than its flags"
+    (let ((messages nil) (called nil))
+      (cl-letf (((symbol-function 'org-canvas-cleanup-orphans)
+                 (lambda (&rest _) (setq called t))))
+        (test-batch--quietly messages
+          (expect (test-batch--run '("cleanup-orphans" "pages")) :to-equal 2)))
+      (expect called :to-be nil)
+      (expect (car messages) :to-match "cleanup-orphans takes \\[--yes\\]"))))
+
 ;;;; --json (issue #531)
 
 (defvar test-batch--json-output nil
