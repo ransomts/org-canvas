@@ -6030,6 +6030,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-publish-at-point=     | Publish the heading at point on Canvas, sending only the flag (see [[*Publishing One Heading][Publishing One Heading]]) |
 | =org-canvas-unpublish-at-point=   | Unpublish it, refusing what Canvas would refuse |
 | =org-canvas-set-published=        | The same for a heading named by title or Canvas id |
+| =org-canvas-set-published-at-point= | The same at point, publishing or unpublishing as the argument says |
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
@@ -6058,6 +6059,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-set-log-level=        | Set logging level interactively               |
 | =org-canvas-set-log-destination=  | Set log destination interactively             |
 | =org-canvas-dispatch=             | Open the transient command menu               |
+| =org-canvas-demo-conflict=        | Show the conflict-resolution UI on mock data, no API calls (=?= in the menu) |
 
 ** Command Menu (Transient)
 

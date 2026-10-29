@@ -150,6 +150,13 @@ jobs:
         # CHANGELOG.org; a malformed one would only fail at release.
         run: python3 scripts/changelog-collect.py --check
 
+      - name: Check user stories
+        # The story catalogue must not rot: every command a story names
+        # stays in the manual, every autoloaded command stays in the
+        # manual, and the story format holds (user-stories.org,
+        # "Keeping this file true").
+        run: python3 scripts/stories-check.py
+
   isolation-shards:
     # Every test file must pass on its own: `eldev test "pattern"` is
     # the documented way to run a subset, and the full suite hides what

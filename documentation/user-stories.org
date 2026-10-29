@@ -1,0 +1,219 @@
+#+TITLE: org-canvas User Stories
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:3 num:t
+
+This file says what org-canvas is *for*, in the voice of the people using it: one half is a catalogue of what a user can do today, the other a backlog of what they cannot yet.  It complements the [[file:workflows.org][workflows guide]] (the same behaviour, organized by when in the semester it happens), the [[file:manual.org][reference manual]] (every property and command) and the [[file:architecture/coverage.org][coverage map]] (which parts of Canvas's API are touched); this file carries the /who/ and the /why/ those three leave implicit.
+
+* How to read this file
+
+- A shipped story is written "As a ---, I can ..." in the present tense: it exists, and the manual section named beside it documents it.  Shipped stories carry no status marker -- everything under "Shipped behaviour" is true of the current release.
+- A backlog story is written "As a ---, I want ...", and carries acceptance criteria, because nobody has built it to disagree with yet.  Backlog stories have a status: /Planned/ (a GitHub issue is open) or /Proposed/ (no issue; an idea with a reason).
+- A story graduates: Proposed becomes Planned when its issue opens (the story seeds the issue body), and Planned joins the catalogue when the pull request that closes the issue merges -- the changelog fragment names the issue, the issue names the story, so the audit trail already exists.
+- Work with no user-visible value never gets a story: live-verification chores, refactors, CI gates and dependency bumps stay plain issues.  A story claims user value; an issue without a story is honest about having none.
+
+* Personas
+
+- *The course owner* designs and runs a course in Org Mode and pushes it to Canvas.  Every write command is hers; the source of truth is her git repository, and Canvas is a rendering of it.
+- *The adopter* works from a course she did not author -- inherited, shared, or under someone else's ownership.  She marks the course read-only at setup and is offered pull, status and diff, never a write.
+- *The collaborator* (a co-instructor or TA) shares the course's Org files in git or works only in the Canvas web UI; what he changes must survive contact with the owner's next sync.
+
+* Shipped behaviour
+
+** Setting up a course
+
+- As a course owner, I can run =org-canvas-init= once and answer its questions -- Canvas URL, API token, course ID, whether I own the course -- so that credentials are written, the connection is proven before I rely on it, and the course is registered, without hand-editing elisp.
+- As a course owner, I can have the wizard drop skeleton =.org= files for the main content types, so that a new course starts from structure instead of a blank page.
+- As a course owner, I can keep the API token out of git -- the wizard offers to add the credentials file to =.gitignore= -- so that a shared course repository never leaks it.
+- As an adopter, I can answer that I do not own the course, so that every write command is refused from the first day and the tooling never lets me damage someone else's Canvas course.
+- As a course owner, I can carry a copied course directory into its next semester with one command (=org-canvas-new-semester=): a dry run names every heading it would strip, then it strips every stamp the registries name -- =CANVAS_DELETED= included, which the =sed= it replaced never listed -- retargets =org-canvas-credentials.el= at the new course ID and loads it, so that the first sync creates every item instead of updating the old course's, and dates stay for the editor to fix.
+- As a course owner, I can register several courses and switch between them (=org-canvas-activate-course=), so that two sections in one Emacs session do not mean reloading credentials by hand.
+- As a course owner, I can reach every command from one transient menu (=org-canvas-dispatch=), with a demo of the conflict-resolution UI built in (=?=), so that the command surface is browsable while I am learning it, not something to memorize first.
+
+** Authoring the course in Org
+
+- As a course owner, I can write every part of the course in plain-text Org files -- assignments (including LTI tools such as Gradescope), classic quizzes, New Quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, grading schemes, per-section date overrides, per-student quiz accommodations and course settings -- so that the course is versioned, diffable and greppable like code.
+- As a course owner, I can run =org-canvas-validate= before anything is sent, so that broken properties, past dates and unmet declarations are caught at home rather than in a failed sync.
+- As a course owner, I can accept a validate finding with the reason written beside it (=:VALIDATE_ACCEPT:= on a heading, an =Accept= column in an overrides row), so that a check the course means to keep is not re-flagged every run and the reason survives to be read.
+- As a course owner, I can let the sync order pushes by dependency -- groups before outcomes before rubrics before assignments, pages and files before modules -- so that cross-references resolve on the first run of a fresh course.
+- As a course owner, I can give one student a new deadline on the assignment at point (=org-canvas-extend-student=), sending that override alone, so that an accommodation is a keystroke, not an override-table edit and a push.
+- As a course owner, I can list the course's LTI tools with their launch URLs (=org-canvas-list-external-tools=), so that wiring a Gradescope column does not require the web UI.
+
+** Publishing to Canvas
+
+- As a course owner, I can push a single heading at point, a whole content type's file, or the entire course, so that the granularity of a sync matches the size of the edit I just made.
+- As a course owner, I can dry-run any push and preview what would be sent, so that a big sync is trusted before it is run.
+- As a course owner, I can push by title -- =org-canvas-sync-assignment= and its siblings, or =org-canvas-sync-headings= for a list -- so that scripts and keybindings can publish without navigating to the heading.
+- As a course owner, I can choose push, pull or skip per item when Canvas holds a change newer than my last sync -- or bypass the questions for a whole sync I have already decided on (=org-canvas-force-push=) -- so that neither side silently wins, and a deliberate overwrite is still mine to make.
+- As a course owner, I can force a file's re-upload -- the one at point, or every file -- when Canvas's copy is wrong but its hash says nothing changed, so that repairing a bad upload does not mean touching the file to fool the change detection.
+- As a course owner, I can let a long sync survive Canvas -- credentials are checked before anything is sent, rate limits are retried with backoff, and an auth failure explains itself -- so that pushing a whole course is not a babysitting job.
+- As a course owner, I can declare a whole semester's release plan once -- =PUBLISH_AT= on modules and items, applied at the start of every sync (=org-canvas-apply-scheduled-releases=), idempotent and written back as explicit properties -- so that weeks go live on the calendar students see, not by a hand-applied publish each Monday (see "Publishing a Week" in the manual).
+- As a course owner, I can give a module item its own =PUBLISH_AT= that outranks its module's, so that a week can go live with pieces of it still scheduled ahead.
+- As a course owner, I can put one module and every object it lists live in a single command (=org-canvas-publish-module=), and take it down the same way, so that making a week visible is one decision rather than a flag per heading.
+- As a course owner, I can publish or unpublish the heading at point sending only the flag (=org-canvas-publish-at-point=), honoring what Canvas itself would refuse, so that taking one column down never ships a half-edited description with it.
+
+** Pulling and adopting
+
+- As an adopter, I can import an entire existing course with =org-canvas-pull-all=, in dependency order with HTML converted to Org, so that a course I did not author becomes files I can read in half an hour.
+- As a course owner, I can pull one content type, or one heading at point -- a classic quiz pulls its questions, a New Quiz its items -- so that refreshing a part does not rewrite the whole.
+- As a course owner, I can adopt a Canvas-born item onto a bare stub with =org-canvas-adopt-at-point=, or append one from the drift report, so that remote material lands in my file where I choose, not where a pull would put it.
+
+** Drift, status and search
+
+- As a course owner, I can run =org-canvas-diff= and compare every heading with Canvas without writing anything, so that I know exactly what a sync would change before running it.
+- As a course owner, I can see the pending creates in the report too -- every unstamped heading a sync would push -- so that it covers what would appear on Canvas, not only what has drifted.
+- As a course owner, I can read what an EXTRA row's item is -- a group's weight, an assignment's due date and points, how many submissions wait to be graded -- so that deciding to adopt or prune it is an informed call.
+- As a course owner, I can run =org-canvas-status= for a quick whether-Org-and-Canvas-agree check, so that the answer is one command, not a diff session.
+- As a course owner, I can search the live course itself with =org-canvas-search-live= and =org-canvas-search-live-dates=, so that a date that slid -- and was pushed that way on both sides -- is caught by Canvas, not by my own files.
+- As a course owner, I can open the heading at point on Canvas (=org-canvas-browse-at-point=, the edit page with a prefix), also from the drift report's =b= and =B=, so that the web UI is one keystroke away when only it can do the thing.
+- As a course owner, I can see the Canvas version of a heading in full, writing nothing (=org-canvas-show-at-point=), so that "what do students actually see" is answered without a diff or a browser.
+- As a course owner, I can read pushed assignments, modules, files and announcements back from Canvas and compare them with their headings (=org-canvas-verify-headings=, =org-canvas-verify-announcements=), so that "pushed" is checked, not assumed.
+- As a course owner, I can act on the report's rows where they are listed -- adopt a drift or every timestamp-only change, stamp a moved item, delete EXTRA objects in batch after safety checks and a JSON snapshot -- so that reconciliation happens in the report buffer, not by re-running commands per heading.
+
+** Grading and feedback
+
+- As a course owner, I can pull a grading file for an assignment and grade in Emacs -- summary view, per-student detail, downloaded attachments -- so that SpeedGrader is optional.
+- As a course owner, I can keep a comment bank under the grading file that round-trips with SpeedGrader's comment library, so that saved comments live in one place and save once.
+- As a course owner, I can score rubric criteria per student and push grades, rubric assessments and late statuses, so that the rubric is assessed where the work is read.
+- As a course owner, I can post an assignment's grades under the course's post policy (=P=), so that students see scores when the policy says, not when I remember.
+- As a course owner, I can ask for the queue (=org-canvas-submissions-status=): every graded column with what waits and the next thing to do, and pull everything it marks, attachments and all, in one step (=U=), or post every column it marks for posting (=org-canvas-submissions-post-queue=), so that a grading afternoon starts with the right assignment already loaded.
+- As a course owner, I can see who was assigned to review whom and who never did (=org-canvas-pull-peer-reviews=), so that peer review is checked without the web UI.
+- As a course owner, I can reconcile a quiz's accommodations from a table under it, so that a student's extra time is not a web-UI errand.
+- As a course owner, I can read Turnitin's Similarity and AI Writing scores onto each student's heading when a column carries a document processor, and the pattern across every column in one read-only report (=org-canvas-submissions-reports=), so that "which students do I open SpeedGrader for" is answered before opening it.
+- As a course owner, I can read a pushed column back from Canvas and count what differs from the file (=org-canvas-submissions-verify=), so that grades are verified, not assumed sent.
+- As a course owner, I can see which attempt a resubmitted row's score was given on and resolve the row's =CONFLICT= by taking Canvas's grade or keeping mine (=t= / =k=), so that a late resubmission is a decision, not a silent overwrite.
+- As a course owner, I can fill empty scores by completion and lateness, score by submission time against each student's section window (=W=), and draft each late row's comment from its times, score and the course late policy, so that consistent rows are scored by rule and judgment is spent on the rest.
+- As a course owner, I can apply a ruling to listed students -- rows, row comments, scores and drafts replaced, the old kept under Notes -- and excuse the students with no submission, so that one decision is applied uniformly and remains auditable afterwards.
+- As a course owner, I can export a grading file's comments as data or JSON and write new comment text back by student, criterion and comment id, edit a sent comment in place or mark it =DELETE=, and push only those edits (=C=), so that feedback written by a script or a co-instructor lands without touching scores.
+- As a course owner, I can check a grading file for deducted rows without a comment, flagged text and sentences many students share (=K=), so that feedback quality is reviewed before the push.
+- As a course owner, I can read the text of every downloaded upload in one buffer, students who handed in the same document grouped and marked =SAME_AS= (=u=), so that duplicate work is found without opening files side by side.
+- As a course owner, I can schedule when Canvas posts a column's hidden grades and comments (=POST_GRADES_AT=, =POST_COMMENTS_AT=), compared by the drift report and pulled back from Canvas, so that releasing scores follows the calendar, not my memory.
+
+** Class analytics
+
+- As a course owner, I can pull the course-wide grade overview into =gradebook.org= -- students' current and final scores, missing and late counts, last activity, section means, the class's spread on every assignment, custom gradebook columns -- so that grade questions are answered from a file, not the web UI.
+- As a course owner, I can pull how the class scored on each rubric criterion and each quiz question (=org-canvas-pull-rubric-results=, =org-canvas-pull-quiz-results=), so that "did this question work" is answered by aggregates, not by opening submissions.
+- As a course owner, I can pull a classic quiz's attempts as a read-only table, so that "who tried it twice" is a lookup.
+- As a course owner, I can pull the roster, sections, groups, grading periods and classic question banks for reference, so that people, periods and banks resolve in the files that name them.
+- As a course owner, I can set =org-canvas-people-include-identifiers= and have the people pull write each person's =SIS_USER_ID= and =LOGIN_ID=, then print one person's whole roster entry with =org-canvas-people-person=, so that matching a student to the university's records is a lookup, not a script.
+- As a course owner, I can archive a discussion's replies (=org-canvas-pull-discussion-replies=), so that what the class wrote survives in plain text after the term ends.
+- As a course owner, I can print one student's standing -- every column, what is still open, the best possible total (=org-canvas-gradebook-student=) -- so that an advising question is answered with one read-only command, mid-semester.
+- As a course owner, I can recompute every total under =assignment-groups.org= as it stands (=org-canvas-gradebook-what-if=, no API calls), so that dropping the lowest score or re-weighting a category is tried before it is pushed.
+
+These pulls are read-only and derived, and several of the files hold student names or scores: the pull that writes each one adds it to the course's =.gitignore= itself, and warns when git already tracks it, so they stay out of a shared course repository by behavior, not advice.
+
+** Messaging students
+
+- As a course owner, I can write messages in =messages.org= -- the heading the subject, =TO= naming students, a section, a group or the whole course -- and send them through the Canvas Inbox, so that course mail is drafted in Emacs instead of a browser.
+- As a course owner, I can rely on a sent heading being stamped and never sent again, and rehearse the send with a prefix argument, so that re-running the file cannot double-send and a mistake costs nothing.
+- As a course owner, I can pull what students replied beneath the messages I sent (=org-canvas-pull-message-replies=): a stamped conversation's later messages become reply headings named for who wrote them and when, updated in place with nothing local deleted, and only GETs are sent, so that a conversation started in Org finishes in Org.
+
+** Maintenance
+
+- As a course owner, I can scan for Canvas items with no Org heading and prune them after being asked, so that the course does not accrete ghosts left by deletions made in Org.
+- As a course owner, I can delete one item at point or a whole content type, so that taking something down is as deliberate as putting it up.
+- As a course owner, I can reorder module items in =modules.org= and have the sync move them rather than duplicate them, so that restructuring a week does not litter Canvas.
+- As a course owner, I can check for stale headings and manage sync logs (see "Maintenance Tasks" in the workflows guide), so that the course stays legible at the end of the semester, not just the start.
+- As a user, I can open a buffer of diagnostic information for a bug report with the token redacted (=org-canvas-submit-bug-report=), so that filing an issue carries the version and the course without leaking the credential.
+
+** Teaching with others
+
+- As a collaborator, I can own specific files in a shared git repository while my co-instructors own others, so that several people can teach one course without merge conflicts.
+- As a course owner, I can work beside Canvas-only TAs: their edits surface as conflicts and drift, one of their edits is adoptable with =org-canvas-pull-at-point=, and the drift report lists everything they touched, so that mixed tooling is survivable.
+- As a course owner, I can scope each person's writes with =org-canvas-write-allowlist= in their credentials file -- a TA to the Org files they own, a grader to =submissions= alone -- so that a write outside the list is refused before a push starts, naming the file; reads are never refused, and sync skips a refused file with a warning rather than aborting.
+
+** Running it from the shell
+
+- As a course owner, I can drive the term's routine from the shell (=scripts/org-canvas=): the grading queue, pulls and pushes by exact title or Canvas id, posting, verification, rulings, even a one-student deadline extension, so that the Tuesday-afternoon loop is one script, not a sequence of M-x.
+- As a course owner, I can run =diff= and =validate= for a non-zero exit on their findings and one JSON object on request, so that CI or cron watching a course repository catches drift before students do.
+- As a course owner, I can call the same operations from Lisp without a prompt -- push grades or post by id, resolve conflicts by user id, import drafted grades and comments from JSON -- so that a tool that is not Emacs can still be exact.
+
+* Planned (an issue is open)
+
+** Adopt one drift row without rewriting the heading (#498)
+
+As a course owner, I want to adopt a single drift row without rewriting the whole heading, so that accepting a remote change does not cost me local properties, tables and formatting.
+
+Acceptance criteria:
+
+- Adopting a drift row changes only the fields the row reports.
+- =PUBLISHED=, =MUTED= and other local properties keep their values.
+- Tables under the heading survive an adopt unflattened.
+- Works from the drift report and from =org-canvas-adopt-at-point=.
+
+** Credit on one bank-drawn question across attempts (#540)
+
+As a course owner grading a quiz drawn from a bank, I want to grant credit on one bank-drawn question across every existing attempt, so that a wrong answer key is corrected in one command rather than by hand -- Canvas's own regrade skips bank questions.
+
+Acceptance criteria:
+
+- The command names one question and grants credit for it on every existing attempt.
+- Scores already pushed to the gradebook reflect the correction.
+- A dry run previews the affected attempts before anything is sent.
+
+** Author question banks from Org (#507)
+
+As a course owner, I want to create and edit question banks from Org, so that bank-drawn quizzes are authored where the rest of the course is.
+
+Acceptance criteria:
+
+- The network calls the web UI makes are captured and their routes named.
+- If they permit it, banks and their questions are created and edited from Org; if they do not, the story dies saying so.
+
+This one has a feasibility gate before it is a story in full: the public API cannot create or edit banks, so the issue is capturing the network calls the web UI makes.  The story stands or falls with what those calls turn out to permit.
+
+** Search the live course from the shell (#554)
+
+As a course owner, I want CI or cron to search the live course, not only report drift on it, so that the stale value behind a drift is one script away.
+
+Acceptance criteria:
+
+- =search= and =search-dates= subcommands print to standard output, as the commands already do under =--batch=.
+- A maintenance pass at =cleanup-orphans= behind =--yes= is considered alongside; messages stay out.
+
+** Snapshot what a global delete destroys (#555)
+
+As a course owner cleaning up a course, I want a record of everything =org-canvas-delete-all= removed, so that Canvas-only material is not lost unrecoverably.
+
+Acceptance criteria:
+
+- A JSON snapshot of what will be deleted is written before the first delete, and its path named in the completion message.
+- The double confirmation stays.
+
+** Finish the semester in Org: final grades (#556)
+
+As a course owner, I want the term's last consequential act -- final grades, override and export -- to happen in Org, so that the semester ends where it was run.
+
+Acceptance criteria:
+
+- A feasibility pass names what Canvas's API allows: the final-grade override column, and any final-grade export route.
+- What the routes permit is read, written or refused deliberately, each refusal naming the web UI, as the coverage map records gaps closed by Canvas.
+- The End-of-Semester workflow's final check says what org-canvas can do there, instead of "open Canvas."
+
+* Proposed (no issue yet)
+
+These are scoped, not promised: they are the top of the coverage map's ranked list of what is left undone, and that map's rule -- "do not build an item because it is on the list" -- applies here too.  A Proposed story exists so that when one of them bites a course run from Org, the scoping is already done.
+
+- *Assigning peer reviewers.*  As a course owner, I want to assign or remove a reviewer from a table in the peer-reviews file, so that hand-assigned reviews are managed where the reviews are read.  (The routes exist per submission; matters only for reviews assigned by hand.)
+- *Group management from Org.*  As a course owner, I want to create a group and move a student into it from Org, so that reshuffling teams mid-semester is not a web-UI errand.  (The hardest item on the list: membership hangs under another type's heading and needs the child-reconciler pattern.)
+- *Grade change history.*  As a course owner, I want to read the gradebook history for one submission, so that a grade dispute is answered with the record, not the memory.  (One read-only endpoint; useful in a dispute, rarely otherwise.)
+
+Deliberately not stories: rubric assessment outside the grading file (arguably the right design), classic question banks and New Quiz item banks (no API), New Quiz attempts and reports (no API).  See the [[file:architecture/coverage.org][coverage map]] for the reasoning.
+
+* Keeping this file true
+
+** The rules
+
+- When a pull request merges a Planned story, the story moves into "Shipped behaviour", rewritten to "I can" in the present tense, from the changelog fragment the merge left behind.
+- When an issue opens for a Proposed story, the story moves to "Planned" and seeds the issue body; a story-shaped issue with no story here is a miss to fix on sight.
+- When the coverage map is refreshed, re-read "Proposed" against its ranked list; when a gap closes, the story either moves or dies.
+- Never invent a story to justify work that has none: chores stay chores, and the catalogue never grows a story the manual cannot back up.
+
+** The procedure
+
+=python3 scripts/stories-check.py= is the grep that refreshes this file, the way coverage.org keeps one for its map. CI runs it beside the changelog fragment check, and it fails when:
+
+- a story names a command the manual does not document -- a rename left the story lying;
+- an autoloaded command in =lisp/= is missing from the manual -- a capability shipped with nothing for a story to rest on, and the manual row is the fix;
+- the format slips: a shipped story not written "As a ---, I can", a planned one without its =(#NNN)= or acceptance criteria, a proposed one carrying an issue number.
+
+=--issues= adds the sweep that needs the network: every planned story's issue still open, closed-as-completed meaning the story owes its move here. Run it at fold time, beside =python3 scripts/changelog-collect.py=, and before a release -- its first run moved five stories whose issues had merged hours before.

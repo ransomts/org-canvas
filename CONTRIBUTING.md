@@ -61,6 +61,7 @@ The full walkthrough is [documentation/architecture/module-developer-guide.org](
 5. Add the file to `eldev-undercover-fileset` in `Eldev`.
 6. Mock the new sync/delete functions in `test/org-canvas-test.el`.
 7. Add documentation to `documentation/manual.org`.
+8. Add or update the story in `documentation/user-stories.org`: the content type joins the authoring story's list, and each distinct capability it adds gets a story of its own. `python3 scripts/stories-check.py` must pass.
 
 ## Code Conventions
 
