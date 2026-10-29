@@ -527,7 +527,12 @@ If the old course should be cleaned:
 M-x org-canvas-delete-all
 #+end_src
 
-This prompts for confirmation before deleting.
+This prompts for confirmation twice before deleting.  Before the first
+DELETE, each type's run writes a JSON snapshot of the items about to
+go under =canvas-snapshots/= in the course directory, so Canvas-only
+material — an item made in the web UI that no Org heading claims — is
+not lost unrecoverably; the completion message names where they are
+(#555).
 
 * Multi-Instructor Workflow
 

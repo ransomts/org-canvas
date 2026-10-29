@@ -259,6 +259,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - Canvas-owned submission types (#167)
 - comments and drafts as paragraphs and short CONFLICT values (#264)
 - cross-course links are the validator's business (#172), and a pull never fetches a file link into another course nor refetches a failed file id within one command (#390)
+- delete-all commands write a JSON snapshot of what they are about to delete, through the drift delete's own writer, before the first DELETE (#555)
 - document processors read by GraphQL once per command, REST `asset_processors` the fallback (#350)
 - drift report bodies (#83)
 - drift report rows deleted in batch, EXTRA only, after safety checks and a JSON snapshot (#345)

@@ -22,6 +22,13 @@
 (require 'org-canvas-core-api)
 (require 'org-canvas-core-org)
 
+;; The delete snapshot's writer lives in the drift report, its first
+;; caller (#345); `org-canvas' requires every command file, so the
+;; delete-all runtime can reach it the way core-pull reaches the file
+;; download it declares (issue #555).
+(declare-function org-canvas--diff-snapshot-write "org-canvas-diff"
+                  (feature-name id object))
+
 (defun org-canvas--delete-log-skipped (items skip-fn title-field
                                              &optional reason)
   "Log skipped items from ITEMS using SKIP-FN.
@@ -33,6 +40,12 @@ TITLE-FIELD is the alist key for item display names.  REASON, the
         (alist-get title-field item)
         (if reason (format " (%s)" reason) "")))))
 
+(defun org-canvas--delete-queued-items (items skip-fn)
+  "Return the ITEMS a delete run will queue, SKIP-FN applied first.
+The delete-all's snapshot records exactly these: what is about to go,
+and not what a predicate protects (issue #555)."
+  (if skip-fn (cl-remove-if skip-fn items) items))
+
 (defun org-canvas--delete-items-queued (items endpoint-fn id-field
                                        title-field &optional skip-fn
                                        delete-data)
@@ -42,7 +55,7 @@ ID-FIELD and TITLE-FIELD are alist keys for extracting ID/title from each item.
 SKIP-FN, if non-nil, is called with each item; non-nil return skips that item.
 DELETE-DATA, if non-nil, is an alist of extra data sent with DELETE.
 Returns (DELETED-COUNT . DELETED-IDS)."
-  (let* ((to-delete (if skip-fn (cl-remove-if skip-fn items) items))
+  (let* ((to-delete (org-canvas--delete-queued-items items skip-fn))
          (skipped (- (length items) (length to-delete))))
     (when (and (> skipped 0) skip-fn)
       (org-canvas--delete-log-skipped items skip-fn title-field))
@@ -135,12 +148,44 @@ Signals on a key outside `org-canvas--delete-spec-keys' and when
         (funcall list-url-fn)
       (org-canvas-api-course-endpoint (plist-get spec :endpoint)))))
 
+(defvar org-canvas--delete-all-snapshot-path nil
+  "Path of the JSON snapshot the current delete-all run wrote, or nil.
+`org-canvas--delete-all-items' sets it once its listing is snapshotted;
+`org-canvas--delete-all-runtime' binds it to nil around the run, so
+nothing an earlier run wrote reaches this run's completion message
+\(issue #555).")
+
+(defun org-canvas--delete-all-snapshot (feature-name items)
+  "Write one snapshot file of ITEMS, FEATURE-NAME's delete-all targets.
+The file is the drift delete's own — written by
+`org-canvas--diff-snapshot-write', so under
+`org-canvas-diff-delete-snapshot-directory' as <time>-FEATURE-all.json —
+holding the items as Canvas's listing returned them, as one JSON array:
+Canvas-only material included, an item no Org heading claims above all,
+since that is what no re-push rebuilds (issue #555).  Nothing is written
+when ITEMS is empty, and nothing on a course marked
+`org-canvas-read-only', whose DELETEs the transport refuses: no file
+may claim a delete that did not happen.  Return the file's path, or
+nil."
+  (when (and items (not org-canvas-read-only))
+    (let ((file (org-canvas--diff-snapshot-write feature-name "all" items)))
+      (org-canvas--log-info org-canvas--logger
+        "[Delete] Snapshot of the %d %s about to go: %s"
+        (length items) feature-name file)
+      file)))
+
+(defun org-canvas--delete-snapshot-note (snapshot)
+  "Return the \"; its JSON is in SNAPSHOT\" clause for a message, or \"\"."
+  (if snapshot (format "; its JSON is in %s" snapshot) ""))
+
 (defun org-canvas--delete-all-items (spec)
   "Delete every Canvas item of the feature SPEC describes.
 SPEC is a delete spec (`org-canvas--delete-spec-keys').  Lists the
-items, deletes those :skip-fn does not protect, and clears the sync
-properties from :file, keeping those of the items still on Canvas.
-Returns the count of successfully deleted items."
+items, writes a JSON snapshot of those :skip-fn does not protect
+before the first DELETE goes out (`org-canvas--delete-all-snapshot',
+issue #555), deletes them, and clears the sync properties from :file,
+keeping those of the items still on Canvas.  Returns the count of
+successfully deleted items."
   (let* ((spec (org-canvas--delete-spec spec))
          (feature-name (plist-get spec :feature))
          (file (plist-get spec :file))
@@ -158,23 +203,31 @@ Returns the count of successfully deleted items."
       (org-canvas--prune-protected-note
        remote-items skip-fn (plist-get spec :skip-reason)))
 
-    (let* ((del-fn (org-canvas--delete-spec-item-url-fn spec))
-           (result (org-canvas--delete-items-queued
-                    remote-items del-fn
-                    id-field title-field skip-fn delete-data))
-           (deleted-count (car result)))
+    (let ((del-fn (org-canvas--delete-spec-item-url-fn spec)))
+      ;; What is about to go is written down before any of it goes, and
+      ;; the path travels to the runtime's completion message (issue
+      ;; #555).  A refused run never reaches here: the runtime's scope
+      ;; check fired first.
+      (setq org-canvas--delete-all-snapshot-path
+            (org-canvas--delete-all-snapshot
+             feature-name
+             (org-canvas--delete-queued-items remote-items skip-fn)))
+      (let* ((result (org-canvas--delete-items-queued
+                      remote-items del-fn
+                      id-field title-field skip-fn delete-data))
+             (deleted-count (car result)))
 
-      ;; Clear every stamp but those of the items still on Canvas (#324)
-      (org-canvas--clean-local-sync-properties
-       file
-       (org-canvas--delete-kept-ids remote-items id-field (cdr result))
-       id-property)
+        ;; Clear every stamp but those of the items still on Canvas (#324)
+        (org-canvas--clean-local-sync-properties
+         file
+         (org-canvas--delete-kept-ids remote-items id-field (cdr result))
+         id-property)
 
-      (org-canvas--log-info org-canvas--logger "========================================")
-      (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
-      (org-canvas--log-info org-canvas--logger "========================================")
+        (org-canvas--log-info org-canvas--logger "========================================")
+        (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
+        (org-canvas--log-info org-canvas--logger "========================================")
 
-      deleted-count)))
+        deleted-count))))
 
 (defvar org-canvas--dry-run)
 
@@ -293,12 +346,18 @@ to `org-canvas--delete-all-items'."
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
-         (feature-upper (upcase feature-name)))
+         (feature-upper (upcase feature-name))
+         ;; Starts nil every run, so the message below names only what
+         ;; this run wrote (issue #555).
+         (org-canvas--delete-all-snapshot-path nil))
     (org-canvas--log-warning org-canvas--logger "========================================")
     (org-canvas--log-warning org-canvas--logger ">>> STARTING MASS DELETION OF %s" feature-upper)
     (org-canvas--log-warning org-canvas--logger "========================================")
     (let ((deleted-count (org-canvas--delete-all-items spec)))
-      (message "%s deletion complete. %d removed." (capitalize feature-name) deleted-count))))
+      (message "%s deletion complete. %d removed%s."
+               (capitalize feature-name) deleted-count
+               (org-canvas--delete-snapshot-note
+                org-canvas--delete-all-snapshot-path)))))
 
 ;;;; Orphan Pruning
 ;;

@@ -191,7 +191,35 @@
                   (expect (org-canvas-delete-all) :to-throw 'user-error))))
             (expect count-arg-file
                     :to-equal (expand-file-name assignments-file)))
-        (delete-directory tmp-dir t)))))
+        (delete-directory tmp-dir t))))
+
+  (it "names the snapshot directory in the completion message (issue #555)"
+    (let ((messages nil))
+      (with-sync-test-env
+        (with-delete-snapshot-dir
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (push (apply #'format fmt args) messages)))
+                    ((symbol-function 'org-canvas-delete-all-modules) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-assignments) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-quizzes) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-new-quizzes) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-files) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-announcements) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-discussions) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-pages) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-assignment-groups) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-group-categories) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-rubrics) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-outcomes) #'ignore)
+                    ((symbol-function 'org-canvas-delete-all-calendar-events) #'ignore))
+            (org-canvas-delete-all))
+          ;; The run names where every feature's JSON snapshot went.
+          (expect (car messages) :to-match "Global Delete Complete")
+          (expect (string-match-p (regexp-quote snapshot-dir)
+                                  (car messages))
+                  :to-be-truthy))))))
 
 ;;;; org-canvas--safe-sync
 

@@ -4332,7 +4332,9 @@ object is deleted at the URL =k= would use.  The rules:
   returned it, is written to =<time>-<feature>-<id>.json= under
   =org-canvas-diff-delete-snapshot-directory= (default
   =canvas-snapshots/= in the course directory), so a mistaken delete can
-  be rebuilt.  =k= writes one too.
+  be rebuilt.  =k= writes one too.  A delete-all writes its own snapshot
+  under the same directory before its first DELETE (#555); see
+  [[*Deleting All Items of a Type][Deleting All Items of a Type]].
 - *Dry run and read-only.*  Under a dry run the objects are read and
   checked, and nothing is written or sent (=dry-run=); a course marked
   =org-canvas-read-only= refuses each delete before its snapshot
@@ -6157,7 +6159,9 @@ scripts/org-canvas delete --yes "assignment:Journal 06" "assignment#2497507"
 *** Deleting All Items of a Type
 
 1. Run =M-x org-canvas-delete-all-assignments= (or the equivalent for another type).
-2. Confirm the deletion.  All items of that type are removed from Canvas and sync properties are cleared.  An item left on Canvas -- the front page, one a skip rule protects (such as a quiz's or a graded discussion's assignment), one whose DELETE failed -- keeps its stamps, and the headings below it keep theirs; the log names the reason beside each.
+2. Confirm the deletion.  Before the first DELETE goes out, a JSON snapshot of the items about to go is written — =<time>-<type>-all.json= under =org-canvas-diff-delete-snapshot-directory= (default =canvas-snapshots/= in the course directory), the same file the drift report's batch delete writes (#345) — holding each item as Canvas's listing returned it, an item no Org heading claims included, since that is the half a re-push cannot rebuild.  All items of that type are then removed from Canvas and sync properties are cleared.  An item left on Canvas -- the front page, one a skip rule protects (such as a quiz's or a graded discussion's assignment), one whose DELETE failed -- keeps its stamps, is kept out of the snapshot, and the log names the reason beside each.  A scoped identity refused the file's write, a read-only course, or an empty listing writes no snapshot: no file claims a delete that did not happen.
+
+The completion message names the snapshot's path.  =M-x org-canvas-delete-all=, which deletes every type in reverse dependency order after its two confirmations, writes one snapshot per type it actually deletes and names the directory they are under in its completion message; a type its identity was refused for writes none.
 
 *** Finding and Removing Orphans
 
