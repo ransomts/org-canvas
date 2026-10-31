@@ -1,0 +1,2 @@
+* Changed
+- #574 The largest test files build their course fixtures through one shared helper instead of a private copy each.

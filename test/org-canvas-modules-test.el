@@ -732,20 +732,18 @@
 
 (describe "org-canvas--module-push-to-api (mocked)"
   (it "uses POST for new modules"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New" :canvas-id nil))
-              (payload (make-hash-table)))
-          (org-canvas--module-push-to-api data payload)
-          (expect-api-called 'POST "modules$")))))
+    (with-test-api
+      (let ((data '(:title "New" :canvas-id nil))
+            (payload (make-hash-table)))
+        (org-canvas--module-push-to-api data payload)
+        (expect-api-called 'POST "modules$"))))
 
   (it "uses PUT for existing modules"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "555"))
-              (payload (make-hash-table)))
-          (org-canvas--module-push-to-api data payload)
-          (expect-api-called 'PUT "modules/555")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "555"))
+            (payload (make-hash-table)))
+        (org-canvas--module-push-to-api data payload)
+        (expect-api-called 'PUT "modules/555"))))
 
   (it "recovers from timeout by searching for created module"
     (with-org-canvas-test-config
@@ -808,31 +806,27 @@
                     :to-throw 'error))))))
 
   (it "signals non-timeout/non-404 errors"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("Bad Request: Invalid module")))))
-        (let ((data '(:title "Bad Module" :canvas-id nil))
-              (payload (make-hash-table)))
-          (expect (org-canvas--module-push-to-api data payload)
-                  :to-throw 'error))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("Bad Request: Invalid module")))
+      (let ((data '(:title "Bad Module" :canvas-id nil))
+            (payload (make-hash-table)))
+        (expect (org-canvas--module-push-to-api data payload)
+                :to-throw 'error)))))
 
 (describe "org-canvas--module-item-push-to-api (mocked)"
   (it "uses POST for new items"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Item" :canvas-id nil))
-              (payload (make-hash-table)))
-          (org-canvas--module-item-push-to-api 100 data payload)
-          (expect-api-called 'POST "modules/100/items$")))))
+    (with-test-api
+      (let ((data '(:title "New Item" :canvas-id nil))
+            (payload (make-hash-table)))
+        (org-canvas--module-item-push-to-api 100 data payload)
+        (expect-api-called 'POST "modules/100/items$"))))
 
   (it "uses PUT for existing items"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "888"))
-              (payload (make-hash-table)))
-          (org-canvas--module-item-push-to-api 100 data payload)
-          (expect-api-called 'PUT "modules/100/items/888")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "888"))
+            (payload (make-hash-table)))
+        (org-canvas--module-item-push-to-api 100 data payload)
+        (expect-api-called 'PUT "modules/100/items/888"))))
 
   (it "retries as POST when PUT returns 404"
     (with-org-canvas-test-config
@@ -857,14 +851,12 @@
               (expect (alist-get 'id result) :to-equal 777)))))))
 
   (it "signals non-404 errors"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("Bad Request: Invalid item")))))
-        (let ((data '(:title "Bad Item" :canvas-id nil))
-              (payload (make-hash-table)))
-          (expect (org-canvas--module-item-push-to-api 100 data payload)
-                  :to-throw 'error))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("Bad Request: Invalid item")))
+      (let ((data '(:title "Bad Item" :canvas-id nil))
+            (payload (make-hash-table)))
+        (expect (org-canvas--module-item-push-to-api 100 data payload)
+                :to-throw 'error)))))
 
 ;;;; Publish flag after creation (issue #279)
 
@@ -1162,38 +1154,27 @@
 
 (describe "org-canvas--module-search-by-name (mocked)"
   (it "searches modules by name"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("modules" . [((id . 100) (name . "Week 1"))
-                            ((id . 101) (name . "Week 2"))])))
-        (org-canvas--module-search-by-name "Week 1")
-        (expect-api-called 'GET "modules"))))
+    (with-test-api-responses '(("modules" . [((id . 100) (name . "Week 1"))
+                                              ((id . 101) (name . "Week 2"))]))
+      (org-canvas--module-search-by-name "Week 1")
+      (expect-api-called 'GET "modules")))
 
   (it "returns matching module"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("modules" . [((id . 100) (name . "Week 1"))
-                            ((id . 101) (name . "Week 2"))])))
-        (let ((result (org-canvas--module-search-by-name "Week 1")))
-          (expect (alist-get 'id result) :to-equal 100)))))
+    (with-test-api-responses '(("modules" . [((id . 100) (name . "Week 1"))
+                                              ((id . 101) (name . "Week 2"))]))
+      (let ((result (org-canvas--module-search-by-name "Week 1")))
+        (expect (alist-get 'id result) :to-equal 100))))
 
   (it "returns nil when no match found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("modules" . [((id . 100) (name . "Week 1"))])))
-        (let ((result (org-canvas--module-search-by-name "Nonexistent Module")))
-          (expect result :to-be nil)))))
+    (with-test-api-responses '(("modules" . [((id . 100) (name . "Week 1"))]))
+      (let ((result (org-canvas--module-search-by-name "Nonexistent Module")))
+        (expect result :to-be nil))))
 
   (it "returns nil on API error"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("API Error")))))
-        (let ((result (org-canvas--module-search-by-name "Any Module")))
-          (expect result :to-be nil))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("API Error")))
+      (let ((result (org-canvas--module-search-by-name "Any Module")))
+        (expect result :to-be nil)))))
 
 ;;;; Delete Functions (mocked)
 
@@ -1212,26 +1193,24 @@
 
 (describe "org-canvas--module-sync-items (mocked)"
   (it "returns counts of zero for module with no items"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Empty Module
+    (with-test-api
+      (with-temp-org-buffer
+       "* Empty Module
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
 "
-         (org-back-to-heading)
-         (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
-           (expect counts :to-equal '(0 0 0))))))))
+       (org-back-to-heading)
+       (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
+         (expect counts :to-equal '(0 0 0)))))))
 
 ;;;; Module Sync Items with Items
 
 (describe "org-canvas--module-sync-items with items (mocked)"
   (it "syncs SubHeader items without content-id"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Module
+    (with-test-api
+      (with-temp-org-buffer
+       "* Module
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -1239,11 +1218,11 @@
 :PROPERTIES:
 :END:
 "
-         (org-back-to-heading)
-         (let ((marker (point-marker)))
-           (let ((results (org-canvas--module-sync-items 100 (marker-position marker) default-directory)))
-             ;; SubHeaders can be synced - results is (success skip fail)
-             (expect (numberp (car results)) :to-be t)))))))
+       (org-back-to-heading)
+       (let ((marker (point-marker)))
+         (let ((results (org-canvas--module-sync-items 100 (marker-position marker) default-directory)))
+           ;; SubHeaders can be synced - results is (success skip fail)
+           (expect (numberp (car results)) :to-be t))))))
 
   (it "skips items without content-id or page-url"
     (with-org-canvas-test-config
@@ -1348,10 +1327,9 @@
 
 (describe "org-canvas-delete-module-at-point (mocked)"
   (it "deletes module and clears child item properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Module
+    (with-test-api
+      (with-temp-org-buffer
+       "* Module
 :PROPERTIES:
 :CANVAS_ID: 100
 :LAST_SYNCED: [2024-01-01 Mon]
@@ -1365,14 +1343,14 @@
 :CANVAS_ID: 102
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas-delete-module-at-point)
-           ;; Module properties should be cleared
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-           ;; Child item properties should also be cleared
-           (org-goto-first-child)
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas-delete-module-at-point)
+         ;; Module properties should be cleared
+         (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+         ;; Child item properties should also be cleared
+         (org-goto-first-child)
+         (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))))
 
   (it "handles delete API failure gracefully"
     (with-org-canvas-test-config
@@ -1453,14 +1431,12 @@
 
 (describe "org-canvas--module-push-to-api timeout recovery failure"
   (it "signals error when timeout recovery fails and item not found"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error (list "Request failed" "Timeout")))))
-        (let ((data '(:title "Lost" :canvas-id nil))
-              (payload (make-hash-table)))
-          (expect (org-canvas--module-push-to-api data payload)
-                  :to-throw 'error))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error (list "Request failed" "Timeout")))
+      (let ((data '(:title "Lost" :canvas-id nil))
+            (payload (make-hash-table)))
+        (expect (org-canvas--module-push-to-api data payload)
+                :to-throw 'error)))))
 
 ;;;; Module Item Push API Error
 
@@ -1497,16 +1473,12 @@
                 :to-match "Could not read module 10's item 55"))))
 
   (it "answers live for an item the read returns"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _) '((id . 55) (title . "There")))))
-        (expect (org-canvas--module-item-live-p 10 55) :to-be-truthy))))
+    (with-test-api-handler (lambda (&rest _) '((id . 55) (title . "There")))
+      (expect (org-canvas--module-item-live-p 10 55) :to-be-truthy)))
 
   (it "answers not live for an item the read does not return"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _) '((id . 56) (title . "Other")))))
-        (expect (org-canvas--module-item-live-p 10 55) :to-be nil)))))
+    (with-test-api-handler (lambda (&rest _) '((id . 56) (title . "Other")))
+      (expect (org-canvas--module-item-live-p 10 55) :to-be nil))))
 
 ;;;; Module Resolve Link Edge Cases
 
@@ -1564,33 +1536,29 @@
 :END:
 "))
             (let ((org-canvas-modules-file modules-file))
-              (with-org-canvas-test-config
-                (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request)
-                             (lambda (method url &rest _args)
-                               (cond
-                                ;; Pre-flight course check
-                                ((string-match "courses/99999/$" url)
-                                 '((id . 99999)))
-                                ;; POST module
-                                ((and (eq method 'POST) (string-match "modules$" url))
-                                 (setq module-post-count (1+ module-post-count))
-                                 '((id . 500) (name . "Week 1")))
-                                ;; POST module item
-                                ((and (eq method 'POST) (string-match "modules/500/items" url))
-                                 (setq item-post-count (1+ item-post-count))
-                                 '((id . 501) (title . "Section Header")))
-                                ;; PUT
-                                ((eq method 'PUT)
-                                 '((id . 500)))
-                                (t '((id . 1)))))))
-                    (org-canvas-sync-modules)
-                    (expect module-post-count :to-equal 1)
-                    ;; Verify CANVAS_ID was saved on module
-                    (with-current-buffer (find-file-noselect modules-file)
-                      (goto-char (point-min))
-                      (org-back-to-heading)
-                      (expect (org-entry-get (point) "CANVAS_ID") :to-equal "500")))))))
+              (with-test-sync-handler (lambda (method url &rest _args)
+                                        (cond
+                                          ;; Pre-flight course check
+                                          ((string-match "courses/99999/$" url)
+                                            '((id . 99999)))
+                                          ;; POST module
+                                          ((and (eq method 'POST) (string-match "modules$" url))
+                                            (setq module-post-count (1+ module-post-count))
+                                            '((id . 500) (name . "Week 1")))
+                                          ;; POST module item
+                                          ((and (eq method 'POST) (string-match "modules/500/items" url))
+                                            (setq item-post-count (1+ item-post-count))
+                                            '((id . 501) (title . "Section Header")))
+                                          ;; PUT
+                                          ((eq method 'PUT)
+                                            '((id . 500)))
+                                          (t '((id . 1)))))
+                (org-canvas-sync-modules)
+                (expect module-post-count :to-equal 1)
+                (with-current-buffer (find-file-noselect modules-file)
+                  (goto-char (point-min))
+                  (org-back-to-heading)
+                  (expect (org-entry-get (point) "CANVAS_ID") :to-equal "500")))))
         (delete-directory temp-dir t))))
 
   (it "sends a module-create body reflecting the org input"
@@ -1646,21 +1614,17 @@
 :END:
 "))
             (let ((org-canvas-modules-file modules-file))
-              (with-org-canvas-test-config
-                (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request)
-                             (lambda (method url &rest _args)
-                               (cond
-                                ((string-match "courses/99999/$" url) '((id . 99999)))
-                                ((and (eq method 'POST) (string-match "modules$" url))
-                                 (setq module-count (1+ module-count))
-                                 (if (= module-count 1)
-                                     (signal 'error '("Module 1 failed"))
-                                   '((id . 600) (name . "Module 2"))))
-                                (t '((id . 1)))))))
-                    (org-canvas-sync-modules)
-                    ;; Both should have been attempted
-                    (expect module-count :to-equal 2))))))
+              (with-test-sync-handler (lambda (method url &rest _args)
+                                        (cond
+                                          ((string-match "courses/99999/$" url) '((id . 99999)))
+                                          ((and (eq method 'POST) (string-match "modules$" url))
+                                            (setq module-count (1+ module-count))
+                                            (if (= module-count 1)
+                                              (signal 'error '("Module 1 failed"))
+                                              '((id . 600) (name . "Module 2"))))
+                                          (t '((id . 1)))))
+                (org-canvas-sync-modules)
+                (expect module-count :to-equal 2))))
         (delete-directory temp-dir t))))
 
   (it "pre-flight warning does not abort sync"
@@ -1675,32 +1639,27 @@
 :END:
 "))
             (let ((org-canvas-modules-file modules-file))
-              (with-org-canvas-test-config
-                (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request)
-                             (lambda (method url &rest _args)
-                               (cond
-                                ;; Pre-flight fails
-                                ((string-match "courses/99999/$" url)
-                                 (signal 'error '("Pre-flight failed")))
-                                ;; Module POST still works
-                                ((and (eq method 'POST) (string-match "modules$" url))
-                                 (setq module-count (1+ module-count))
-                                 '((id . 700) (name . "Module")))
-                                (t '((id . 1)))))))
-                    (org-canvas-sync-modules)
-                    ;; Module should still have been synced despite pre-flight warning
-                    (expect module-count :to-equal 1))))))
+              (with-test-sync-handler (lambda (method url &rest _args)
+                                        (cond
+                                          ;; Pre-flight fails
+                                          ((string-match "courses/99999/$" url)
+                                            (signal 'error '("Pre-flight failed")))
+                                          ;; Module POST still works
+                                          ((and (eq method 'POST) (string-match "modules$" url))
+                                            (setq module-count (1+ module-count))
+                                            '((id . 700) (name . "Module")))
+                                          (t '((id . 1)))))
+                (org-canvas-sync-modules)
+                (expect module-count :to-equal 1))))
         (delete-directory temp-dir t)))))
 
 ;;;; Module Sync Items Edge Cases
 
 (describe "org-canvas--module-sync-items edge cases (mocked)"
   (it "increments fail count on item parse error"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Module
+    (with-test-api
+      (with-temp-org-buffer
+       "* Module
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -1708,12 +1667,12 @@
 :PROPERTIES:
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'org-canvas--module-item-parse-entry)
-                    (lambda (_dir) (error "Parse error"))))
-           (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
-             ;; Parse errors are real failures (third element)
-             (expect (nth 2 counts) :to-be-greater-than 0))))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas--module-item-parse-entry)
+                  (lambda (_dir) (error "Parse error"))))
+         (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
+           ;; Parse errors are real failures (third element)
+           (expect (nth 2 counts) :to-be-greater-than 0)))))))
 
 ;;;; Delete All Modules Edge Cases
 
@@ -1868,17 +1827,16 @@
             (with-temp-file temp-modules
               (insert (format "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 50\n:END:\n** [[file:%s::*Page A][Page A]]\n:PROPERTIES:\n:END:\n** [[file:%s::*Page B][Page B]]\n:PROPERTIES:\n:END:\n"
                               temp-pages temp-pages)))
-            (with-org-canvas-test-config
-              (with-mock-api
-                (with-current-buffer (find-file-noselect temp-modules)
-                  (goto-char (point-min))
-                  (org-back-to-heading)
-                  (let ((result (org-canvas--module-sync-items
-                                 "50" (point) (file-name-directory temp-modules))))
-                    ;; Both items should be processed successfully
-                    (expect (car result) :to-be-truthy)
-                    (expect (apply #'+ result) :to-be-truthy))
-                  (kill-buffer)))))
+            (with-test-api
+              (with-current-buffer (find-file-noselect temp-modules)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((result (org-canvas--module-sync-items
+                               "50" (point) (file-name-directory temp-modules))))
+                  ;; Both items should be processed successfully
+                  (expect (car result) :to-be-truthy)
+                  (expect (apply #'+ result) :to-be-truthy))
+                (kill-buffer))))
         (delete-file temp-pages)
         (delete-file temp-modules)))))
 
@@ -3021,10 +2979,8 @@
             (expect calls :to-equal 2))))))
 
   (it "returns nil when item is missing across all pages"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args) (vector))))
-        (expect (org-canvas--module-find-item-by-title "999" "Missing") :to-be nil)))))
+    (with-test-api-handler (lambda (_method _url &rest _args) (vector))
+      (expect (org-canvas--module-find-item-by-title "999" "Missing") :to-be nil))))
 
 (describe "module item ITEM_TYPE"
   (it "emits :ITEM_TYPE: SubHeader for SubHeader items"
@@ -3164,17 +3120,16 @@
 
 (describe "org-canvas--module-retry-single-pending"
   (it "syncs the item when its target now has a CANVAS_ID"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
-                   (lambda (_link _dir)
-                     '(:type "Page" :title "Course Home"
-                       :content-id nil :page-url "course-home")))
-                  ;; The module holds no item yet: nothing to adopt (#308).
-                  ((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (&rest _) [])))
-          (with-temp-org-buffer
-           "* Module
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Course Home"
+                     :content-id nil :page-url "course-home")))
+                ;; The module holds no item yet: nothing to adopt (#308).
+                ((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) [])))
+        (with-temp-org-buffer
+         "* Module
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -3182,31 +3137,30 @@
 :PROPERTIES:
 :END:
 "
-           (goto-char (point-min))
-           (search-forward "** ")
-           (org-back-to-heading)
-           (let* ((entry (list :module-id 100
-                               :marker (point-marker)
-                               :title "Course Home"
-                               :dir default-directory)))
-             (expect (org-canvas--module-retry-single-pending entry)
-                     :to-equal "Course Home")))))))
+         (goto-char (point-min))
+         (search-forward "** ")
+         (org-back-to-heading)
+         (let* ((entry (list :module-id 100
+                             :marker (point-marker)
+                             :title "Course Home"
+                             :dir default-directory)))
+           (expect (org-canvas--module-retry-single-pending entry)
+                   :to-equal "Course Home"))))))
 
   (it "refreshes the module PAYLOAD_HASH after healing an item"
     ;; The hash stored at module-sync time predates the item's link
     ;; resolution; without a refresh the next sync re-pushes the whole
     ;; module once for no reason.
-    (with-org-canvas-test-config
-      (with-mock-api
-        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
-                   (lambda (_link _dir)
-                     '(:type "Page" :title "Course Home"
-                       :content-id nil :page-url "course-home")))
-                  ;; The module holds no item yet: nothing to adopt (#308).
-                  ((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (&rest _) [])))
-          (with-temp-org-buffer
-           "* Module
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Course Home"
+                     :content-id nil :page-url "course-home")))
+                ;; The module holds no item yet: nothing to adopt (#308).
+                ((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) [])))
+        (with-temp-org-buffer
+         "* Module
 :PROPERTIES:
 :CANVAS_ID: 100
 :PAYLOAD_HASH: stale
@@ -3215,42 +3169,7 @@
 :PROPERTIES:
 :END:
 "
-           (let ((org-canvas-modules-file (buffer-file-name)))
-             (goto-char (point-min))
-             (search-forward "** ")
-             (org-back-to-heading)
-             (let ((entry (list :module-id 100
-                                :marker (point-marker)
-                                :title "Course Home"
-                                :dir default-directory)))
-               (expect (org-canvas--module-retry-single-pending entry)
-                       :to-equal "Course Home"))
-             (goto-char (point-min))
-             (org-back-to-heading)
-             (let* ((saved (org-entry-get (point) "PAYLOAD_HASH"))
-                    (data (org-canvas--module-parse-entry))
-                    (expected (org-canvas--sync-payload-hash
-                               (org-canvas--module-build-payload data)
-                               data #'org-canvas--module-items-digest)))
-               (expect saved :not :to-equal "stale")
-               (expect saved :to-equal expected))))))))
-
-  (it "returns nil when the target still has no CANVAS_ID"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
-                   (lambda (_link _dir)
-                     '(:type "Page" :title "Course Home"
-                       :content-id nil :page-url nil))))
-          (with-temp-org-buffer
-           "* Module
-:PROPERTIES:
-:CANVAS_ID: 100
-:END:
-** [[file:pages.org::*Course Home][Course Home]]
-:PROPERTIES:
-:END:
-"
+         (let ((org-canvas-modules-file (buffer-file-name)))
            (goto-char (point-min))
            (search-forward "** ")
            (org-back-to-heading)
@@ -3259,7 +3178,41 @@
                               :title "Course Home"
                               :dir default-directory)))
              (expect (org-canvas--module-retry-single-pending entry)
-                     :to-be nil)))))))
+                     :to-equal "Course Home"))
+           (goto-char (point-min))
+           (org-back-to-heading)
+           (let* ((saved (org-entry-get (point) "PAYLOAD_HASH"))
+                  (data (org-canvas--module-parse-entry))
+                  (expected (org-canvas--sync-payload-hash
+                             (org-canvas--module-build-payload data)
+                             data #'org-canvas--module-items-digest)))
+             (expect saved :not :to-equal "stale")
+             (expect saved :to-equal expected)))))))
+
+  (it "returns nil when the target still has no CANVAS_ID"
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Course Home"
+                     :content-id nil :page-url nil))))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+         (goto-char (point-min))
+         (search-forward "** ")
+         (org-back-to-heading)
+         (let ((entry (list :module-id 100
+                            :marker (point-marker)
+                            :title "Course Home"
+                            :dir default-directory)))
+           (expect (org-canvas--module-retry-single-pending entry)
+                   :to-be nil))))))
 
   (it "returns nil and warns when the push errors"
     (with-org-canvas-test-config
@@ -3466,40 +3419,33 @@
 ** Section Header
 "))
             (let ((org-canvas-modules-file modules-file))
-              (with-org-canvas-test-config
-                (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request)
-                             (lambda (method url &rest _args)
-                               (cond
-                                ((string-match "courses/99999/$" url)
-                                 '((id . 99999)))
-                                ((and (eq method 'POST) (string-match "modules$" url))
-                                 (setq module-writes (1+ module-writes))
-                                 '((id . 500) (name . "Week 1")))
-                                ((and (eq method 'PUT) (string-match "modules/500$" url))
-                                 (setq module-writes (1+ module-writes))
-                                 '((id . 500) (name . "Week 1")))
-                                ((and (memq method '(POST PUT))
-                                      (string-match "modules/500/items" url))
-                                 (setq item-writes (1+ item-writes))
-                                 '((id . 501) (title . "Item")))
-                                (t '((id . 1)))))))
-                    ;; Run 1: creates module + item, saves PAYLOAD_HASH
-                    (org-canvas-sync-modules)
-                    (expect module-writes :to-equal 1)
-                    ;; Run 2: nothing changed — module skipped
-                    (org-canvas-sync-modules)
-                    (expect module-writes :to-equal 1)
-                    ;; Add an item; run 3 must re-push the module and
-                    ;; sync both items (the core of issue #26)
-                    (with-current-buffer (find-file-noselect modules-file)
-                      (goto-char (point-max))
-                      (insert "** Another Header\n")
-                      (save-buffer))
-                    (setq item-writes 0)
-                    (org-canvas-sync-modules)
-                    (expect module-writes :to-equal 2)
-                    (expect item-writes :to-equal 2))))))
+              (with-test-sync-handler (lambda (method url &rest _args)
+                                        (cond
+                                          ((string-match "courses/99999/$" url)
+                                            '((id . 99999)))
+                                          ((and (eq method 'POST) (string-match "modules$" url))
+                                            (setq module-writes (1+ module-writes))
+                                            '((id . 500) (name . "Week 1")))
+                                          ((and (eq method 'PUT) (string-match "modules/500$" url))
+                                            (setq module-writes (1+ module-writes))
+                                            '((id . 500) (name . "Week 1")))
+                                          ((and (memq method '(POST PUT))
+                                             (string-match "modules/500/items" url))
+                                            (setq item-writes (1+ item-writes))
+                                            '((id . 501) (title . "Item")))
+                                          (t '((id . 1)))))
+                (org-canvas-sync-modules)
+                (expect module-writes :to-equal 1)
+                (org-canvas-sync-modules)
+                (expect module-writes :to-equal 1)
+                (with-current-buffer (find-file-noselect modules-file)
+                  (goto-char (point-max))
+                  (insert "** Another Header\n")
+                  (save-buffer))
+                (setq item-writes 0)
+                (org-canvas-sync-modules)
+                (expect module-writes :to-equal 2)
+                (expect item-writes :to-equal 2))))
         (delete-directory temp-dir t)))))
 
 ;;;; Conflict pull-item
@@ -3579,80 +3525,57 @@
 
 ;;;; Bulk Publish (issue #52)
 
-(defun test-publish-52--course ()
-  "Build a temp course with a module, an assignment, a page and a file.
-Returns the directory."
-  (let* ((dir (make-temp-file "publish-" t))
-         (content (expand-file-name "content" dir)))
-    (make-directory content t)
-    (with-temp-file (expand-file-name "content/lecture.pdf" dir) (insert "pdf"))
-    (with-temp-file (expand-file-name "assignments.org" dir)
-      (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:PUBLISHED: false\n:END:\n"
-              "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 62\n:PUBLISHED: false\n:END:\n"))
-    (with-temp-file (expand-file-name "pages.org" dir)
-      (insert "* Welcome\n:PROPERTIES:\n:CANVAS_URL: welcome\n:PUBLISHED: false\n:END:\n"))
-    (with-temp-file (expand-file-name "files.org" dir)
-      (insert "* [[file:content/lecture.pdf][lecture.pdf]]\n"
-              ":PROPERTIES:\n:CANVAS_ID: 42\n:PUBLISHED: false\n:END:\n"))
-    (with-temp-file (expand-file-name "modules.org" dir)
-      (insert "* Week 03\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
-              "** Readings\n"
-              "** [[file:assignments.org::*Lab 1][Lab 1]]\n"
-              "** [[file:pages.org::*Welcome][Welcome]]\n"
-              "** [[file:content/lecture.pdf][lecture.pdf]]\n"
-              "* Week 04\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
-              "** [[file:assignments.org::*Lab 2][Lab 2]]\n"))
-    dir))
-
-(defun test-publish-52--kill (dir)
-  "Kill the buffers visiting files under DIR and delete it."
-  (dolist (name '("modules.org" "assignments.org" "pages.org" "files.org"))
-    (let ((buf (find-buffer-visiting (expand-file-name name dir))))
-      (when buf
-        (with-current-buffer buf (set-buffer-modified-p nil))
-        (kill-buffer buf))))
-  (delete-directory dir t))
-
-(defun test-publish-52--prop (dir file heading prop)
-  "Return PROP of HEADING in DIR/FILE."
-  (with-current-buffer (find-file-noselect (expand-file-name file dir))
-    (save-excursion
-      (goto-char (point-min))
-      (when (re-search-forward (format "^\\*+ .*%s" (regexp-quote heading)) nil t)
-        (org-back-to-heading t)
-        (org-entry-get (point) prop)))))
+(defconst test-publish-52--files
+  '(("content/lecture.pdf" . "pdf")
+    ("assignments.org"
+     :headings (("Lab 1" :props (("CANVAS_ID" . "61")
+                                 ("PUBLISHED" . "false")))
+                ("Lab 2" :props (("CANVAS_ID" . "62")
+                                 ("PUBLISHED" . "false")))))
+    ("pages.org"
+     :headings (("Welcome" :props (("CANVAS_URL" . "welcome")
+                                   ("PUBLISHED" . "false")))))
+    ("files.org"
+     :headings (("[[file:content/lecture.pdf][lecture.pdf]]"
+                 :props (("CANVAS_ID" . "42")
+                         ("PUBLISHED" . "false")))))
+    ("modules.org"
+     :headings (("Week 03" :props (("PUBLISHED" . "false"))
+                  :body "** Readings
+** [[file:assignments.org::*Lab 1][Lab 1]]
+** [[file:pages.org::*Welcome][Welcome]]
+** [[file:content/lecture.pdf][lecture.pdf]]
+")
+                ("Week 04" :props (("PUBLISHED" . "false"))
+                  :body "** [[file:assignments.org::*Lab 2][Lab 2]]
+"))))
+  "A course with a module, an assignment, a page and a file.")
 
 (describe "org-canvas--module-item-target"
   (it "resolves a heading link to the file and heading that own the object"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((target (org-canvas--module-item-target
-                         "[[file:assignments.org::*Lab 1][Lab 1]]" dir)))
-            (expect (car target) :to-equal (expand-file-name "assignments.org" dir))
-            (with-current-buffer (find-file-noselect (car target))
-              (expect (org-entry-get (cdr target) "CANVAS_ID") :to-equal "61")))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((target (org-canvas--module-item-target
+                     "[[file:assignments.org::*Lab 1][Lab 1]]" dir)))
+        (expect (car target) :to-equal (expand-file-name "assignments.org" dir))
+        (with-current-buffer (find-file-noselect (car target))
+          (expect (org-entry-get (cdr target) "CANVAS_ID") :to-equal "61")))))
 
   (it "resolves a direct file link through files.org"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((target (org-canvas--module-item-target
-                         "[[file:content/lecture.pdf][lecture.pdf]]" dir)))
-            (expect (car target) :to-equal (expand-file-name "files.org" dir))
-            (with-current-buffer (find-file-noselect (car target))
-              (expect (org-entry-get (cdr target) "CANVAS_ID") :to-equal "42")))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((target (org-canvas--module-item-target
+                     "[[file:content/lecture.pdf][lecture.pdf]]" dir)))
+        (expect (car target) :to-equal (expand-file-name "files.org" dir))
+        (with-current-buffer (find-file-noselect (car target))
+          (expect (org-entry-get (cdr target) "CANVAS_ID") :to-equal "42")))))
 
   (it "returns nil for a heading that is not a link"
     (expect (org-canvas--module-item-target "Readings" "/tmp") :to-be nil))
 
   (it "returns nil when the target heading is absent"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (expect (org-canvas--module-item-target
-                   "[[file:assignments.org::*Nonexistent][Nonexistent]]" dir)
-                  :to-be nil)
-        (test-publish-52--kill dir)))))
+    (with-test-course (dir :files test-publish-52--files)
+      (expect (org-canvas--module-item-target
+               "[[file:assignments.org::*Nonexistent][Nonexistent]]" dir)
+              :to-be nil))))
 
 (describe "org-canvas--module-heading-search-regexp"
   (it "matches a heading with extra spaces after the stars"
@@ -3678,121 +3601,103 @@ Returns the directory."
   (it "falls back to the display title when the heading text does not match"
     ;; A files.org heading *is* a link, so the exact-text search misses it —
     ;; and `org-get-heading' strips link syntax on Org 9.7 but not on 9.6.
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((pos (org-canvas--module-heading-position
-                      (expand-file-name "files.org" dir)
-                      "content/lecture.pdf" "lecture.pdf")))
-            (expect pos :to-be-truthy)
-            (with-current-buffer (find-file-noselect
-                                  (expand-file-name "files.org" dir))
-              (expect (org-entry-get pos "CANVAS_ID") :to-equal "42")))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((pos (org-canvas--module-heading-position
+                  (expand-file-name "files.org" dir)
+                  "content/lecture.pdf" "lecture.pdf")))
+        (expect pos :to-be-truthy)
+        (with-current-buffer (find-file-noselect
+                              (expand-file-name "files.org" dir))
+          (expect (org-entry-get pos "CANVAS_ID") :to-equal "42")))))
 
   (it "matches on the title alone for a link with no heading component"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((pos (org-canvas--module-heading-position
-                      (expand-file-name "assignments.org" dir) nil "Lab 2")))
-            (expect pos :to-be-truthy)
-            (with-current-buffer (find-file-noselect
-                                  (expand-file-name "assignments.org" dir))
-              (expect (org-entry-get pos "CANVAS_ID") :to-equal "62")))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((pos (org-canvas--module-heading-position
+                  (expand-file-name "assignments.org" dir) nil "Lab 2")))
+        (expect pos :to-be-truthy)
+        (with-current-buffer (find-file-noselect
+                              (expand-file-name "assignments.org" dir))
+          (expect (org-entry-get pos "CANVAS_ID") :to-equal "62")))))
 
   (it "returns nil when nothing matches either way"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (expect (org-canvas--module-heading-position
-                   (expand-file-name "assignments.org" dir) nil "Nonexistent")
-                  :to-be nil)
-        (test-publish-52--kill dir)))))
+    (with-test-course (dir :files test-publish-52--files)
+      (expect (org-canvas--module-heading-position
+               (expand-file-name "assignments.org" dir) nil "Nonexistent")
+              :to-be nil))))
 
 (describe "org-canvas--module-publish-apply"
   (it "publishes the module and every object it lists, across files"
     ;; The reported chore: six to ten edits in three or four files.
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-min))
-              (org-canvas--module-publish-apply (point) t))
-            (expect (test-publish-52--prop dir "modules.org" "Week 03" "PUBLISHED")
-                    :to-equal "true")
-            (expect (test-publish-52--prop dir "assignments.org" "Lab 1" "PUBLISHED")
-                    :to-equal "true")
-            (expect (test-publish-52--prop dir "pages.org" "Welcome" "PUBLISHED")
-                    :to-equal "true")
-            (expect (test-publish-52--prop dir "files.org" "lecture.pdf" "PUBLISHED")
-                    :to-equal "true"))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-min))
+          (org-canvas--module-publish-apply (point) t))
+        (expect (test-org-canvas-course-prop dir "modules.org" "Week 03" "PUBLISHED")
+                :to-equal "true")
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                :to-equal "true")
+        (expect (test-org-canvas-course-prop dir "pages.org" "Welcome" "PUBLISHED")
+                :to-equal "true")
+        (expect (test-org-canvas-course-prop dir "files.org" "lecture.pdf" "PUBLISHED")
+                :to-equal "true"))))
 
   (it "leaves objects belonging to other modules alone"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-min))
-              (org-canvas--module-publish-apply (point) t))
-            (expect (test-publish-52--prop dir "assignments.org" "Lab 2" "PUBLISHED")
-                    :to-equal "false"))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-min))
+          (org-canvas--module-publish-apply (point) t))
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 2" "PUBLISHED")
+                :to-equal "false"))))
 
   (it "sets the property in place for a SubHeader, which owns its own state"
     ;; Issue #47's rule: an item with no object behind it carries its own
     ;; publish state, so that is where the property belongs.
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-min))
-              (org-canvas--module-publish-apply (point) t))
-            (expect (test-publish-52--prop dir "modules.org" "Readings" "PUBLISHED")
-                    :to-equal "true"))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-min))
+          (org-canvas--module-publish-apply (point) t))
+        (expect (test-org-canvas-course-prop dir "modules.org" "Readings" "PUBLISHED")
+                :to-equal "true"))))
 
   (it "unpublishes the same set"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-min))
-              (org-canvas--module-publish-apply (point) t)
-              (goto-char (point-min))
-              (org-canvas--module-publish-apply (point) nil))
-            (expect (test-publish-52--prop dir "assignments.org" "Lab 1" "PUBLISHED")
-                    :to-equal "false")
-            (expect (test-publish-52--prop dir "files.org" "lecture.pdf" "PUBLISHED")
-                    :to-equal "false"))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-min))
+          (org-canvas--module-publish-apply (point) t)
+          (goto-char (point-min))
+          (org-canvas--module-publish-apply (point) nil))
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                :to-equal "false")
+        (expect (test-org-canvas-course-prop dir "files.org" "lecture.pdf" "PUBLISHED")
+                :to-equal "false"))))
 
   (it "counts only the headings it actually changed"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-min))
-              (let ((first (org-canvas--module-publish-apply (point) t)))
-                (goto-char (point-min))
-                (let ((again (org-canvas--module-publish-apply (point) t)))
-                  (expect (plist-get first :changed) :to-be-greater-than 0)
-                  (expect (plist-get again :changed) :to-equal 0)))))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-min))
+          (let ((first (org-canvas--module-publish-apply (point) t)))
+            (goto-char (point-min))
+            (let ((again (org-canvas--module-publish-apply (point) t)))
+              (expect (plist-get first :changed) :to-be-greater-than 0)
+              (expect (plist-get again :changed) :to-equal 0)))))))
 
   (it "names the items it could not resolve instead of failing"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-max))
-              (insert "** [[file:assignments.org::*Gone][Gone]]\n")
-              (save-buffer)
-              (goto-char (point-min))
-              (re-search-forward "^\\* Week 04")
-              (org-back-to-heading t)
-              (let ((result (org-canvas--module-publish-apply (point) t)))
-                (expect (plist-get result :unresolved) :to-equal '("Gone")))))
-        (test-publish-52--kill dir)))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-max))
+          (insert "** [[file:assignments.org::*Gone][Gone]]\n")
+          (save-buffer)
+          (goto-char (point-min))
+          (re-search-forward "^\\* Week 04")
+          (org-back-to-heading t)
+          (let ((result (org-canvas--module-publish-apply (point) t)))
+            (expect (plist-get result :unresolved) :to-equal '("Gone"))))))))
 
 (describe "org-canvas--module-due-for-release-p"
   (it "is true once PUBLISH_AT has passed"
@@ -3892,181 +3797,141 @@ Returns the directory."
 
 ;;; Per-item release dates (PUBLISH_AT on a module item)
 
-(defun test-release-item--course ()
-  "Build a temp course whose module items carry their own release dates.
-Lab 1 has none, Lab 2's is in the future, Lab 3's has passed."
-  (let ((dir (make-temp-file "release-item-" t)))
-    (with-temp-file (expand-file-name "assignments.org" dir)
-      (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:PUBLISHED: false\n:END:\n"
-              "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 62\n:PUBLISHED: false\n:END:\n"
-              "* Lab 3\n:PROPERTIES:\n:CANVAS_ID: 63\n:PUBLISHED: false\n:END:\n"))
-    (with-temp-file (expand-file-name "modules.org" dir)
-      (insert "* Week 03\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
-              "** [[file:assignments.org::*Lab 1][Lab 1]]\n"
-              "** [[file:assignments.org::*Lab 2][Lab 2]]\n"
-              ":PROPERTIES:\n:PUBLISH_AT: <2099-01-01 Thu 06:00>\n:END:\n"
-              "** [[file:assignments.org::*Lab 3][Lab 3]]\n"
-              ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n"))
-    dir))
-
-(defun test-release-item--kill (dir)
-  "Kill buffers visiting files under DIR and delete it."
-  (dolist (name '("modules.org" "assignments.org"))
-    (let ((buf (find-buffer-visiting (expand-file-name name dir))))
-      (when buf
-        (with-current-buffer buf (set-buffer-modified-p nil))
-        (kill-buffer buf))))
-  (delete-directory dir t))
-
-(defun test-release-item--prop (dir file heading prop)
-  "Return PROP of HEADING in DIR/FILE."
-  (with-current-buffer (find-file-noselect (expand-file-name file dir))
-    (save-excursion
-      (goto-char (point-min))
-      (when (re-search-forward (format "^\\*+ .*%s" (regexp-quote heading)) nil t)
-        (org-back-to-heading t)
-        (org-entry-get (point) prop)))))
-
-(defun test-release-item--week-03 (dir)
-  "Return the position of the Week 03 heading in DIR's modules.org."
-  (with-current-buffer (find-file-noselect (expand-file-name "modules.org" dir))
-    (goto-char (point-min))
-    (re-search-forward "^\\* Week 03")
-    (org-back-to-heading t)
-    (point)))
+(defconst test-release-item--files
+  '(("assignments.org"
+     :headings (("Lab 1" :props (("CANVAS_ID" . "61")
+                                 ("PUBLISHED" . "false")))
+                ("Lab 2" :props (("CANVAS_ID" . "62")
+                                 ("PUBLISHED" . "false")))
+                ("Lab 3" :props (("CANVAS_ID" . "63")
+                                 ("PUBLISHED" . "false")))))
+    ("modules.org"
+     :headings (("Week 03" :props (("PUBLISHED" . "false"))
+                  :body "** [[file:assignments.org::*Lab 1][Lab 1]]
+** [[file:assignments.org::*Lab 2][Lab 2]]
+:PROPERTIES:
+:PUBLISH_AT: <2099-01-01 Thu 06:00>
+:END:
+** [[file:assignments.org::*Lab 3][Lab 3]]
+:PROPERTIES:
+:PUBLISH_AT: <2020-01-01 Wed 06:00>
+:END:
+"))))
+  "A course whose module items carry their own release dates.
+Lab 1 has none, Lab 2's is in the future, Lab 3's has passed.")
 
 (describe "publishing a module around a scheduled item"
   (it "holds back the item whose own date is still ahead"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
-                 (result (with-current-buffer
-                             (find-file-noselect org-canvas-modules-file)
-                           (org-canvas--module-publish-apply
-                            (test-release-item--week-03 dir) t))))
-            (expect (plist-get result :held) :to-equal '("Lab 2"))
-            (expect (test-release-item--prop dir "assignments.org" "Lab 2" "PUBLISHED")
-                    :to-equal "false")
-            ;; Everything without a date of its own goes live with the module.
-            (expect (test-release-item--prop dir "assignments.org" "Lab 1" "PUBLISHED")
-                    :to-equal "true"))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
+             (result (with-current-buffer
+                         (find-file-noselect org-canvas-modules-file)
+                       (org-canvas--module-publish-apply
+                        (test-org-canvas-course-heading-pos dir "modules.org" "Week 03") t))))
+        (expect (plist-get result :held) :to-equal '("Lab 2"))
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 2" "PUBLISHED")
+                :to-equal "false")
+        ;; Everything without a date of its own goes live with the module.
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                :to-equal "true"))))
 
   (it "publishes an item whose own date has already passed"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (org-canvas--module-publish-apply
-               (test-release-item--week-03 dir) t))
-            (expect (test-release-item--prop dir "assignments.org" "Lab 3" "PUBLISHED")
-                    :to-equal "true"))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (org-canvas--module-publish-apply
+           (test-org-canvas-course-heading-pos dir "modules.org" "Week 03") t))
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 3" "PUBLISHED")
+                :to-equal "true"))))
 
   (it "unpublishes the held item along with the rest of the week"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect
-                                  (expand-file-name "assignments.org" dir))
-              (goto-char (point-min))
-              (re-search-forward "^\\* Lab 2")
-              (org-back-to-heading t)
-              (org-entry-put (point) "PUBLISHED" "true")
-              (save-buffer))
-            (let ((result (with-current-buffer
-                              (find-file-noselect org-canvas-modules-file)
-                            (org-canvas--module-publish-apply
-                             (test-release-item--week-03 dir) nil))))
-              (expect (plist-get result :held) :to-be nil))
-            (expect (test-release-item--prop dir "assignments.org" "Lab 2" "PUBLISHED")
-                    :to-equal "false"))
-        (test-release-item--kill dir)))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect
+                              (expand-file-name "assignments.org" dir))
+          (goto-char (point-min))
+          (re-search-forward "^\\* Lab 2")
+          (org-back-to-heading t)
+          (org-entry-put (point) "PUBLISHED" "true")
+          (save-buffer))
+        (let ((result (with-current-buffer
+                          (find-file-noselect org-canvas-modules-file)
+                        (org-canvas--module-publish-apply
+                         (test-org-canvas-course-heading-pos dir "modules.org" "Week 03") nil))))
+          (expect (plist-get result :held) :to-be nil))
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 2" "PUBLISHED")
+                :to-equal "false")))))
 
 (describe "org-canvas--module-item-release-markers"
   (it "returns only the items whose release date has passed"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (let ((markers (org-canvas--module-item-release-markers
-                              (test-release-item--week-03 dir))))
-                (expect (length markers) :to-equal 1)
-                (expect (org-entry-get (marker-position (car markers)) "PUBLISH_AT")
-                        :to-match "2020-01-01")
-                (dolist (m markers) (set-marker m nil)))))
-        (test-release-item--kill dir)))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (let ((markers (org-canvas--module-item-release-markers
+                          (test-org-canvas-course-heading-pos dir "modules.org" "Week 03"))))
+            (expect (length markers) :to-equal 1)
+            (expect (org-entry-get (marker-position (car markers)) "PUBLISH_AT")
+                    :to-match "2020-01-01")
+            (dolist (m markers) (set-marker m nil))))))))
 
 (describe "org-canvas--module-release-items"
   (it "releases only the item whose own date has passed"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
-                 (result (org-canvas--module-release-items)))
-            (expect (plist-get result :released) :to-equal '("Lab 3"))
-            (expect (test-release-item--prop dir "assignments.org" "Lab 3" "PUBLISHED")
-                    :to-equal "true")
-            ;; The module and its undated items are left where they were.
-            (expect (test-release-item--prop dir "assignments.org" "Lab 1" "PUBLISHED")
-                    :to-equal "false")
-            (expect (test-release-item--prop dir "modules.org" "Week 03" "PUBLISHED")
-                    :to-equal "false"))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
+             (result (org-canvas--module-release-items)))
+        (expect (plist-get result :released) :to-equal '("Lab 3"))
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 3" "PUBLISHED")
+                :to-equal "true")
+        ;; The module and its undated items are left where they were.
+        (expect (test-org-canvas-course-prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                :to-equal "false")
+        (expect (test-org-canvas-course-prop dir "modules.org" "Week 03" "PUBLISHED")
+                :to-equal "false"))))
 
   (it "reports an item released inside a module that is still unpublished"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
-                 (result (org-canvas--module-release-items)))
-            (expect (plist-get result :hidden) :to-equal '(("Week 03" "Lab 3"))))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
+             (result (org-canvas--module-release-items)))
+        (expect (plist-get result :hidden) :to-equal '(("Week 03" "Lab 3"))))))
 
   (it "says nothing about hiding when the module is published"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (org-entry-put (test-release-item--week-03 dir) "PUBLISHED" "true")
-              (save-buffer))
-            (expect (plist-get (org-canvas--module-release-items) :hidden)
-                    :to-be nil))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (org-entry-put (test-org-canvas-course-heading-pos dir "modules.org" "Week 03") "PUBLISHED" "true")
+          (save-buffer))
+        (expect (plist-get (org-canvas--module-release-items) :hidden)
+                :to-be nil))))
 
   (it "is idempotent once the item has been released"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (org-canvas--module-release-items)
-            (expect (plist-get (org-canvas--module-release-items) :released)
-                    :to-be nil))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (org-canvas--module-release-items)
+        (expect (plist-get (org-canvas--module-release-items) :released)
+                :to-be nil))))
 
   (it "names a scheduled item whose link resolves to nothing"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-max))
-              (insert "** [[file:assignments.org::*Gone][Gone]]\n"
-                      ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n")
-              (save-buffer))
-            (expect (plist-get (org-canvas--module-release-items) :unresolved)
-                    :to-equal '("Gone")))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-max))
+          (insert "** [[file:assignments.org::*Gone][Gone]]\n"
+                  ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n")
+          (save-buffer))
+        (expect (plist-get (org-canvas--module-release-items) :unresolved)
+                :to-equal '("Gone")))))
 
   (it "releases a SubHeader in place, since it owns its own state"
-    (let ((dir (test-release-item--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (with-current-buffer (find-file-noselect org-canvas-modules-file)
-              (goto-char (point-max))
-              (insert "** Readings\n"
-                      ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n")
-              (save-buffer))
-            (org-canvas--module-release-items)
-            (expect (test-release-item--prop dir "modules.org" "Readings" "PUBLISHED")
-                    :to-equal "true"))
-        (test-release-item--kill dir))))
+    (with-test-course (dir :files test-release-item--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect org-canvas-modules-file)
+          (goto-char (point-max))
+          (insert "** Readings\n"
+                  ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n")
+          (save-buffer))
+        (org-canvas--module-release-items)
+        (expect (test-org-canvas-course-prop dir "modules.org" "Readings" "PUBLISHED")
+                :to-equal "true"))))
 
   (it "returns nil when there is no modules file to read"
     (let ((org-canvas-modules-file "/tmp/nonexistent-release-modules.org"))
@@ -4074,12 +3939,10 @@ Lab 1 has none, Lab 2's is in the future, Lab 3's has passed."
 
 (describe "org-canvas--module-positions"
   (it "lists the level-1 module headings with their positions"
-    (let ((dir (test-publish-52--course)))
-      (unwind-protect
-          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
-            (expect (mapcar #'car (org-canvas--module-positions))
-                    :to-equal '("Week 03" "Week 04")))
-        (test-publish-52--kill dir))))
+    (with-test-course (dir :files test-publish-52--files)
+      (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+        (expect (mapcar #'car (org-canvas--module-positions))
+                :to-equal '("Week 03" "Week 04")))))
 
   (it "returns nil when modules.org does not exist"
     (let ((org-canvas-modules-file "/tmp/nonexistent-modules.org"))
@@ -5336,47 +5199,39 @@ heading."
 
 
 (describe "org-canvas-prune-module-items (issues #177, #179)"
-  (defmacro test-org-canvas-177--with-course (content remote &rest body)
-    "Run BODY with modules.org holding CONTENT and every item list REMOTE.
+  (defmacro test-org-canvas-177--with-course (remote &rest body)
+    "Run BODY with `test-org-canvas-177--files' and every item list REMOTE.
 REMOTE is a vector form, or the symbol `fail'.  `requests' collects
 \(METHOD URL); `answer' is what `y-or-n-p' returns."
-    (declare (indent 2))
-    `(let ((file (make-temp-file "prune-177-" nil ".org"))
-           (requests nil)
-           (answer t))
-       (unwind-protect
-           (progn
-             (with-temp-file file (insert ,content))
-             (let ((org-canvas-modules-file file))
-               (with-org-canvas-test-config
-                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                            (lambda (&rest _)
-                              (if (eq ,remote 'fail) (error "listing failed") ,remote)))
-                           ((symbol-function 'org-canvas-api-request)
-                            (lambda (method url &rest _)
-                              (push (list method url) requests) nil))
-                           ((symbol-function 'y-or-n-p) (lambda (&rest _) answer))
-                           ((symbol-function 'display-buffer) (lambda (&rest _) nil))
-                           ((symbol-function 'message) (lambda (&rest _) nil)))
-                   ,@body))))
-         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
-         (delete-file file))))
+    (declare (indent 1))
+    `(with-test-course (dir :files test-org-canvas-177--files)
+       (let ((requests nil)
+             (answer t))
+         (with-test-api
+           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                      (lambda (&rest _)
+                        (if (eq ,remote 'fail) (error "listing failed") ,remote)))
+                     ((symbol-function 'org-canvas-api-request)
+                      (lambda (method url &rest _)
+                        (push (list method url) requests) nil))
+                     ((symbol-function 'y-or-n-p) (lambda (&rest _) answer))
+                     ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                     ((symbol-function 'message) (lambda (&rest _) nil)))
+             ,@body)))))
 
-  (defconst test-org-canvas-177--course
-    "* Week 3
-:PROPERTIES:
-:CANVAS_ID: 781703
-:END:
-** [[file:assignments.org::*R3][R3: Stakeholders]]
+  (defconst test-org-canvas-177--files
+    '(("modules.org"
+       :headings (("Week 3" :props (("CANVAS_ID" . "781703"))
+                    :body "** [[file:assignments.org::*R3][R3: Stakeholders]]
 :PROPERTIES:
 :CANVAS_ID: 5864670
 :END:
-* Week 4
-"
+")
+                  ("Week 4"))))
     "One synced module claiming one item, and an unsynced module.")
 
   (it "deletes the items no heading claims after confirming, and returns the count"
-    (test-org-canvas-177--with-course test-org-canvas-177--course
+    (test-org-canvas-177--with-course
         [((id . 5864670) (title . "R3: Stakeholders"))
          ((id . 5864661) (title . "R3: Stakeholders"))]
       (expect (org-canvas-prune-module-items) :to-equal 1)
@@ -5385,14 +5240,14 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
               (list 'DELETE (org-canvas-api-course-endpoint "modules/781703/items/5864661")))))
 
   (it "asks with the unclaimed titles and sends nothing when declined"
-    (test-org-canvas-177--with-course test-org-canvas-177--course
+    (test-org-canvas-177--with-course
         [((id . 5864661) (title . "R3: Stakeholders"))]
       (setq answer nil)
       (expect (org-canvas-prune-module-items) :to-equal 0)
       (expect requests :to-be nil)))
 
   (it "says so and asks nothing when every item is claimed"
-    (test-org-canvas-177--with-course test-org-canvas-177--course
+    (test-org-canvas-177--with-course
         [((id . 5864670) (title . "R3: Stakeholders"))]
       (let ((asked nil))
         (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (setq asked t))))
@@ -5401,19 +5256,19 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
       (expect requests :to-be nil)))
 
   (it "sends no delete during a dry run"
-    (test-org-canvas-177--with-course test-org-canvas-177--course
+    (test-org-canvas-177--with-course
         [((id . 5864661) (title . "R3: Stakeholders"))]
       (let ((org-canvas--dry-run t))
         (expect (org-canvas-prune-module-items) :to-equal 0))
       (expect requests :to-be nil)))
 
   (it "skips a module whose item list cannot be fetched"
-    (test-org-canvas-177--with-course test-org-canvas-177--course 'fail
+    (test-org-canvas-177--with-course 'fail
       (expect (org-canvas-prune-module-items) :to-equal 0)
       (expect requests :to-be nil)))
 
   (it "counts a failed delete as not deleted and goes on"
-    (test-org-canvas-177--with-course test-org-canvas-177--course
+    (test-org-canvas-177--with-course
         [((id . 5864661) (title . "R3: Stakeholders"))
          ((id . 5864662) (title . "R3: Stakeholders"))]
       (cl-letf (((symbol-function 'org-canvas-api-request)
@@ -5442,18 +5297,17 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
 
 (describe "org-canvas--module-delete-departed-item"
   (it "sends nothing during a dry run"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((org-canvas--dry-run t)
-              (logged nil))
-          (cl-letf (((symbol-function 'org-canvas--log-info)
-                     (lambda (_l fmt &rest args)
-                       (push (apply #'format fmt args) logged))))
-            (org-canvas--module-delete-departed-item
-             10 '((id . 5) (title . "Reading")) "Week 2"))
-          (expect (car logged)
-                  :to-match "\\[DRY-RUN\\] Would remove item 5 'Reading' from module 10")
-          (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+    (with-test-api
+      (let ((org-canvas--dry-run t)
+            (logged nil))
+        (cl-letf (((symbol-function 'org-canvas--log-info)
+                   (lambda (_l fmt &rest args)
+                     (push (apply #'format fmt args) logged))))
+          (org-canvas--module-delete-departed-item
+           10 '((id . 5) (title . "Reading")) "Week 2"))
+        (expect (car logged)
+                :to-match "\\[DRY-RUN\\] Would remove item 5 'Reading' from module 10")
+        (expect (test-org-canvas-api-call-count) :to-equal 0)))))
 
 (describe "org-canvas--module-heading-display-name"
   (it "returns a file link's description and any other heading as is"
@@ -5464,32 +5318,25 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
 
 (describe "org-canvas--module-resolve-file-item-link fallbacks"
   (it "returns the title, or Untitled, when files.org is missing"
-    (let* ((tmpdir (make-temp-file "modules-nofiles-" t))
-           (org-canvas-files-file (expand-file-name "files.org" tmpdir)))
-      (unwind-protect
-          (progn
-            (expect (org-canvas--module-resolve-file-item-link 5 "Syllabus")
-                    :to-equal "Syllabus")
-            (expect (org-canvas--module-resolve-file-item-link 5 nil)
-                    :to-equal "Untitled"))
-        (delete-directory tmpdir t))))
+    (with-test-course (dir)
+      (expect (org-canvas--module-resolve-file-item-link 5 "Syllabus")
+              :to-equal "Syllabus")
+      (expect (org-canvas--module-resolve-file-item-link 5 nil)
+              :to-equal "Untitled")))
 
   (it "links the heading's path, naming it by the link description when the item has no title"
-    (let* ((tmpdir (make-temp-file "modules-files-" t))
-           (files-org (expand-file-name "files.org" tmpdir))
-           (org-canvas-files-file files-org))
-      (unwind-protect
-          (progn
-            (with-temp-file files-org
-              (insert "* Week 1\n** [[file:content/a.pdf][A.pdf]]\n"
-                      ":PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
-            (expect (org-canvas--module-resolve-file-item-link 5 "Given")
-                    :to-equal "[[file:content/a.pdf][Given]]")
-            (expect (org-canvas--module-resolve-file-item-link 5 nil)
-                    :to-equal "[[file:content/a.pdf][A.pdf]]"))
-        (let ((buf (find-buffer-visiting files-org)))
-          (when buf (kill-buffer buf)))
-        (delete-directory tmpdir t)))))
+    (with-test-course
+        (dir :files '(("files.org"
+                      :headings (("Week 1"
+                                  :body "** [[file:content/a.pdf][A.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 5
+:END:
+")))))
+      (expect (org-canvas--module-resolve-file-item-link 5 "Given")
+              :to-equal "[[file:content/a.pdf][Given]]")
+      (expect (org-canvas--module-resolve-file-item-link 5 nil)
+              :to-equal "[[file:content/a.pdf][A.pdf]]"))))
 
 (describe "org-canvas--module-pull-insert-content-item (issue #199)"
   (defmacro test-199--in-module (&rest body)

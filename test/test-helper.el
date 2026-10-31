@@ -235,20 +235,33 @@ compatibility; the fourth element is the full keyword-argument plist, so
 (defvar test-org-canvas-api-responses nil
   "Alist of (url-pattern . response) for mock responses.")
 
+(defvar test-org-canvas-api-handler nil
+  "Function answering every mocked request when non-nil.
+Called with METHOD, URL and the keyword arguments the code under test
+passed to `org-canvas-api-request', exactly as a `cl-letf' replacement
+of that function would be; its return value is the response, nil
+included.  Bound by `with-test-api-handler' (test-fixtures.el), and nil
+otherwise, so the response table answers.")
+
 (defun test-org-canvas-mock-api-request (method url &rest args)
   "Mock API request function that records calls and returns mock responses.
 METHOD, URL, and :data occupy the first three slots (backward compatible);
 the full ARGS plist is recorded as a fourth slot so :params and :timeout
-can be asserted via `test-org-canvas-call-arg'."
+can be asserted via `test-org-canvas-call-arg'.  A non-nil
+`test-org-canvas-api-handler' answers the call; otherwise the first
+matching `test-org-canvas-api-responses' entry does, defaulting to a
+canned object."
   (let ((call (list method url (plist-get args :data) args)))
     (push call test-org-canvas-api-calls)
-    ;; Find matching response
-    (let ((response nil))
-      (cl-loop for (pattern . resp) in test-org-canvas-api-responses
-               when (string-match-p pattern url)
-               do (setq response resp)
-               and return nil)
-      (or response '((id . 12345) (name . "Mock Response"))))))
+    (if test-org-canvas-api-handler
+        (apply test-org-canvas-api-handler method url args)
+      ;; Find matching response
+      (let ((response nil))
+        (cl-loop for (pattern . resp) in test-org-canvas-api-responses
+                 when (string-match-p pattern url)
+                 do (setq response resp)
+                 and return nil)
+        (or response '((id . 12345) (name . "Mock Response")))))))
 
 (defun test-org-canvas-api-called-p (method url-pattern)
   "Check if API was called with METHOD and URL matching URL-PATTERN."
@@ -307,7 +320,8 @@ pushes (issue #163)."
   "Execute BODY with mocked API calls."
   (declare (indent 0))
   `(let ((test-org-canvas-api-calls nil)
-         (test-org-canvas-api-responses nil))
+         (test-org-canvas-api-responses nil)
+         (test-org-canvas-api-handler nil))
      (cl-letf (((symbol-function 'org-canvas-api-request)
                 #'test-org-canvas-mock-api-request))
        ,@body)))
@@ -1614,6 +1628,13 @@ heading is checked as the assignment spec checks it."
       (dolist (w weights)
         (setq n (1+ n))
         (insert (format "** Group %d\n:PROPERTIES:\n:WEIGHT: %s\n:END:\n" n w))))))
+
+;; The course and API fixtures built on what this file provides: the
+;; temporary course directory (`with-test-course') and the mocked-API
+;; harness (`with-test-api' and its variants).  Loaded here so every
+;; spec file sees them after `org-canvas' has filled
+;; `org-canvas--file-var-registry' (issue #574).
+(require 'test-fixtures)
 
 (provide 'test-helper)
 ;;; test-helper.el ends here
