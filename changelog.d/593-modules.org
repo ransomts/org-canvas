@@ -1,0 +1,9 @@
+* Changed
+- #593 The module item layer of =lisp/org-canvas-modules.el= lives in
+  =lisp/org-canvas-module-items.el=: link resolution, the item's parse,
+  transform, push and finalize stages, moving an item between modules
+  and keeping its id (#105, #352), adopting a twinned item (#177, #179,
+  #308), pruning, and the pull's item links and inserted headings.
+  =org-canvas-modules.el= keeps the module's own pipeline, bulk publish,
+  the payload digest and the sync, delete and pull commands, and
+  declares the item functions it calls back into.  No behaviour changes.

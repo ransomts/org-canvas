@@ -781,7 +781,7 @@ Canvas since the pull, and resolving it) and =submissions-push=
 (sending: =S= grades, =P= post, =C= comment edits).  A half that needs
 another's function declares it; none requires one, so no cycle can
 form.  Two seams are declared, never required -- the dashed edges, the
-same policy =org-canvas-diff= uses for =org-canvas-modules.el= -- so
+same policy =org-canvas-diff= uses for =org-canvas-module-items.el= -- so
 that nothing here requires another feature module outright.
 
 #+begin_src mermaid

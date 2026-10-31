@@ -1,0 +1,3889 @@
+;;; org-canvas-module-items-test.el --- Buttercup tests for the module item layer  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; Commentary:
+
+;; lisp/org-canvas-module-items.el: resolving an item's link to the
+;; Canvas object it names, the item's parse, transform, push and
+;; finalize stages, moving an item between modules and keeping its id,
+;; adopting a twinned item the sync never stamped, pruning, and the
+;; pull's item links and inserted headings.  The module's own pipeline
+;; is in org-canvas-modules-test.el.
+
+;;; Code:
+
+(require 'buttercup)
+(require 'test-helper)
+(require 'org-canvas)
+
+;;;; Item Helpers
+
+(describe "org-canvas--module-item-type-from-file"
+  (it "returns Page for pages.org"
+    (expect (org-canvas--module-item-type-from-file "pages.org")
+            :to-equal "Page"))
+
+  (it "returns Assignment for assignments.org"
+    (expect (org-canvas--module-item-type-from-file "assignments.org")
+            :to-equal "Assignment"))
+
+  (it "returns Discussion for discussions.org"
+    (expect (org-canvas--module-item-type-from-file "discussions.org")
+            :to-equal "Discussion"))
+
+  (it "returns Quiz for quizzes.org"
+    (expect (org-canvas--module-item-type-from-file "quizzes.org")
+            :to-equal "Quiz"))
+
+  (it "returns File for files.org"
+    (expect (org-canvas--module-item-type-from-file "files.org")
+            :to-equal "File"))
+
+  (it "returns Discussion for announcements.org"
+    (expect (org-canvas--module-item-type-from-file "announcements.org")
+            :to-equal "Discussion"))
+
+  (it "defaults to Page for unknown files"
+    (expect (org-canvas--module-item-type-from-file "unknown.org")
+            :to-equal "Page"))
+
+  (it "follows a course that renames its files (issue #435)"
+    (let ((org-canvas-quizzes-file "/somewhere/exams.org")
+          (org-canvas-files-file "/somewhere/course-files.org"))
+      (expect (org-canvas--module-item-type-from-file "exams.org")
+              :to-equal "Quiz")
+      (expect (org-canvas--module-item-type-from-file "course-files.org")
+              :to-equal "File")
+      ;; The default names no longer answer for a renamed course, and a
+      ;; same-stemmed file in another directory never matched another
+      ;; type's basename.
+      (expect (org-canvas--module-item-type-from-file "quizzes.org")
+              :to-equal "Page")
+      (expect (org-canvas--module-item-type-from-file "sub/exams.org")
+              :to-equal "Quiz"))))
+
+(describe "org-canvas--module-resolve-link"
+  (it "returns nil for plain headings without links"
+    (expect (org-canvas--module-resolve-link "Regular Section" "/tmp/")
+            :to-be nil))
+
+  (it "returns nil when file doesn't exist"
+    ;; Links to non-existent files return nil
+    (expect (org-canvas--module-resolve-link "[[file:nonexistent.org::*Heading][Item]]" "/tmp/")
+            :to-be nil))
+
+  (it "returns nil for malformed links"
+    (expect (org-canvas--module-resolve-link "[[broken link" "/tmp/")
+            :to-be nil))
+
+  (it "returns nil for nil link input"
+    (expect (org-canvas--module-resolve-link nil "/tmp/")
+            :to-be nil))
+
+  (it "resolves link with CANVAS_ID from target file"
+    (let ((temp-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Test Page\n:PROPERTIES:\n:CANVAS_ID: 12345\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file))
+                   (link (format "[[file:%s::*Test Page][Link Text]]" basename))
+                   (result (org-canvas--module-resolve-link link dir)))
+              (expect result :to-be-truthy)
+              (expect (plist-get result :content-id) :to-equal 12345)
+              (expect (plist-get result :title) :to-equal "Link Text")))
+        (delete-file temp-file))))
+
+  (it "resolves link with CANVAS_URL for pages"
+    (let ((temp-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus-page\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file))
+                   (link (format "[[file:%s::*Syllabus][Syllabus Link]]" basename))
+                   (result (org-canvas--module-resolve-link link dir)))
+              (expect result :to-be-truthy)
+              (expect (plist-get result :page-url) :to-equal "syllabus-page")
+              (expect (plist-get result :title) :to-equal "Syllabus Link")))
+        (delete-file temp-file))))
+
+  (it "returns nil when heading has no CANVAS_ID"
+    (let ((temp-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Unsynced Page\n:PROPERTIES:\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file))
+                   (link (format "[[file:%s::*Unsynced Page][Link]]" basename))
+                   (result (org-canvas--module-resolve-link link dir)))
+              (expect result :to-be nil)))
+        (delete-file temp-file))))
+
+  (it "determines type from filename"
+    (unless test-org-canvas-emacs-30-p
+      (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+    (let ((temp-file (make-temp-file "assignments" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 999\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file))
+                   (link (format "[[file:%s::*Homework 1][HW1]]" basename))
+                   (result (org-canvas--module-resolve-link link dir)))
+              (expect result :to-be-truthy)
+              ;; Type is determined by filename pattern
+              (expect (plist-get result :type) :to-be-truthy)))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--module-resolve-link edge cases"
+  (it "handles link without heading specifier"
+    (let ((temp-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* First Page\n:PROPERTIES:\n:CANVAS_ID: 11111\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file))
+                   ;; Link without ::*Heading
+                   (link (format "[[file:%s][Just File]]" basename))
+                   (result (org-canvas--module-resolve-link link dir)))
+              ;; Should still find first heading
+              (expect result :to-be-truthy)
+              (expect (plist-get result :content-id) :to-equal 11111)))
+        (delete-file temp-file))))
+
+  (it "falls back to basename in modules dir when absolute path not found"
+    (let ((temp-file (make-temp-file "discussions" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* My Discussion\n:PROPERTIES:\n:CANVAS_ID: 22222\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file))
+                   ;; Link with absolute path to non-existent directory
+                   (link (format "[[file:/nonexistent/path/%s::*My Discussion][My Discussion]]"
+                                 basename))
+                   (result (org-canvas--module-resolve-link link dir)))
+              ;; Should fall back to finding the file by basename in dir
+              (expect result :to-be-truthy)
+              (expect (plist-get result :content-id) :to-equal 22222)
+              (expect (plist-get result :title) :to-equal "My Discussion")))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--module-resolve-link for direct file links"
+  (it "treats a non-.org link target as a File-typed module item"
+    (let* ((tmpdir (make-temp-file "resolve-direct" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            ;; Pre-bind `:type' outside `expect': buttercup's `expect'
+            ;; oclosure shadows the `:type' keyword on Emacs 29.x,
+            ;; silently returning nil.
+            (let* ((resolved (org-canvas--module-resolve-link
+                              "[[file:content/foo.pdf][foo.pdf]]" tmpdir))
+                   (resolved-type (plist-get resolved :type)))
+              (expect resolved-type :to-equal "File")
+              (expect (plist-get resolved :content-id) :to-equal 42)
+              (expect (plist-get resolved :title) :to-equal "foo.pdf")))
+        (delete-directory tmpdir t))))
+
+  (it "still resolves the legacy gnarly form pointing through files.org"
+    ;; Backward compat: existing modules.org files have File items as
+    ;; `[[file:files.org::*[[file:content/...][...]]][...]]'.  The push
+    ;; side must continue to resolve those until the next pull rewrites
+    ;; them into the new direct form.
+    (let* ((tmpdir (make-temp-file "resolve-legacy" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let* ((legacy "[[file:files.org::*\\[\\[file:content/foo.pdf\\]\\[foo.pdf\\]\\]][foo.pdf]]")
+                   (resolved (org-canvas--module-resolve-link legacy tmpdir))
+                   (resolved-type (plist-get resolved :type)))
+              (expect resolved-type :to-equal "File")
+              (expect (plist-get resolved :content-id) :to-equal 42)))
+        (delete-directory tmpdir t)))))
+
+(describe "org-canvas--module-search-heading-for-id"
+  (it "finds heading by exact match"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* My Page\n:PROPERTIES:\n:CANVAS_ID: 111\n:END:\n"))
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file "My Page" "My Page")))
+              (expect result :to-be-truthy)
+              (expect (car result) :to-equal "111")))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "falls back to display title when exact heading search fails"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              ;; Heading is a link — exact search for the link text won't match
+              ;; because re-search-forward looks for the raw heading text
+              (insert "* [[file:content/foo.pdf][Foo Document]]\n:PROPERTIES:\n:CANVAS_ID: 222\n:END:\n"))
+            ;; Search with a heading that won't match raw text, but title
+            ;; matches the display name from org-get-heading
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file "NonexistentHeading" "Foo Document")))
+              (expect result :to-be-truthy)
+              (expect (car result) :to-equal "222")))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "falls back to partial title match"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Introduction to Canvas\n:PROPERTIES:\n:CANVAS_ID: 333\n:END:\n"))
+            ;; Exact heading search will fail; partial match on title succeeds
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file "WontMatch" "Canvas")))
+              (expect result :to-be-truthy)
+              (expect (car result) :to-equal "333")))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "returns nil when neither heading nor title matches"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Some Other Heading\n:PROPERTIES:\n:CANVAS_ID: 444\n:END:\n"))
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file "NoMatch" "AlsoNoMatch")))
+              (expect result :to-be nil)))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "returns page-url when CANVAS_URL is set"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* My Page\n:PROPERTIES:\n:CANVAS_URL: my-page-url\n:END:\n"))
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file "My Page" "My Page")))
+              (expect result :to-be-truthy)
+              (expect (cdr result) :to-equal "my-page-url")))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "unescapes brackets in heading before searching"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Page [with brackets]\n:PROPERTIES:\n:CANVAS_ID: 666\n:END:\n"))
+            ;; Org escapes brackets inside link components: \[ and \]
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file "Page \\[with brackets\\]" "Page")))
+              (expect result :to-be-truthy)
+              (expect (car result) :to-equal "666")))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "uses first heading when no heading specified"
+    (let ((temp-file (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* First\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n* Second\n"))
+            (let ((result (org-canvas--module-search-heading-for-id
+                           temp-file nil "anything")))
+              (expect result :to-be-truthy)
+              (expect (car result) :to-equal "555")))
+        (let ((buf (get-file-buffer temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--module-heading-display-name"
+  (it "returns a file link's description and any other heading as is"
+    (expect (org-canvas--module-heading-display-name "[[file:content/a.pdf][A.pdf]]")
+            :to-equal "A.pdf")
+    (expect (org-canvas--module-heading-display-name "Week 1") :to-equal "Week 1")
+    (expect (org-canvas--module-heading-display-name nil) :to-be nil)))
+
+(describe "cross-file module link resolution"
+  (it "resolves correct heading when target file has multiple headings"
+    (let* ((temp-dir (make-temp-file "module-link-test" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            ;; Create pages.org with 3 headings, only the middle one has the target ID
+            (with-temp-file pages-file
+              (insert "* First Page\n:PROPERTIES:\n:CANVAS_URL: first-page\n:END:\n\n")
+              (insert "* Target Page\n:PROPERTIES:\n:CANVAS_URL: target-url\n:END:\n\n")
+              (insert "* Third Page\n:PROPERTIES:\n:CANVAS_URL: third-page\n:END:\n"))
+            ;; Module item links to the middle heading
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:pages.org::*Target Page][My Target]]\n:PROPERTIES:\n:END:\n")
+             (search-forward "My Target")
+             (org-back-to-heading)
+             (let ((data (org-canvas--module-item-parse-entry temp-dir)))
+               (expect (plist-get data :page-url) :to-equal "target-url")
+               (expect (plist-get data :title) :to-equal "My Target"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves CANVAS_ID from assignments file"
+    (let* ((temp-dir (make-temp-file "module-link-test" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 5001\n:END:\n\n")
+              (insert "* Homework 2\n:PROPERTIES:\n:CANVAS_ID: 5002\n:END:\n\n")
+              (insert "* Final Exam\n:PROPERTIES:\n:CANVAS_ID: 5003\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:assignments.org::*Homework 2][HW2 Link]]\n:PROPERTIES:\n:END:\n")
+             (search-forward "HW2 Link")
+             (org-back-to-heading)
+             (let* ((data (org-canvas--module-item-parse-entry temp-dir))
+                    ;; Pre-bind :type to avoid Emacs 29 oclosure shadowing
+                    (data-type (plist-get data :type)))
+               (expect (plist-get data :content-id) :to-equal 5002)
+               (expect data-type :to-equal "Assignment")
+               (expect (plist-get data :title) :to-equal "HW2 Link"))))
+        (let ((buf (find-buffer-visiting assign-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil content-id when linked heading has no CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "module-link-test" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Synced Page\n:PROPERTIES:\n:CANVAS_URL: synced\n:END:\n\n")
+              (insert "* Unsynced Page\n:PROPERTIES:\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:pages.org::*Unsynced Page][Unsynced]]\n:PROPERTIES:\n:END:\n")
+             (search-forward "Unsynced")
+             (org-back-to-heading)
+             (let ((data (org-canvas--module-item-parse-entry temp-dir)))
+               ;; Should classify as SubHeader or have nil content-id
+               ;; since the target heading has no CANVAS_ID/CANVAS_URL
+               (expect (plist-get data :content-id) :to-be nil)
+               (expect (plist-get data :page-url) :to-be nil))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+;;;; 1. Stage: Extraction - Module Items
+
+(describe "org-canvas--module-item-transform-props"
+  (it "strips statistics cookie from title for ExternalUrl"
+    (let* ((data (org-canvas--module-item-transform-props
+                  '(:title-raw "Link [2/5]" :heading-with-links nil
+                    :canvas-id nil :indent-raw nil
+                    :completion-requirement nil :min-score-raw nil
+                    :external-url "https://example.com" :new-tab-raw nil
+                    :published-raw nil :link-info nil)))
+           (data-type (plist-get data :type)))
+      (expect (plist-get data :title) :to-equal "Link")
+      (expect data-type :to-equal "ExternalUrl")))
+
+  (it "interprets published true by default for items"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :published) :to-be t)))
+
+  (it "interprets new-tab boolean"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw "true"
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :new-tab) :to-be t)))
+
+  (it "converts indent to number"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw "2"
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :indent) :to-equal 2)))
+
+  (it "converts min-score and omits zero"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement "min_score" :min-score-raw "80"
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :min-score) :to-equal 80)))
+
+  (it "omits min-score when zero"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement "min_score" :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :min-score) :to-be nil)))
+
+  (it "returns linked item data when link-info present"
+    (let* ((data (org-canvas--module-item-transform-props
+                  '(:title-raw "Ignored" :heading-with-links nil
+                    :canvas-id "42" :indent-raw "1"
+                    :completion-requirement "must_view" :min-score-raw nil
+                    :external-url nil :new-tab-raw nil
+                    :published-raw "true"
+                    :link-info (:type "Assignment" :title "Lab 1"
+                                :content-id 555 :page-url nil))))
+           (data-type (plist-get data :type)))
+      (expect data-type :to-equal "Assignment")
+      (expect (plist-get data :title) :to-equal "Lab 1")
+      (expect (plist-get data :content-id) :to-equal 555)
+      (expect (plist-get data :canvas-id) :to-equal "42")
+      (expect (plist-get data :indent) :to-equal 1)
+      (expect (plist-get data :completion-requirement) :to-equal "must_view")))
+
+  (it "returns nil when no external-url and no link-info"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Plain Text" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect data :to-be nil)))
+
+  (it "passes through canvas-id for ExternalUrl"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Link" :heading-with-links nil
+                   :canvas-id "77" :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :canvas-id) :to-equal "77"))))
+
+(describe "org-canvas--module-item-parse-entry"
+  (it "treats non-link headings as SubHeader"
+    ;; Emacs 29.x org-mode has different heading recognition behavior
+    (unless test-org-canvas-emacs-30-p
+      (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+    (with-temp-org-buffer
+     "* Module
+** Section Divider
+:PROPERTIES:
+:END:
+"
+     (search-forward "Section Divider")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :type) :to-equal "SubHeader")
+       (expect (plist-get data :title) :to-equal "Section Divider"))))
+
+  (it "extracts canvas-id when present"
+    (with-temp-org-buffer
+     "* Module
+** Item
+:PROPERTIES:
+:CANVAS_ID: 77777
+:END:
+"
+     (search-forward "Item")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :canvas-id) :to-equal "77777"))))
+
+  (it "parses indent property"
+    (with-temp-org-buffer
+     "* Module
+** Indented Item
+:PROPERTIES:
+:INDENT: 2
+:END:
+"
+     (search-forward "Indented Item")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :indent) :to-equal 2))))
+
+  (it "defaults indent to 0"
+    (with-temp-org-buffer
+     "* Module
+** Item Without Indent
+:PROPERTIES:
+:END:
+"
+     (search-forward "Item Without Indent")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :indent) :to-equal 0))))
+
+  (it "parses min_score property"
+    (unless test-org-canvas-emacs-30-p
+      (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+    (with-temp-org-buffer
+     "* Module
+** Scored Item
+:PROPERTIES:
+:MIN_SCORE: 80
+:COMPLETION_REQUIREMENT: min_score
+:END:
+"
+     (search-forward "Scored Item")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       ;; SubHeader doesn't carry min-score, but verify it's parsed
+       (expect (plist-get data :type) :to-equal "SubHeader"))))
+
+  (it "parses completion_requirement for SubHeader"
+    ;; Note: completion_requirement is only included for linked items, not SubHeaders.
+    ;; A heading without a link is parsed as SubHeader, which doesn't include completion-requirement.
+    ;; This test verifies that SubHeaders work correctly (without completion-requirement).
+    (unless test-org-canvas-emacs-30-p
+      (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+    (with-temp-org-buffer
+     "* Module
+** Required Item
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_view
+:END:
+"
+     (search-forward "Required Item")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       ;; Non-link heading is parsed as SubHeader, which doesn't carry completion_requirement
+       (expect (plist-get data :type) :to-equal "SubHeader"))))
+
+  (it "includes pom in SubHeader data"
+    (with-temp-org-buffer
+     "* Module
+** SubHeader Item
+:PROPERTIES:
+:END:
+"
+     (search-forward "SubHeader Item")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :pom) :to-be-truthy))))
+
+  (it "parses EXTERNAL_URL as ExternalUrl type"
+    (with-temp-org-buffer
+     "* Module
+** Google
+:PROPERTIES:
+:EXTERNAL_URL: https://www.google.com
+:END:
+"
+     (search-forward "Google")
+     (org-back-to-heading)
+     (let* ((data (org-canvas--module-item-parse-entry "/tmp/"))
+            (data-type (plist-get data :type)))
+       (expect data-type :to-equal "ExternalUrl")
+       (expect (plist-get data :external-url) :to-equal "https://www.google.com"))))
+
+  (it "parses NEW_TAB property for ExternalUrl"
+    (with-temp-org-buffer
+     "* Module
+** External Link
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:NEW_TAB: true
+:END:
+"
+     (search-forward "External Link")
+     (org-back-to-heading)
+     (let* ((data (org-canvas--module-item-parse-entry "/tmp/"))
+            (data-type (plist-get data :type)))
+       (expect data-type :to-equal "ExternalUrl")
+       (expect (plist-get data :new-tab) :to-be t))))
+
+  (it "defaults NEW_TAB to nil when not set"
+    (with-temp-org-buffer
+     "* Module
+** External Link
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:END:
+"
+     (search-forward "External Link")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :new-tab) :to-be nil))))
+
+  (it "preserves canvas-id and indent for ExternalUrl"
+    (with-temp-org-buffer
+     "* Module
+** External
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:CANVAS_ID: 54321
+:INDENT: 1
+:END:
+"
+     (search-forward "External")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :canvas-id) :to-equal "54321")
+       (expect (plist-get data :indent) :to-equal 1)))))
+
+(describe "org-canvas--module-item-parse-entry with resolved links"
+  (it "extracts content-id from linked file"
+    (let ((temp-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Test Page\n:PROPERTIES:\n:CANVAS_ID: 99999\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file)))
+              (with-temp-org-buffer
+               (format "* Module
+** [[file:%s::*Test Page][Link Text]]
+:PROPERTIES:
+:END:
+" basename)
+               (search-forward "Link Text")
+               (org-back-to-heading)
+               (let ((data (org-canvas--module-item-parse-entry dir)))
+                 (expect (plist-get data :content-id) :to-equal 99999)))))
+        (delete-file temp-file))))
+
+  (it "extracts page-url from linked page"
+    (let ((temp-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus-url\n:END:\n"))
+            (let* ((dir (file-name-directory temp-file))
+                   (basename (file-name-nondirectory temp-file)))
+              (with-temp-org-buffer
+               (format "* Module
+** [[file:%s::*Syllabus][Syllabus Link]]
+:PROPERTIES:
+:END:
+" basename)
+               (search-forward "Syllabus Link")
+               (org-back-to-heading)
+               (let ((data (org-canvas--module-item-parse-entry dir)))
+                 (expect (plist-get data :page-url) :to-equal "syllabus-url")))))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--module-item-parse-entry min-score"
+  (it "includes min-score when positive for linked items"
+    (let ((temp-pages (make-temp-file "pages-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-pages
+              (insert "* Linked Page\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n"))
+            (let ((temp-modules (make-temp-file "modules-" nil ".org")))
+              (unwind-protect
+                  (progn
+                    (with-temp-file temp-modules
+                      (insert (format "* Module\n** [[file:%s::*Linked Page][Linked Page]]\n:PROPERTIES:\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 80\n:END:\n" temp-pages)))
+                    (with-current-buffer (find-file-noselect temp-modules)
+                      (goto-char (point-min))
+                      (search-forward "Linked Page]]")
+                      (org-back-to-heading)
+                      (let ((data (org-canvas--module-item-parse-entry
+                                   (file-name-directory temp-modules))))
+                        (expect (plist-get data :min-score) :to-equal 80)
+                        (expect (plist-get data :completion-requirement) :to-equal "min_score"))
+                      (kill-buffer)))
+                (delete-file temp-modules))))
+        (delete-file temp-pages))))
+
+  (it "does not include min-score when zero"
+    (let ((temp-modules (make-temp-file "modules-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-modules
+              (insert "* Module\n** SubHeader Item\n:PROPERTIES:\n:MIN_SCORE: 0\n:END:\n"))
+            (with-current-buffer (find-file-noselect temp-modules)
+              (goto-char (point-min))
+              (search-forward "SubHeader")
+              (org-back-to-heading)
+              (let ((data (org-canvas--module-item-parse-entry
+                           (file-name-directory temp-modules))))
+                (expect (plist-get data :min-score) :to-be nil))
+              (kill-buffer)))
+        (delete-file temp-modules))))
+
+  (it "includes min-score for ExternalUrl items"
+    (let ((temp-modules (make-temp-file "modules-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-modules
+              (insert "* Module\n** Google Docs\n:PROPERTIES:\n:EXTERNAL_URL: https://docs.google.com\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 90\n:END:\n"))
+            (with-current-buffer (find-file-noselect temp-modules)
+              (goto-char (point-min))
+              (search-forward "Google Docs")
+              (org-back-to-heading)
+              (let* ((data (org-canvas--module-item-parse-entry
+                            (file-name-directory temp-modules)))
+                     (result-type (plist-get data :type)))
+                (expect result-type :to-equal "ExternalUrl")
+                (expect (plist-get data :min-score) :to-equal 90)
+                (expect (plist-get data :completion-requirement) :to-equal "min_score"))
+              (kill-buffer)))
+        (delete-file temp-modules)))))
+
+(describe "org-canvas--module-item-parse-entry (published)"
+  (it "defaults published to t when not set"
+    (with-temp-org-buffer
+     "* Module
+** Plain Heading
+:PROPERTIES:
+:END:
+"
+     (search-forward "Plain Heading")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp")))
+       (expect (plist-get data :published) :to-be t))))
+
+  (it "parses PUBLISHED false on external URL item"
+    (with-temp-org-buffer
+     "* Module
+** Hidden Link
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:PUBLISHED: false
+:END:
+"
+     (search-forward "Hidden Link")
+     (org-back-to-heading)
+     (let* ((data (org-canvas--module-item-parse-entry "/tmp"))
+            (result-type (plist-get data :type)))
+       (expect (plist-get data :published) :to-be nil)
+       (expect result-type :to-equal "ExternalUrl")))))
+
+(describe "org-canvas--module-classify-unlinked-heading"
+  ;; NOTE: These tests use let* to pre-bind (plist-get ... :type)
+  ;; because Emacs 29's oclosure-lambda (used by buttercup's expect
+  ;; macro) has a bug where :type is shadowed by the oclosure type slot.
+  (it "classifies heading with file link as unresolved link"
+    (let* ((result (org-canvas--module-classify-unlinked-heading
+                    "[[file:assignments.org::*HW1][HW1]]" "HW1"
+                    (org-canvas--module-heading-context
+                     :indent 0 :published 1 :pom t)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "Assignment")
+      (expect (plist-get result :title) :to-equal "HW1")
+      (expect (plist-get result :canvas-id) :to-be nil)))
+
+  (it "extracts title from display part of file link"
+    (let* ((result (org-canvas--module-classify-unlinked-heading
+                    "[[file:pages.org::*Welcome][Welcome Page]]" "Welcome Page"
+                    (org-canvas--module-heading-context
+                     :indent 0 :published 1 :pom t)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "Page")
+      (expect (plist-get result :title) :to-equal "Welcome Page")))
+
+  (it "uses raw-heading as title when link has no display part"
+    (let ((result (org-canvas--module-classify-unlinked-heading
+                   "[[file:quizzes.org::*Quiz 1]]" "Quiz 1"
+                   (org-canvas--module-heading-context
+                    :indent 0 :published 1 :pom t))))
+      ;; No ][...]] display part, so link-title is nil, falls back to raw-heading
+      (expect (plist-get result :title) :to-equal "Quiz 1")))
+
+  (it "classifies plain text heading as SubHeader"
+    (let* ((result (org-canvas--module-classify-unlinked-heading
+                    "Section Divider" "Section Divider"
+                    (org-canvas--module-heading-context
+                     :indent 0 :published 1 :pom t)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "SubHeader")
+      (expect (plist-get result :title) :to-equal "Section Divider")))
+
+  (it "preserves canvas-id and indent"
+    (let ((result (org-canvas--module-classify-unlinked-heading
+                   "[[file:files.org::*Doc][Doc]]" "Doc"
+                   (org-canvas--module-heading-context
+                    :canvas-id "existing-id" :indent 2 :published t :pom 100))))
+      (expect (plist-get result :canvas-id) :to-equal "existing-id")
+      (expect (plist-get result :indent) :to-equal 2)
+      (expect (plist-get result :pom) :to-equal 100)))
+
+  (it "determines type from file link filename"
+    (let* ((result (org-canvas--module-classify-unlinked-heading
+                    "[[file:discussions.org::*Topic][Topic]]" "Topic"
+                    (org-canvas--module-heading-context
+                     :indent 0 :published 1 :pom t)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "Discussion")))
+
+  (it "uses heading-with-links over raw-heading for link detection"
+    ;; When heading-with-links has the link but raw-heading is stripped
+    (let* ((result (org-canvas--module-classify-unlinked-heading
+                    "[[file:files.org::*Upload][Upload]]" "Upload"
+                    (org-canvas--module-heading-context
+                     :indent 0 :published 1 :pom t)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "File")))
+
+  (it "falls back to raw-heading when heading-with-links is nil"
+    (let* ((result (org-canvas--module-classify-unlinked-heading
+                    nil "Plain Text"
+                    (org-canvas--module-heading-context
+                     :indent 0 :published 1 :pom t)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "SubHeader")
+      (expect (plist-get result :title) :to-equal "Plain Text"))))
+
+;;;; 2. Stage: Transformation - Module Item
+
+(describe "org-canvas--module-item-build-payload"
+  (describe "common fields"
+    (it "wraps in module_item key"
+      (let* ((data '(:type "SubHeader" :title "Section"))
+             (payload (org-canvas--module-item-build-payload data 1)))
+        (expect (gethash "module_item" payload) :to-be-truthy)))
+
+    (it "includes type and title"
+      (let* ((data '(:type "Page" :title "Syllabus"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "type" item) :to-equal "Page")
+        (expect (gethash "title" item) :to-equal "Syllabus")))
+
+    (it "includes position"
+      (let* ((data '(:type "SubHeader" :title "Test"))
+             (payload (org-canvas--module-item-build-payload data 3))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "position" item) :to-equal 3))))
+
+  (describe "content_id"
+    (it "includes content_id when present"
+      (let* ((data '(:type "Assignment" :title "HW1" :content-id 999))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "content_id" item) :to-equal 999)))
+
+    (it "excludes content_id when not present"
+      (let* ((data '(:type "SubHeader" :title "Section"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "content_id" item) :to-be nil))))
+
+  (describe "page URL"
+    (it "includes page_url for Page type"
+      (let* ((data '(:type "Page" :title "Syllabus" :page-url "syllabus"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "page_url" item) :to-equal "syllabus")))
+
+    (it "excludes page_url for non-Page types"
+      (let* ((data '(:type "Assignment" :title "HW1" :page-url "should-not-appear"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "page_url" item) :to-be nil))))
+
+  (describe "indent"
+    (it "includes indent"
+      (let* ((data '(:type "SubHeader" :title "Test" :indent 1))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "indent" item) :to-equal 1)))
+
+    (it "excludes indent when nil"
+      (let* ((data '(:type "SubHeader" :title "Test"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "indent" item) :to-be nil))))
+
+  (describe "completion requirements"
+    (it "includes completion_requirement type"
+      (let* ((data '(:type "Assignment" :title "HW1" :completion-requirement "must_submit"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "type" (gethash "completion_requirement" item)) :to-equal "must_submit")
+        ;; JSON, not form encoding: the requirement is a nested object
+        ;; (issue #198), and a bracketed key must not be there.
+        (expect (gethash "completion_requirement[type]" item) :to-be nil)
+        (expect (json-encode payload)
+                :to-match "\"completion_requirement\":{\"type\":\"must_submit\"}")))
+
+    (it "includes completion_requirement min_score"
+      (let* ((data '(:type "Quiz" :title "Quiz 1" :completion-requirement "min_score" :min-score 80))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "type" (gethash "completion_requirement" item)) :to-equal "min_score")
+        (expect (gethash "min_score" (gethash "completion_requirement" item)) :to-equal 80)))
+
+    (it "sends no requirement object when none is declared"
+      (let* ((data '(:type "Assignment" :title "HW1"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "completion_requirement" item) :to-be nil)))
+
+    (it "excludes min_score when not specified"
+      (let* ((data '(:type "Page" :title "Reading" :completion-requirement "must_view"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "type" (gethash "completion_requirement" item)) :to-equal "must_view")
+        (expect (gethash "min_score" (gethash "completion_requirement" item)) :to-be nil))))
+
+  (describe "external URL items"
+    (it "includes external_url for ExternalUrl type"
+      (let* ((data '(:type "ExternalUrl" :title "Google" :external-url "https://www.google.com"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "external_url" item) :to-equal "https://www.google.com")))
+
+    (it "includes new_tab when set"
+      (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com" :new-tab t))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "new_tab" item) :to-be t)))
+
+    (it "excludes new_tab when nil"
+      (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "new_tab" item) :to-be nil)))
+
+    (it "excludes external_url when not present"
+      (let* ((data '(:type "SubHeader" :title "Section"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "external_url" item) :to-be nil)))))
+
+(describe "org-canvas--module-item-build-payload (published)"
+  (it "includes published true in payload"
+    (let* ((data '(:type "SubHeader" :title "Section" :published t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-be t)))
+
+  (it "includes published false as :json-false"
+    (let* ((data '(:type "SubHeader" :title "Section" :published nil))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-equal :json-false)))
+
+  (it "always sends published for ExternalUrl items"
+    ;; Self-owned type: there is no content behind it, and Canvas creates
+    ;; external-url items unpublished when the field is absent.
+    (let* ((data '(:type "ExternalUrl" :title "Syllabus"
+                   :external-url "https://example.com" :published t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-be t)))
+
+  (it "omits published for a linked item that does not declare it"
+    ;; Issue #47: Canvas reads module_item[published] as an instruction to
+    ;; publish the content the item points at, which overrode PUBLISHED in
+    ;; files.org.  Omitted, the content keeps its own state.
+    (let* ((data '(:type "File" :title "lecture.pdf" :content-id 42
+                   :published t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item 'absent) :to-be 'absent)))
+
+  (it "sends published when the item heading declares it"
+    (let* ((data '(:type "File" :title "lecture.pdf" :content-id 42
+                   :published t :published-specified t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-be t)))
+
+  (it "sends published false when the item heading declares it"
+    (let* ((data '(:type "File" :title "lecture.pdf" :content-id 42
+                   :published nil :published-specified t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-equal :json-false))))
+
+(describe "org-canvas--module-item-transform-props (published-specified)"
+  (it "flags published as specified when the heading sets PUBLISHED"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Lab 1" :heading-with-links nil
+                   :canvas-id "42" :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw "false"
+                   :link-info (:type "Assignment" :title "Lab 1"
+                               :content-id 555 :page-url nil)))))
+      (expect (plist-get data :published-specified) :to-be t)
+      (expect (plist-get data :published) :to-be nil)))
+
+  (it "leaves published unspecified when the heading omits PUBLISHED"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Lab 1" :heading-with-links nil
+                   :canvas-id "42" :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw nil
+                   :link-info (:type "Assignment" :title "Lab 1"
+                               :content-id 555 :page-url nil)))))
+      (expect (plist-get data :published-specified) :to-be nil)
+      (expect (plist-get data :published) :to-be t))))
+
+(describe "module item publish state vs. the file that owns it (issue #47)"
+  (it "does not send published for a file item that files.org unpublishes"
+    (let* ((tmpdir (make-temp-file "mod-publish" t))
+           (files-path (expand-file-name "files.org" tmpdir))
+           (modules-path (expand-file-name "modules.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/lecture.pdf][lecture.pdf]]\n"
+                      ":PROPERTIES:\n:PUBLISHED: false\n:CANVAS_ID: 42\n:END:\n"))
+            (with-temp-file modules-path
+              (insert "* Week 1\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 10\n:END:\n"
+                      "** [[file:content/lecture.pdf][lecture.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 5787044\n:END:\n"))
+            (with-current-buffer (find-file-noselect modules-path)
+              (unwind-protect
+                  (let* ((_ (progn (goto-char (point-min))
+                                   (search-forward "** [[file:")
+                                   (org-back-to-heading t)))
+                         (data (org-canvas--module-item-parse-entry tmpdir))
+                         (data-type (plist-get data :type))
+                         (payload (org-canvas--module-item-build-payload data 1))
+                         (item (gethash "module_item" payload)))
+                    (expect data-type :to-equal "File")
+                    (expect (gethash "content_id" item) :to-equal 42)
+                    (expect (gethash "published" item 'absent) :to-be 'absent))
+                (kill-buffer))))
+        (let ((buf (find-buffer-visiting files-path)))
+          (when buf (kill-buffer buf)))
+        (delete-directory tmpdir t)))))
+
+(describe "module item ITEM_TYPE"
+  (it "emits :ITEM_TYPE: SubHeader for SubHeader items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-subheader "Week 1" 101 nil)
+     (expect (buffer-string) :to-match ":ITEM_TYPE: SubHeader")))
+
+  (it "emits :ITEM_TYPE: Page for Page items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 2) (type . "Page") (title . "Reading 1")
+          (page_url . "reading-1") (position . 1) (indent . 0))
+        2 t))
+     (expect (buffer-string) :to-match ":ITEM_TYPE: Page")))
+
+  (it "emits :ITEM_TYPE: Assignment for Assignment items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 3) (type . "Assignment") (title . "HW 1")
+          (content_id . 999) (position . 1) (indent . 0))
+        3 t))
+     (expect (buffer-string) :to-match ":ITEM_TYPE: Assignment")))
+
+  (it "emits :ITEM_TYPE: ExternalUrl for ExternalUrl items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-external-url
+      '((id . 4) (type . "ExternalUrl") (title . "Read this")
+        (external_url . "https://example.com") (position . 1) (indent . 0))
+      4 t)
+     (expect (buffer-string) :to-match ":ITEM_TYPE: ExternalUrl"))))
+
+(describe "module item ITEM_TYPE on push parse"
+  (it "uses :ITEM_TYPE: when present (no link inference)"
+    (with-temp-org-buffer
+     "* My Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Just a section header
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* ")
+     (org-back-to-heading t)
+     (let* ((raw (org-canvas--module-item-read-props (point) "."))
+            (transformed (org-canvas--module-item-transform-props raw))
+            (data (or transformed
+                      (org-canvas--module-classify-unlinked-heading
+                       (plist-get raw :heading-with-links)
+                       (org-canvas--strip-statistics-cookie
+                        (plist-get raw :title-raw))
+                       (org-canvas--module-heading-context
+                        :indent 0 :published t :pom (point)))))
+            (data-type (plist-get data :type)))
+       (expect data-type :to-equal "SubHeader"))))
+
+  (it "falls back to inference when :ITEM_TYPE: is absent"
+    (with-temp-org-buffer
+     "* My Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Plain text heading
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* ")
+     (org-back-to-heading t)
+     (let* ((raw (org-canvas--module-item-read-props (point) "."))
+            (transformed (org-canvas--module-item-transform-props raw))
+            (data (or transformed
+                      (org-canvas--module-classify-unlinked-heading
+                       (plist-get raw :heading-with-links)
+                       (org-canvas--strip-statistics-cookie
+                        (plist-get raw :title-raw))
+                       (org-canvas--module-heading-context
+                        :indent 0 :published t :pom (point)))))
+            (data-type (plist-get data :type)))
+       ;; classify-unlinked-heading should still produce SubHeader here
+       (expect data-type :to-equal "SubHeader")))))
+
+;;;; 3. Stage: Execution - Module Item
+
+(describe "org-canvas--module-item-push-to-api (mocked)"
+  (it "uses POST for new items"
+    (with-test-api
+      (let ((data '(:title "New Item" :canvas-id nil))
+            (payload (make-hash-table)))
+        (org-canvas--module-item-push-to-api 100 data payload)
+        (expect-api-called 'POST "modules/100/items$"))))
+
+  (it "uses PUT for existing items"
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "888"))
+            (payload (make-hash-table)))
+        (org-canvas--module-item-push-to-api 100 data payload)
+        (expect-api-called 'PUT "modules/100/items/888"))))
+
+  (it "retries as POST when PUT returns 404"
+    (with-org-canvas-test-config
+      (let ((call-count 0)
+            (post-called nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (cond
+                      ;; First call: PUT that returns 404
+                      ((and (eq method 'PUT) (= call-count 1))
+                       (signal 'error '("404 Not Found")))
+                      ;; Second call: POST succeeds
+                      ((eq method 'POST)
+                       (setq post-called t)
+                       '((id . 777) (title . "Recovered Item")))
+                      (t nil)))))
+          (let ((data '(:title "Missing Item" :canvas-id "999"))
+                (payload (make-hash-table)))
+            (let ((result (org-canvas--module-item-push-to-api 100 data payload)))
+              (expect post-called :to-be t)
+              (expect (alist-get 'id result) :to-equal 777)))))))
+
+  (it "signals non-404 errors"
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("Bad Request: Invalid item")))
+      (let ((data '(:title "Bad Item" :canvas-id nil))
+            (payload (make-hash-table)))
+        (expect (org-canvas--module-item-push-to-api 100 data payload)
+                :to-throw 'error)))))
+
+(defun test-org-canvas-module-item-payload (type published)
+  "Return a module item payload of TYPE carrying PUBLISHED, as the builder does."
+  (let ((item (make-hash-table :test 'equal))
+        (payload (make-hash-table :test 'equal)))
+    (puthash "type" type item)
+    (puthash "title" "Objectives" item)
+    (puthash "published" published item)
+    (puthash "module_item" item payload)
+    payload))
+
+(describe "org-canvas--module-item-push-to-api publish flag after POST (issue #279)"
+  (it "PUTs the flag when a SubHeader comes back unpublished and returns the PUT's reply"
+    (with-org-canvas-test-config
+      (let ((calls nil) result)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     (pcase method
+                       ('POST '((id . 5879973) (title . "Objectives") (published . :json-false)))
+                       ('PUT '((id . 5879973) (title . "Objectives") (published . t)))))))
+          (setq result (org-canvas--module-item-push-to-api
+                        7 '(:title "Objectives" :type "SubHeader" :canvas-id nil)
+                        (test-org-canvas-module-item-payload "SubHeader" t))))
+        (setq calls (nreverse calls))
+        (expect (length calls) :to-equal 2)
+        (expect (nth 0 (nth 1 calls)) :to-equal 'PUT)
+        (expect (nth 1 (nth 1 calls)) :to-match "modules/7/items/5879973$")
+        (let ((sent (gethash "module_item" (nth 2 (nth 1 calls)))))
+          (expect (gethash "published" sent) :to-be t)
+          (expect (hash-table-count sent) :to-equal 1))
+        (expect (alist-get 'published result) :to-be t)
+        (expect (alist-get 'id result) :to-equal 5879973))))
+
+  (it "sends nothing more when the reply already carries the flag asked for"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 1) (title . "Objectives") (published . t)))))
+          (org-canvas--module-item-push-to-api
+           7 '(:title "Objectives" :type "ExternalUrl" :canvas-id nil)
+           (test-org-canvas-module-item-payload "ExternalUrl" t)))
+        (expect (length calls) :to-equal 1)
+        (expect (nth 0 (car calls)) :to-equal 'POST))))
+
+  (it "leaves an item of a foreign type alone, whatever its reply says"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 2) (title . "Syllabus") (published . :json-false)))))
+          (org-canvas--module-item-push-to-api
+           7 '(:title "Syllabus" :type "Page" :canvas-id nil :page-url "syllabus")
+           (test-org-canvas-module-item-payload "Page" t)))
+        (expect (length calls) :to-equal 1))))
+
+  (it "sends nothing more for a header wanted unpublished that came back unpublished"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 3) (title . "Draft") (published . :json-false)))))
+          (org-canvas--module-item-push-to-api
+           7 '(:title "Draft" :type "SubHeader" :canvas-id nil :published nil)
+           (test-org-canvas-module-item-payload "SubHeader" :json-false)))
+        (expect (length calls) :to-equal 1))))
+
+  (it "keeps the created item and warns once when the follow-up PUT fails"
+    (with-org-canvas-test-config
+      (let ((calls nil) (warnings nil) result)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     (pcase method
+                       ('POST '((id . 4) (title . "Objectives") (published . :json-false)))
+                       ('PUT (signal 'error '("Internal Server Error"))))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (setq result (org-canvas--module-item-push-to-api
+                        7 '(:title "Objectives" :type "SubHeader" :canvas-id nil)
+                        (test-org-canvas-module-item-payload "SubHeader" t))))
+        (expect (length calls) :to-equal 2)
+        (expect (alist-get 'id result) :to-equal 4)
+        (expect (alist-get 'published result) :to-be :json-false)
+        (expect (length warnings) :to-equal 1)
+        (expect (car warnings) :to-match "Objectives.*published flag could not be set.*Internal Server Error"))))
+
+  (it "also fixes the flag of a header recreated after a 404"
+    (with-org-canvas-test-config
+      (let ((calls nil) result)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     (pcase (list method (length calls))
+                       ('(PUT 1) (signal 'error '("404 Not Found")))
+                       ('(GET 2) [])
+                       ('(POST 3) '((id . 9) (title . "Objectives") (published . :json-false)))
+                       ('(PUT 4) '((id . 9) (title . "Objectives") (published . t)))))))
+          (setq result (org-canvas--module-item-push-to-api
+                        7 '(:title "Objectives" :type "SubHeader" :canvas-id "8")
+                        (test-org-canvas-module-item-payload "SubHeader" t))))
+        (setq calls (nreverse calls))
+        (expect (mapcar #'car calls) :to-equal '(PUT GET POST PUT))
+        (expect (nth 1 (nth 3 calls)) :to-match "modules/7/items/9$")
+        (expect (alist-get 'published result) :to-be t))))
+
+  (it "sends nothing under a dry run"
+    (with-org-canvas-test-config
+      (let ((calls nil)
+            (org-canvas--dry-run t))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     nil)))
+          (expect (org-canvas--module-item-push-to-api
+                   7 '(:title "Objectives" :type "SubHeader" :canvas-id nil)
+                   (test-org-canvas-module-item-payload "SubHeader" t))
+                  :to-be org-canvas--dry-run-response))
+        (expect calls :to-equal nil)))))
+
+(describe "org-canvas--module-item-ensure-published"
+  (it "returns a reply without a flag or an id unchanged"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (cl-incf calls) nil)))
+          (let ((payload (test-org-canvas-module-item-payload "SubHeader" t))
+                (data '(:title "Objectives" :type "SubHeader")))
+            (expect (org-canvas--module-item-ensure-published 7 data payload '((id . 1)))
+                    :to-equal '((id . 1)))
+            (expect (org-canvas--module-item-ensure-published
+                     7 data payload '((published . :json-false)))
+                    :to-equal '((published . :json-false)))
+            (expect (org-canvas--module-item-ensure-published 7 data payload nil)
+                    :to-be nil)))
+        (expect calls :to-equal 0))))
+
+  (it "reads no flag from a payload without a module_item"
+    (expect (org-canvas--module-item-wanted-published (make-hash-table)) :to-be nil)
+    (expect (org-canvas--module-item-wanted-published nil) :to-be nil)))
+
+(describe "org-canvas--module-item-push-to-api POST failure after 404"
+  (it "signals error when POST retry also fails"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (cond
+                      ;; PUT returns 404
+                      ((and (eq method 'PUT) (= call-count 1))
+                       (signal 'error '("404 Not Found")))
+                      ;; POST also fails
+                      ((eq method 'POST)
+                       (signal 'error '("Server Error")))
+                      (t nil)))))
+          (let ((data '(:title "Bad" :canvas-id "999"))
+                (payload (make-hash-table)))
+            (expect (org-canvas--module-item-push-to-api 100 data payload)
+                    :to-throw 'error)))))))
+
+(describe "org-canvas--module-item-push-to-api timeout recovery"
+  (it "recovers from timeout when item is found on Canvas"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (cond
+                      ;; First call: POST that times out
+                      ((and (eq method 'POST) (= call-count 1))
+                       (signal 'error '("Request failed" "Timeout")))
+                      ;; Second call: GET items (search after timeout)
+                      ((eq method 'GET)
+                       [((id . 555) (title . "Found Item"))
+                        ((id . 556) (title . "Other Item"))])
+                      (t nil)))))
+          (let ((data '(:title "Found Item" :canvas-id nil))
+                (payload (make-hash-table)))
+            (let ((result (org-canvas--module-item-push-to-api 100 data payload)))
+              (expect (alist-get 'id result) :to-equal 555)))))))
+
+  (it "re-signals timeout when item is not found"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (cond
+                      ;; First call: POST that times out
+                      ((and (eq method 'POST) (= call-count 1))
+                       (signal 'error '("Request failed" "Timeout")))
+                      ;; Search returns no matching items
+                      ((eq method 'GET) [])
+                      (t nil)))))
+          (let ((data '(:title "Missing Item" :canvas-id nil))
+                (payload (make-hash-table)))
+            (expect (org-canvas--module-item-push-to-api 100 data payload)
+                    :to-throw 'error)))))))
+
+(describe "org-canvas--module-find-item-by-title pagination"
+  (it "finds an item that lives on page 2 of the module items list"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        ;; Mock api-request directly so the all-pages helper runs end-to-end.
+        ;; Page 1 returns 100 items (none matching "Target"); page 2 returns
+        ;; 2 items including "Target". A naive single-page caller would miss it.
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (cl-incf calls)
+                     (pcase calls
+                       (1 (vconcat
+                           (cl-loop for i from 1 to 100
+                                    collect `((id . ,i) (title . ,(format "Item %d" i))))))
+                       (2 (vector '((id . 101) (title . "Other"))
+                                  '((id . 102) (title . "Target"))))
+                       (_ (vector))))))
+          (let ((found (org-canvas--module-find-item-by-title "999" "Target")))
+            (expect found :not :to-be nil)
+            (expect (alist-get 'id found) :to-equal 102)
+            (expect calls :to-equal 2))))))
+
+  (it "returns nil when item is missing across all pages"
+    (with-test-api-handler (lambda (_method _url &rest _args) (vector))
+      (expect (org-canvas--module-find-item-by-title "999" "Missing") :to-be nil))))
+
+(describe "org-canvas--module-item-position"
+  (it "returns 1-based positions among siblings"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** First
+** Second
+** Third
+"
+     (goto-char (point-min))
+     (search-forward "** Second")
+     (expect (org-canvas--module-item-position (point)) :to-equal 2)
+     (goto-char (point-min))
+     (search-forward "** First")
+     (expect (org-canvas--module-item-position (point)) :to-equal 1)
+     (goto-char (point-min))
+     (search-forward "** Third")
+     (expect (org-canvas--module-item-position (point)) :to-equal 3))))
+
+(describe "org-canvas--module-item-twins without positions"
+  (it "sorts an item lacking a position after the positioned ones"
+    (let ((twins (org-canvas--module-item-twins
+                  '(:type "SubHeader" :title "T")
+                  '(((id . 9) (type . "SubHeader") (title . "T"))
+                    ((id . 20) (type . "SubHeader") (title . "T") (position . 1)))
+                  nil)))
+      (expect (mapcar (lambda (i) (alist-get 'id i)) twins) :to-equal '(20 9)))))
+
+(describe "org-canvas--module-sync-items (mocked)"
+  (it "returns counts of zero for module with no items"
+    (with-test-api
+      (with-temp-org-buffer
+       "* Empty Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+       (org-back-to-heading)
+       (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
+         (expect counts :to-equal '(0 0 0)))))))
+
+(describe "org-canvas--module-sync-items with items (mocked)"
+  (it "syncs SubHeader items without content-id"
+    (with-test-api
+      (with-temp-org-buffer
+       "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Section Header
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (let ((marker (point-marker)))
+         (let ((results (org-canvas--module-sync-items 100 (marker-position marker) default-directory)))
+           ;; SubHeaders can be synced - results is (success skip fail)
+           (expect (numberp (car results)) :to-be t))))))
+
+  (it "skips items without content-id or page-url"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                   (lambda (_link _dir)
+                     ;; Return linked item without canvas-id
+                     '(:type "Page" :title "Unsynced" :content-id nil :page-url nil)))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     '((id . 123)))))
+          (with-temp-org-buffer
+           "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:unsynced.org::*Heading][Link]]
+:PROPERTIES:
+:END:
+"
+           (org-back-to-heading)
+           (let ((marker (point-marker)))
+             (let ((results (org-canvas--module-sync-items 100 (marker-position marker) default-directory)))
+               ;; Counted as a skip (not a failure): the target simply
+               ;; has no CANVAS_ID yet
+               (expect (nth 1 results) :to-be-greater-than 0)
+               (expect (nth 2 results) :to-equal 0))))))))
+
+  (it "records skipped item titles in the global sync stats"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Unsynced" :content-id nil :page-url nil))))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:unsynced.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+         (org-back-to-heading)
+         (let ((org-canvas--sync-global-counters
+                (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+               (org-canvas--sync-global-feature-stats nil)
+               (marker (point-marker)))
+           (org-canvas--module-sync-items 100 (marker-position marker) default-directory)
+           (let ((entry (car org-canvas--sync-global-feature-stats)))
+             (expect (plist-get entry :label) :to-equal "Module Items")
+             (expect (plist-get entry :skip) :to-equal 1)
+             (expect (car (plist-get entry :skipped-titles))
+                     :to-match "no linked content synced"))
+           (expect (plist-get org-canvas--sync-global-counters :skip)
+                   :to-equal 1)))))))
+
+(describe "org-canvas--module-sync-items edge cases (mocked)"
+  (it "increments fail count on item parse error"
+    (with-test-api
+      (with-temp-org-buffer
+       "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Bad Item
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas--module-item-parse-entry)
+                  (lambda (_dir) (error "Parse error"))))
+         (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
+           ;; Parse errors are real failures (third element)
+           (expect (nth 2 counts) :to-be-greater-than 0)))))))
+
+(describe "org-canvas--module-sync-items integration"
+  (it "syncs child items of a module"
+    (let ((temp-pages (make-temp-file "pages-" nil ".org"))
+          (temp-modules (make-temp-file "modules-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-pages
+              (insert "* Page A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n\n* Page B\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n"))
+            (with-temp-file temp-modules
+              (insert (format "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 50\n:END:\n** [[file:%s::*Page A][Page A]]\n:PROPERTIES:\n:END:\n** [[file:%s::*Page B][Page B]]\n:PROPERTIES:\n:END:\n"
+                              temp-pages temp-pages)))
+            (with-test-api
+              (with-current-buffer (find-file-noselect temp-modules)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((result (org-canvas--module-sync-items
+                               "50" (point) (file-name-directory temp-modules))))
+                  ;; Both items should be processed successfully
+                  (expect (car result) :to-be-truthy)
+                  (expect (apply #'+ result) :to-be-truthy))
+                (kill-buffer))))
+        (delete-file temp-pages)
+        (delete-file temp-modules)))))
+
+;;;; 4. Stage: Finalization - Module Item
+
+(describe "org-canvas--module-item-finalize (uses module-finalize)"
+  (it "saves CANVAS_ID for module item"
+    (with-temp-org-buffer
+     "* Module
+** Test Item
+:PROPERTIES:
+:END:
+"
+     (search-forward "Test Item")
+     (org-back-to-heading)
+     (let ((data (list :title "Test Item" :pom (point-marker)))
+           (response '((id . 55555))))
+       (org-canvas--module-finalize data response)
+       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55555")))))
+
+;;;; Cross-Module Moves
+
+(describe "org-canvas--module-item-live-p"
+  (it "says so with one warning when the read fails (issue #435)"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (org-canvas--signal 'org-canvas-api-error "401")))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (expect (org-canvas--module-item-live-p 10 55) :to-be nil)
+        (expect (length logged) :to-equal 1)
+        (expect (car logged)
+                :to-match "Could not read module 10's item 55"))))
+
+  (it "answers live for an item the read returns"
+    (with-test-api-handler (lambda (&rest _) '((id . 55) (title . "There")))
+      (expect (org-canvas--module-item-live-p 10 55) :to-be-truthy)))
+
+  (it "answers not live for an item the read does not return"
+    (with-test-api-handler (lambda (&rest _) '((id . 56) (title . "Other")))
+      (expect (org-canvas--module-item-live-p 10 55) :to-be nil))))
+
+(describe "module item cross-module move (issue #105)"
+  (defmacro test-org-canvas--with-module-remote (remote &rest body)
+    "Run BODY with the module item list mocked to REMOTE and requests recorded.
+REMOTE is a form; the symbol `fail' makes the list request signal.
+`requests' collects (METHOD URL) for every `org-canvas-api-request'."
+    (declare (indent 1))
+    `(let ((requests nil)
+           (ctx (org-canvas--sync-make-ctx)))
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (&rest _)
+                    (if (eq ,remote 'fail) (error "listing failed") ,remote)))
+                 ((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    ;; A PUT answers with the item it updated; a POST with a new id.
+                    (if (and (eq method 'PUT) (string-match "/items/\\([0-9]+\\)$" url))
+                        `((id . ,(string-to-number (match-string 1 url))) (title . "Updated"))
+                      '((id . 900) (title . "Created"))))))
+         ,@body)))
+
+  (it "creates an item here when the module does not hold its id, and remembers the old id"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 77) (title . "Other")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
+         ;; POST to the module, not PUT against an item it does not hold.
+         (expect (cl-find-if (lambda (r) (and (eq (car r) 'POST)
+                                              (string-match-p "modules/100/items$" (cadr r))))
+                             requests)
+                 :to-be-truthy)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'PUT)) requests) :to-be nil)
+         (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+         (search-forward "** Check 3")
+         (org-back-to-heading t)
+         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900")))))
+
+  (it "keeps a same-module reorder on PUT"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
+         (expect (cl-find-if (lambda (r) (and (eq (car r) 'PUT)
+                                              (string-match-p "modules/100/items/55$" (cadr r))))
+                             requests)
+                 :to-be-truthy)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
+         (expect (plist-get ctx :module-items-moved) :to-be nil)))))
+
+  (it "removes an unclaimed remote item another module's heading claims, when it cannot be moved there"
+    ;; The move mutation's reply here names no module, and the re-read
+    ;; finds none, so the #352 move falls back to the delete.
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
+         (expect (cl-find-if (lambda (r) (and (eq (car r) 'DELETE)
+                                              (string-match-p "modules/100/items/55$" (cadr r))))
+                             requests)
+                 :to-be-truthy)))))
+
+  (it "removes an unclaimed remote item that was recreated elsewhere this run"
+    ;; Its new heading is already restamped, so no heading claims the old id.
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (plist-put ctx :module-items-moved '("55"))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be-truthy)))))
+
+  (it "leaves an unlisted remote item in place and names it"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Web UI item")))
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-org-buffer
+             "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+             (org-back-to-heading)
+             (org-canvas--module-sync-items 100 (point) default-directory ctx)))
+          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
+          (expect (car warnings) :to-match "holds 'Web UI item' (item 55) that modules.org does not list")))))
+
+  (it "keeps a remote item this module's own heading claims, even if a copy claims it too"
+    ;; A duplicated drawer: this module holds 55 and lists it; the copy
+    ;; under Week 2 is the reconcile's problem when Week 2 syncs.
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)))))
+
+  (it "reconciles nothing when the item list cannot be fetched"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote 'fail
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-org-buffer
+             "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+             (org-back-to-heading)
+             (org-canvas--module-sync-items 100 (point) default-directory ctx)))
+          ;; PUT by id, as before; no delete; and it says so.
+          (expect (cl-find-if (lambda (r) (eq (car r) 'PUT)) requests) :to-be-truthy)
+          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
+          (expect (cl-find-if (lambda (w) (string-match-p "moved items will not be reconciled" w))
+                              warnings)
+                  :to-be-truthy)))))
+
+  (it "sends no delete during a dry run"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (let ((org-canvas--dry-run t))
+          (with-temp-org-buffer
+           "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+           (org-back-to-heading)
+           (expect (org-canvas--module-reconcile-departed
+                    100 (point) '(((id . 55) (title . "Check 3"))) nil)
+                   :to-equal 0)
+           (expect requests :to-be nil))))))
+
+  (it "survives a failed delete and says so"
+    (with-org-canvas-test-config
+      (let ((warnings nil)
+            (ctx (org-canvas--sync-make-ctx :module-items-moved '("55"))))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "HTTP 500")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (with-temp-org-buffer "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+            (org-back-to-heading)
+            (expect (org-canvas--module-reconcile-departed
+                     100 (point) '(((id . 55) (title . "Check 3"))) nil ctx)
+                    :to-equal 0)))
+        (expect (car warnings) :to-match "Could not remove moved item 55"))))
+
+  (it "keeps the moved list in the run context, so it dies with the run (issue #141)"
+    ;; No global survives the sync: a fresh context starts empty, which
+    ;; is what makes the list unable to leak into the next run.
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (org-canvas--module-item-disown-foreign-id
+       (list :canvas-id "55" :title "Check 3") 100 '(((id . 77))) ctx)
+      (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+      (expect (plist-get (org-canvas--sync-make-ctx) :module-items-moved)
+              :to-be nil))))
+
+(describe "module item adoption (issue #179)"
+  (defmacro test-org-canvas-179--with-remote (remote &rest body)
+    "Run BODY with the module's item list mocked to REMOTE, a vector form.
+The real API answers with a vector, so the mock does too; a list
+would hide a `car' on a vector.  `requests' collects (METHOD URL) for
+every `org-canvas-api-request'; `warnings' the warning lines; `ctx'
+is a fresh run context.  A PUT answers with the item it updated, a
+POST with id 900."
+    (declare (indent 1))
+    `(let ((requests nil)
+           (warnings nil)
+           (ctx (org-canvas--sync-make-ctx)))
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (&rest _) ,remote))
+                 ((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) warnings)))
+                 ((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    (if (and (eq method 'PUT) (string-match "/items/\\([0-9]+\\)$" url))
+                        `((id . ,(string-to-number (match-string 1 url))) (title . "Updated"))
+                      '((id . 900) (title . "Created"))))))
+         ,@body)))
+
+  (defmacro test-org-canvas-179--with-assignment-link (&rest body)
+    "Run BODY with every module item link resolving to assignment 2563803."
+    (declare (indent 0))
+    `(cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                (lambda (_link _dir)
+                  '(:type "Assignment" :title "R3: Stakeholders" :content-id "2563803"))))
+       ,@body))
+
+  (defconst test-org-canvas-179--twins
+    [((id . 5864670) (type . "Assignment") (title . "R3: Stakeholders")
+      (content_id . 2563803) (position . 10))
+     ((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+      (content_id . 2563803) (position . 10))]
+    "The two items of Clemson module 781703: one content, twice.")
+
+  (defun test-org-canvas-179--request (requests method pattern)
+    "Return the request in REQUESTS of METHOD whose URL matches PATTERN."
+    (cl-find-if (lambda (r) (and (eq (car r) method)
+                                 (string-match-p pattern (cadr r))))
+                requests))
+
+  (it "adopts the item the module already holds for the same content: PUT, not POST"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+            (content_id . 2563803) (position . 10))]
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/5864661$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+           (expect (plist-get ctx :module-items-adopted) :to-equal '("5864661"))
+           (search-forward "R3: Stakeholders")
+           (org-back-to-heading t)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "5864661")
+           ;; Adopted, so not "left in place" either.
+           (expect warnings :to-be nil))))))
+
+  (it "does not adopt an item of another type, even with the same content id"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Quiz") (title . "R3: Stakeholders")
+            (content_id . 2563803))]
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'PUT ".") :to-be nil))))))
+
+  (it "still creates the item when the module holds nothing with its content"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+            (content_id . 999))]
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                   :to-be-truthy)
+           (expect (plist-get ctx :module-items-adopted) :to-be nil)
+           (search-forward "R3: Stakeholders")
+           (org-back-to-heading t)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900"))))))
+
+  (it "adopts a SubHeader and an external URL by title"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 41) (type . "SubHeader") (title . "Readings") (position . 1))
+           ((id . 42) (type . "ExternalUrl") (title . "Course site")
+            (external_url . "https://example.edu") (position . 2))]
+        (with-temp-org-buffer
+         "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+** Course site
+:PROPERTIES:
+:EXTERNAL_URL: https://example.edu
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+         (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/41$")
+                 :to-be-truthy)
+         (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/42$")
+                 :to-be-truthy)
+         (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+         (search-forward "** Course site")
+         (org-back-to-heading t)
+         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")))))
+
+  (it "does not adopt a SubHeader whose title differs"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 41) (type . "SubHeader") (title . "Reading list"))]
+        (with-temp-org-buffer
+         "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+         (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                 :to-be-truthy)))))
+
+  (it "makes no write during a dry run, and logs the adoption without stamping it"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+            (content_id . 2563803))]
+        (test-org-canvas-179--with-assignment-link
+          (let ((org-canvas--dry-run t)
+                (lines nil))
+            (cl-letf (((symbol-function 'org-canvas--log-info)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) lines))))
+              (with-temp-org-buffer
+               "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+               (org-back-to-heading)
+               (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+               (expect requests :to-be nil)
+               (search-forward "R3: Stakeholders")
+               (org-back-to-heading t)
+               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
+            (expect (cl-find-if (lambda (l) (string-match-p "adopting it" l)) lines)
+                    :to-be-truthy)
+            (expect (cl-find-if (lambda (l) (string-match-p "Would PUT item" l)) lines)
+                    :to-be-truthy)
+            ;; The adopted id counts as claimed, so the reconcile does
+            ;; not call it an unlisted item.
+            (expect warnings :to-be nil))))))
+
+  (it "adopts the first twin by position and id, names the rest, and deletes nothing"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-179--twins
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'PUT "items/5864661$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'DELETE ".") :to-be nil)
+           (expect (cl-find-if (lambda (w) (string-match-p "1 more item(s) with the same content as 'R3: Stakeholders' (5864670)" w))
+                               warnings)
+                   :to-be-truthy)
+           ;; And the reconcile still names the twin as unlisted (issue #105).
+           (expect (cl-find-if (lambda (w) (string-match-p "(item 5864670) that modules.org does not list" w))
+                               warnings)
+                   :to-be-truthy))))))
+
+  (it "leaves alone the twin a sibling heading claims, and adopts the other"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-179--twins
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+:PROPERTIES:
+:CANVAS_ID: 5864661
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'PUT "items/5864661$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'PUT "items/5864670$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+           (expect (plist-get ctx :module-items-adopted) :to-equal '("5864670")))))))
+
+  (it "adopts nothing when the item list could not be fetched"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote (error "listing failed")
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                   :to-be-truthy))))))
+
+  (it "matches a page by its url when the link carries no content id"
+    (let ((data '(:type "Page" :title "Welcome" :page-url "welcome")))
+      (expect (org-canvas--module-item-same-content-p
+               data '((type . "Page") (page_url . "welcome") (title . "Renamed")))
+              :to-be-truthy)
+      (expect (org-canvas--module-item-same-content-p
+               data '((type . "Page") (page_url . "syllabus") (title . "Welcome")))
+              :to-be nil)))
+
+  (it "orders twins by position, then id"
+    (let ((twins (org-canvas--module-item-twins
+                  '(:type "SubHeader" :title "T")
+                  '(((id . 30) (type . "SubHeader") (title . "T") (position . 2))
+                    ((id . 20) (type . "SubHeader") (title . "T") (position . 1))
+                    ((id . 10) (type . "SubHeader") (title . "T") (position . 2))
+                    ((id . 5) (type . "SubHeader") (title . "Other") (position . 1)))
+                  nil)))
+      (expect (mapcar (lambda (i) (alist-get 'id i)) twins) :to-equal '(20 10 30)))))
+
+(describe "the retry pass adopts a twin before it POSTs (issue #308)"
+  (defmacro test-org-canvas-308--with-closer (&rest body)
+    "Run BODY in a module 781703 holding an unstamped \"Closer\" heading.
+`target-id' is the Canvas id the heading's link target resolves to;
+nil until the test sets it, as when the target syncs later in the run.
+`closer' is a marker on the item heading, `module' on the module
+heading."
+    (declare (indent 0))
+    `(let ((target-id nil))
+       (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                  (lambda (_link _dir)
+                    (list :type "Assignment" :title "Closer" :content-id target-id))))
+         (with-temp-org-buffer
+          "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:PAYLOAD_HASH: stale
+:END:
+** [[file:assignments.org::*Closer][Closer]]
+"
+          (let ((org-canvas-modules-file (buffer-file-name))
+                (module (progn (goto-char (point-min)) (point-marker)))
+                (closer (progn (search-forward "** ") (org-back-to-heading t)
+                               (point-marker))))
+            ,@body)))))
+
+  (defconst test-org-canvas-308--remote
+    [((id . 5864661) (type . "Assignment") (title . "Closer")
+      (content_id . 10) (position . 1))]
+    "Module 781703 already holds \"Closer\", linked to assignment 10.")
+
+  (defun test-org-canvas-308--entry (marker)
+    "Return a pending entry for the item heading at MARKER."
+    (list :module-id 781703 :marker (copy-marker marker)
+          :title "Closer" :dir default-directory))
+
+  (it "PUTs the item the module already holds when the target gains its id this run"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          ;; The module pass: the target has no id, so the heading is
+          ;; skipped and left for the retry pass.
+          (org-canvas--module-sync-items 781703 module default-directory ctx)
+          (expect requests :to-be nil)
+          (expect (length (plist-get ctx :module-items-pending)) :to-equal 1)
+          ;; The target syncs later in the run.
+          (setq target-id "10")
+          (org-canvas--module-retry-pending-items (plist-get ctx :module-items-pending))
+          (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/5864661$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+          (expect (org-entry-get closer "CANVAS_ID") :to-equal "5864661")))))
+
+  (it "still creates the item when the module holds nothing with its content"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "Closer")
+            (content_id . 99))]
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (expect (org-canvas--module-retry-single-pending
+                   (test-org-canvas-308--entry closer))
+                  :to-equal "Closer")
+          (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                  :to-be-truthy)
+          (expect (org-entry-get closer "CANVAS_ID") :to-equal "900")))))
+
+  (it "reads each module's item list once across the pass"
+    (with-org-canvas-test-config
+      (let ((reads 0))
+        (test-org-canvas-179--with-remote
+            (progn (cl-incf reads) [])
+          (test-org-canvas-308--with-closer
+            (setq target-id "10")
+            (let ((cache (make-hash-table :test #'equal)))
+              (org-canvas--module-retry-module-state 781703 cache)
+              (org-canvas--module-retry-module-state 781703 cache))
+            (expect reads :to-equal 1))))))
+
+  (it "leaves an unstamped item pending, and POSTs nothing, when the list cannot be read"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote (error "listing failed")
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (expect (org-canvas--module-retry-single-pending
+                   (test-org-canvas-308--entry closer))
+                  :to-be nil)
+          (expect requests :to-be nil)
+          (expect (cl-find-if (lambda (w) (string-match-p "'Closer' stays pending" w))
+                              warnings)
+                  :to-be-truthy)))))
+
+  (it "PUTs a stamped item without reading the list"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote (error "must not be read")
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (org-entry-put closer "CANVAS_ID" "777")
+          (expect (org-canvas--module-retry-single-pending
+                   (test-org-canvas-308--entry closer))
+                  :to-equal "Closer")
+          (expect (test-org-canvas-179--request requests 'PUT "items/777$")
+                  :to-be-truthy)))))
+
+  (it "does not adopt the twin a sibling heading claims"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (save-excursion
+            (goto-char (point-max))
+            (insert "** Sibling\n:PROPERTIES:\n:CANVAS_ID: 5864661\n:END:\n"))
+          (org-canvas--module-retry-single-pending (test-org-canvas-308--entry closer))
+          (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-179--request requests 'PUT ".") :to-be nil)))))
+
+  (it "adopts one twin for one heading only, within a dry run too"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (let ((org-canvas--dry-run t)
+                (cache (make-hash-table :test #'equal))
+                (lines nil))
+            (cl-letf (((symbol-function 'org-canvas--log-info)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) lines))))
+              (org-canvas--module-retry-single-pending
+               (test-org-canvas-308--entry closer) cache)
+              (org-canvas--module-retry-single-pending
+               (test-org-canvas-308--entry closer) cache))
+            (expect (cl-find-if (lambda (l) (string-match-p "Would PUT item 'Closer'" l)) lines)
+                    :to-be-truthy)
+            ;; The second heading finds the twin taken and would create.
+            (expect (cl-find-if (lambda (l) (string-match-p "Would POST item 'Closer'" l)) lines)
+                    :to-be-truthy))))))
+
+  (it "writes nothing during a dry run and counts the item as would-sync"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (let ((org-canvas--dry-run t)
+                (org-canvas--sync-global-counters
+                 (list :success 0 :skip 1 :fail 0 :dry-run 0 :deferred 0))
+                (org-canvas--sync-global-feature-stats
+                 (list (list :label "Module Items" :success 0 :skip 1 :fail 0
+                             :dry-run 0 :deferred 0 :failed-titles nil
+                             :skipped-titles '("Closer (no linked content synced)")))))
+            (org-canvas--module-retry-pending-items
+             (list (test-org-canvas-308--entry closer)))
+            (expect requests :to-be nil)
+            (expect (org-entry-get closer "CANVAS_ID") :to-be nil)
+            (expect (org-entry-get module "PAYLOAD_HASH") :to-equal "stale")
+            (expect (buffer-modified-p) :to-be nil)
+            (expect (plist-get org-canvas--sync-global-counters :dry-run) :to-equal 1)
+            (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 0)
+            (let ((entry (car org-canvas--sync-global-feature-stats)))
+              (expect (plist-get entry :dry-run) :to-equal 1)
+              (expect (plist-get entry :skip) :to-equal 0))))))))
+
+;;;; Moving an Item Keeps Its Id (issue #352)
+
+(defconst test-org-canvas-352--arrived
+  "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+  "Week 1, whose heading carries item 55, which Canvas holds elsewhere.")
+
+(defconst test-org-canvas-352--departed
+  "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Intro
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 60
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+  "Week 1 holds item 55 on Canvas; its heading is second under Week 2.")
+
+(defconst test-org-canvas-352--moved-reply
+  '((reorderModuleItems . ((module . ((_id . "100")))
+                           (oldModule . ((_id . "300")))
+                           (errors . nil))))
+  "What Canvas answers when item 55 lands in module 100.")
+
+(defmacro test-org-canvas-352--with-move (spec &rest body)
+  "Run BODY with the module item requests mocked as SPEC says.
+SPEC is a plist: :remote, the module's item list; :home, the module
+`moduleItem' names (a list is answered one element per read, the last
+repeating); :live, whether the REST read of the item there succeeds;
+:reply, what the move mutation answers, or `fail' to signal.  Binds
+`requests' ((METHOD URL DATA)), `mutations' (variables sent), `homes' (the
+reads' variables) and `ctx'."
+  (declare (indent 1))
+  `(let ((requests nil) (mutations nil) (homes nil)
+         (ctx (org-canvas--sync-make-ctx))
+         (spec (list ,@spec)))
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (&rest _) (plist-get spec :remote)))
+               ((symbol-function 'org-canvas-api-request)
+                (lambda (method url &rest args)
+                  (push (list method url (plist-get args :data)) requests)
+                  (cond
+                   ((and (memq method '(GET PUT))
+                         (string-match "/items/\\([0-9]+\\)$" url))
+                    (if (and (eq method 'GET) (not (plist-get spec :live)))
+                        (error "HTTP 404")
+                      `((id . ,(string-to-number (match-string 1 url))))))
+                   (t '((id . 900))))))
+               ((symbol-function 'org-canvas--graphql-query)
+                (lambda (_document variables)
+                  (push variables homes)
+                  (let ((home (plist-get spec :home)))
+                    (when (consp home)
+                      (when (cdr home) (plist-put spec :home (cdr home)))
+                      (setq home (car home)))
+                    (and home `((moduleItem . ((_id . "55")
+                                               (module . ((_id . ,home))))))))))
+               ((symbol-function 'org-canvas--graphql-mutate)
+                (lambda (_what _document variables)
+                  (push variables mutations)
+                  (let ((reply (plist-get spec :reply)))
+                    (if (eq reply 'fail) (error "Timeout was reached") reply)))))
+       ,@body)))
+
+(defun test-org-canvas-352--sent-p (requests method pattern)
+  "Return non-nil when REQUESTS hold a METHOD request whose URL matches PATTERN."
+  (cl-find-if (lambda (r) (and (eq (car r) method) (string-match-p pattern (cadr r))))
+              requests))
+
+(describe "a module item moved in keeps its id (issue #352)"
+  (it "moves the item in from the module Canvas holds it in, and updates it there"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 77) (title . "Other")))
+                                       :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (with-temp-org-buffer test-org-canvas-352--arrived
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx)
+          (expect (length mutations) :to-equal 1)
+          (let ((vars (car mutations)))
+            (expect (alist-get 'moduleId vars) :to-equal "100")
+            (expect (alist-get 'oldModuleId vars) :to-equal "300")
+            (expect (alist-get 'itemIds vars) :to-equal ["55"])
+            (expect (alist-get 'position vars) :to-equal 1))
+          ;; The item was read where moduleItem put it before anything moved.
+          (expect (test-org-canvas-352--sent-p requests 'GET "modules/300/items/55$")
+                  :to-be-truthy)
+          ;; Updated in place under its new module; nothing created or deleted.
+          (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$") :to-be nil)
+          (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)
+          (expect (plist-get ctx :module-items-moved) :to-be nil)
+          (expect (plist-get ctx :module-items-relocated) :to-equal '(("55" . "100")))
+          (expect (plist-get ctx :remote-touched) :to-be t)
+          (search-forward "** Check 3")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55")))))
+
+  (it "falls back to creating it here when Canvas refuses the move"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote nil :home "300" :live t
+           :reply '((reorderModuleItems
+                     . ((module . nil)
+                        (errors . [((attribute . "item_ids")
+                                    (message . "Items do not belong to source module"))])))))
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-org-buffer test-org-canvas-352--arrived
+              (org-back-to-heading)
+              (org-canvas--module-sync-items 100 (point) default-directory ctx)
+              (search-forward "** Check 3")
+              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900")))
+          (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$")
+                  :to-be-truthy)
+          (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+          (expect (plist-get ctx :module-items-relocated) :to-be nil)
+          (expect (plist-get ctx :remote-touched) :to-be nil)
+          (expect (cl-find-if (lambda (w) (string-match-p
+                                           "Could not move item 55 .*Items do not belong to source module.*new id instead"
+                                           w))
+                              warnings)
+                  :to-be-truthy)))))
+
+  (it "keeps the id when a move that failed in transit landed after all"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home '("300" "100") :live t
+                                       :reply 'fail)
+        (with-temp-org-buffer test-org-canvas-352--arrived
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx)
+          ;; Read once to find it, once after the failure to check.
+          (expect (length homes) :to-equal 2)
+          (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$") :to-be nil)
+          (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                  :to-be-truthy)
+          (search-forward "** Check 3")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55")))))
+
+  (it "sends no move when it cannot say where the item is, or finds it gone"
+    (with-org-canvas-test-config
+      (dolist (answer '((nil t) ("300" nil) ("100" t)))
+        (test-org-canvas-352--with-move (:remote nil :home (car answer)
+                                         :live (cadr answer)
+                                         :reply test-org-canvas-352--moved-reply)
+          (with-temp-org-buffer test-org-canvas-352--arrived
+            (org-back-to-heading)
+            (org-canvas--module-sync-items 100 (point) default-directory ctx)
+            (expect mutations :to-be nil)
+            (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+            (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$")
+                    :to-be-truthy))))))
+
+  (it "reads nothing when the module's list could not be read"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (cl-letf (((symbol-function 'org-canvas--module-remote-items)
+                   (lambda (_) 'unknown)))
+          (with-temp-org-buffer test-org-canvas-352--arrived
+            (org-back-to-heading)
+            (org-canvas--module-sync-items 100 (point) default-directory ctx)))
+        (expect homes :to-be nil)
+        (expect mutations :to-be nil)
+        (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                :to-be-truthy))))
+
+  (it "takes a move this run already made as done, without reading again"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (plist-put ctx :module-items-relocated '(("55" . "100")))
+        (with-temp-org-buffer test-org-canvas-352--arrived
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect homes :to-be nil)
+        (expect mutations :to-be nil)
+        (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                :to-be-truthy))))
+
+  (it "previews the move in a dry run and sends nothing"
+    (with-org-canvas-test-config
+      (let ((mutate (symbol-function 'org-canvas--graphql-mutate))
+            (sent nil)
+            (lines nil))
+        (test-org-canvas-352--with-move (:remote nil :home "300" :live t)
+          (cl-letf (((symbol-function 'org-canvas--graphql-mutate) mutate)
+                    ((symbol-function 'org-canvas--graphql-send)
+                     (lambda (document &rest _) (push document sent)))
+                    ((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) lines))))
+            (let ((org-canvas--dry-run t))
+              (with-temp-org-buffer test-org-canvas-352--arrived
+                (org-back-to-heading)
+                (org-canvas--module-sync-items 100 (point) default-directory ctx)
+                (search-forward "** Check 3")
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55"))))
+          (expect sent :to-be nil)
+          (expect (cl-remove-if-not (lambda (r) (memq (car r) '(POST PUT DELETE))) requests)
+                  :to-be nil)
+          (expect (cl-find-if (lambda (l) (string-match-p
+                                           "\\[DRY-RUN\\] Would move item 55 'Check 3' from module 300 to module 100"
+                                           l))
+                              lines)
+                  :to-be-truthy)
+          (expect (plist-get ctx :module-items-relocated) :to-equal '(("55" . "100")))
+          (expect (plist-get ctx :remote-touched) :to-be nil))))))
+
+(describe "a module item that moved away keeps its id (issue #352)"
+  (it "moves it to the module whose heading claims it, at that heading's place"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote '(((id . 55) (title . "Check 3")))
+           :reply '((reorderModuleItems . ((module . ((_id . "200"))) (errors . nil)))))
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (let ((vars (car mutations)))
+          (expect (alist-get 'moduleId vars) :to-equal "200")
+          (expect (alist-get 'oldModuleId vars) :to-equal "100")
+          (expect (alist-get 'itemIds vars) :to-equal ["55"])
+          (expect (alist-get 'position vars) :to-equal 2))
+        (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)
+        (expect (plist-get ctx :module-items-relocated) :to-equal '(("55" . "200")))
+        (expect (plist-get ctx :remote-touched) :to-be t))))
+
+  (it "deletes it, as before, when the move fails and Canvas still holds it here"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 55) (title . "Check 3")))
+                                       :home "100" :reply 'fail)
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--sent-p requests 'DELETE "modules/100/items/55$")
+                :to-be-truthy)
+        (expect (plist-get ctx :module-items-relocated) :to-be nil))))
+
+  (it "leaves it for its new module when that module has no Canvas id yet"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 55) (title . "Check 3")))
+                                       :reply test-org-canvas-352--moved-reply)
+        (let ((lines nil))
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) lines))))
+            (with-temp-org-buffer (replace-regexp-in-string
+                                   ":CANVAS_ID: 200\n" "" test-org-canvas-352--departed)
+              (org-back-to-heading)
+              (org-canvas--module-sync-items 100 (point) default-directory ctx)))
+          (expect mutations :to-be nil)
+          (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)
+          (expect (cl-find-if (lambda (l) (string-match-p
+                                           "Item 55 'Check 3' stays in module 100 until module 'Week 2'"
+                                           l))
+                              lines)
+                  :to-be-truthy)))))
+
+  (it "leaves alone an item this run already moved to its new module"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 55) (title . "Check 3")))
+                                       :reply test-org-canvas-352--moved-reply)
+        (plist-put ctx :module-items-relocated '(("55" . "200")))
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect mutations :to-be nil)
+        (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)))))
+
+(defun test-org-canvas-352--requirement-sent (requests pattern)
+  "Return the completion requirement a PUT in REQUESTS to PATTERN carried.
+A cons (TYPE . MIN-SCORE) from the first such PUT's body, or nil."
+  (cl-some (lambda (r)
+             (let* ((data (nth 2 r))
+                    (item (and (hash-table-p data) (gethash "module_item" data)))
+                    (req (and item (gethash "completion_requirement" item))))
+               (when (and (eq (car r) 'PUT) (string-match-p pattern (cadr r)) req)
+                 (cons (gethash "type" req) (gethash "min_score" req)))))
+           requests))
+
+(defun test-org-canvas-352--with-requirement (text requirement &optional min-score)
+  "Return TEXT with REQUIREMENT (and MIN-SCORE) on the heading of item 55."
+  (replace-regexp-in-string
+   ":CANVAS_ID: 55\n"
+   (concat ":CANVAS_ID: 55\n:COMPLETION_REQUIREMENT: " requirement "\n"
+           (if min-score (format ":MIN_SCORE: %s\n" min-score) ""))
+   (replace-regexp-in-string "^:ITEM_TYPE: SubHeader\n:CANVAS_ID: 55\n"
+                             ":EXTERNAL_URL: https://example.edu/check\n:CANVAS_ID: 55\n"
+                             text)
+   t t))
+
+(describe "a moved item gets its completion requirement back (issue #352)"
+  ;; Verified live 2026-09-27: reorderModuleItems drops the item's
+  ;; requirement, which the module it left kept for it.
+  (it "sets it on the new module when the old module moves the item"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote '(((id . 55) (title . "Check 3")))
+           :reply '((reorderModuleItems . ((module . ((_id . "200"))) (errors . nil)))))
+        (with-temp-org-buffer (test-org-canvas-352--with-requirement
+                               test-org-canvas-352--departed "min_score" 7)
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--requirement-sent requests "modules/200/items/55$")
+                :to-equal '("min_score" . 7)))))
+
+  (it "sets it on this module when this module moves the item in"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (with-temp-org-buffer (test-org-canvas-352--with-requirement
+                               test-org-canvas-352--arrived "must_view")
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        ;; Once right after the move, and again with the item's own PUT.
+        (expect (test-org-canvas-352--requirement-sent requests "modules/100/items/55$")
+                :to-equal '("must_view"))
+        (expect (cl-count-if (lambda (r) (and (eq (car r) 'PUT)
+                                              (string-match-p "modules/100/items/55$" (cadr r))))
+                             requests)
+                :to-equal 2))))
+
+  (it "sets it even when the item moved in is left pending by its link"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (with-temp-org-buffer "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:no-such-assignments.org::*Essay][Essay]]
+:PROPERTIES:
+:CANVAS_ID: 55
+:COMPLETION_REQUIREMENT: must_submit
+:END:
+"
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--requirement-sent requests "modules/100/items/55$")
+                :to-equal '("must_submit")))))
+
+  (it "sends nothing more when the heading declares no requirement"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote '(((id . 55) (title . "Check 3")))
+           :reply '((reorderModuleItems . ((module . ((_id . "200"))) (errors . nil)))))
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--sent-p requests 'PUT "modules/200/items/55$")
+                :to-be nil))))
+
+  (it "names the requirement it would set in a dry run, and sends nothing"
+    (with-org-canvas-test-config
+      (let ((lines nil))
+        (test-org-canvas-352--with-move
+            (:remote '(((id . 55) (title . "Check 3")))
+             :reply org-canvas--dry-run-response)
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) lines))))
+            (let ((org-canvas--dry-run t))
+              (with-temp-org-buffer (test-org-canvas-352--with-requirement
+                                     test-org-canvas-352--departed "must_view")
+                (org-back-to-heading)
+                (org-canvas--module-sync-items 100 (point) default-directory ctx))))
+          (expect (test-org-canvas-352--sent-p requests 'PUT ".") :to-be nil)
+          (expect (cl-find-if (lambda (l) (string-match-p
+                                           "\\[DRY-RUN\\] Would set completion requirement must_view on item 55 'Check 3' in module 200"
+                                           l))
+                              lines)
+                  :to-be-truthy)))))
+
+  (it "keeps the move and warns when the requirement cannot be set"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "HTTP 500")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--module-item-restore-requirement
+                   200 55 '(:completion-requirement "must_view") "Check 3")
+                  :to-be nil))
+        (expect (car warnings)
+                :to-match "Item 55 'Check 3' moved to module 200, but its completion requirement must_view could not be set"))))
+
+  (it "sets it when the new module's PAYLOAD_HASH matches and the runner skips it"
+    (let ((temp-dir (make-temp-file "modules-352" t)))
+      (unwind-protect
+          (let* ((modules-file (expand-file-name "modules.org" temp-dir))
+                 (requests nil) (mutations nil))
+            (with-temp-file modules-file
+              (insert (test-org-canvas-352--with-requirement
+                       test-org-canvas-352--departed "must_view")))
+            (let ((org-canvas-modules-file modules-file))
+              ;; Week 2's stored hash is what it hashes to now, so the
+              ;; runner skips it: only Week 1's sync can set the requirement.
+              (with-current-buffer (find-file-noselect modules-file)
+                (goto-char (point-min))
+                (re-search-forward "^\\* Week 2")
+                (org-canvas--module-refresh-payload-hash)
+                (save-buffer))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (_method url &rest _)
+                               (cond ((string-match-p "modules/100/items" url)
+                                      '(((id . 55) (title . "Check 3"))))
+                                     ((string-match-p "modules/200/items" url)
+                                      '(((id . 60) (title . "Intro"))))
+                                     (t '(((id . 100) (name . "Week 1"))
+                                          ((id . 200) (name . "Week 2")))))))
+                            ((symbol-function 'org-canvas-api-request)
+                             (lambda (method url &rest args)
+                               (push (list method url (plist-get args :data)) requests)
+                               (cond ((string-match "modules/\\([0-9]+\\)$" url)
+                                      `((id . ,(string-to-number (match-string 1 url)))
+                                        (name . "Week")))
+                                     ((string-match "/items/\\([0-9]+\\)$" url)
+                                      `((id . ,(string-to-number (match-string 1 url)))))
+                                     (t '((id . 1))))))
+                            ((symbol-function 'org-canvas--graphql-mutate)
+                             (lambda (_what _document variables)
+                               (push variables mutations)
+                               '((reorderModuleItems
+                                  . ((module . ((_id . "200"))) (errors . nil)))))))
+                    (org-canvas-sync-modules)))))
+            ;; Week 2 itself was skipped: no PUT of the module.
+            (expect (test-org-canvas-352--sent-p requests 'PUT "modules/200$") :to-be nil)
+            (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100$") :to-be-truthy)
+            (expect (length mutations) :to-equal 1)
+            (expect (test-org-canvas-352--requirement-sent requests "modules/200/items/55$")
+                    :to-equal '("must_view")))
+        (let ((buf (find-buffer-visiting (expand-file-name "modules.org" temp-dir))))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--module-item-move-problem (issue #352)"
+  (it "accepts only a reply naming the module the item landed in"
+    (expect (org-canvas--module-item-move-problem test-org-canvas-352--moved-reply "100")
+            :to-be nil)
+    (expect (org-canvas--module-item-move-problem test-org-canvas-352--moved-reply 100)
+            :to-be nil)
+    (expect (org-canvas--module-item-move-problem test-org-canvas-352--moved-reply "200")
+            :to-match "did not name the module")
+    (expect (org-canvas--module-item-move-problem nil "100")
+            :to-match "did not name the module")
+    (expect (org-canvas--module-item-move-problem
+             '((reorderModuleItems . ((errors . [((message . "not found"))])))) "100")
+            :to-equal "not found")))
+
+(describe "org-canvas--module-item-home (issue #352)"
+  (it "answers nil, not an error, when the read fails or names no module"
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) (error "GraphQL: not found"))))
+      (expect (org-canvas--module-item-home 55) :to-be nil))
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) '((moduleItem . ((_id . "55") (module . :null)))))))
+      (expect (org-canvas--module-item-home 55) :to-be nil))
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) '((moduleItem . ((module . ((_id . 300)))))))))
+      (expect (org-canvas--module-item-home 55) :to-equal "300"))))
+
+(describe "org-canvas--module-retry-single-pending"
+  (it "syncs the item when its target now has a CANVAS_ID"
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Course Home"
+                     :content-id nil :page-url "course-home")))
+                ;; The module holds no item yet: nothing to adopt (#308).
+                ((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) [])))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+         (goto-char (point-min))
+         (search-forward "** ")
+         (org-back-to-heading)
+         (let* ((entry (list :module-id 100
+                             :marker (point-marker)
+                             :title "Course Home"
+                             :dir default-directory)))
+           (expect (org-canvas--module-retry-single-pending entry)
+                   :to-equal "Course Home"))))))
+
+  (it "refreshes the module PAYLOAD_HASH after healing an item"
+    ;; The hash stored at module-sync time predates the item's link
+    ;; resolution; without a refresh the next sync re-pushes the whole
+    ;; module once for no reason.
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Course Home"
+                     :content-id nil :page-url "course-home")))
+                ;; The module holds no item yet: nothing to adopt (#308).
+                ((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) [])))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:PAYLOAD_HASH: stale
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+         (let ((org-canvas-modules-file (buffer-file-name)))
+           (goto-char (point-min))
+           (search-forward "** ")
+           (org-back-to-heading)
+           (let ((entry (list :module-id 100
+                              :marker (point-marker)
+                              :title "Course Home"
+                              :dir default-directory)))
+             (expect (org-canvas--module-retry-single-pending entry)
+                     :to-equal "Course Home"))
+           (goto-char (point-min))
+           (org-back-to-heading)
+           (let* ((saved (org-entry-get (point) "PAYLOAD_HASH"))
+                  (data (org-canvas--module-parse-entry))
+                  (expected (org-canvas--sync-payload-hash
+                             (org-canvas--module-build-payload data)
+                             data #'org-canvas--module-items-digest)))
+             (expect saved :not :to-equal "stale")
+             (expect saved :to-equal expected)))))))
+
+  (it "returns nil when the target still has no CANVAS_ID"
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Course Home"
+                     :content-id nil :page-url nil))))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+         (goto-char (point-min))
+         (search-forward "** ")
+         (org-back-to-heading)
+         (let ((entry (list :module-id 100
+                            :marker (point-marker)
+                            :title "Course Home"
+                            :dir default-directory)))
+           (expect (org-canvas--module-retry-single-pending entry)
+                   :to-be nil))))))
+
+  (it "returns nil and warns when the push errors"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--module-item-parse-entry)
+                 (lambda (_dir) (error "Parse boom")))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Item
+"
+         (goto-char (point-min))
+         (search-forward "** ")
+         (org-back-to-heading)
+         (let ((entry (list :module-id 100
+                            :marker (point-marker)
+                            :title "Item"
+                            :dir default-directory)))
+           (expect (org-canvas--module-retry-single-pending entry)
+                   :to-be nil))))))
+
+  (it "returns nil for a dead marker"
+    (expect (org-canvas--module-retry-single-pending
+             (list :module-id 100 :marker (make-marker)
+                   :title "Gone" :dir "/tmp/"))
+            :to-be nil)))
+
+(describe "org-canvas--module-retry-pending-items"
+  (it "does nothing when no items are pending"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) logged))))
+        (org-canvas--module-retry-pending-items nil))
+      (expect logged :to-be nil)))
+
+  (it "reclassifies healed items and hints about the rest"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Healed
+** Still Pending
+"
+       (goto-char (point-min))
+       (search-forward "** Healed")
+       (org-back-to-heading)
+       (let ((healed-marker (point-marker)))
+         (search-forward "** Still Pending")
+         (org-back-to-heading)
+         (let* ((pending-marker (point-marker))
+                (org-canvas--sync-global-counters
+                 (list :success 0 :skip 2 :fail 0 :dry-run 0 :deferred 0))
+                (org-canvas--sync-global-feature-stats
+                 (list (list :label "Module Items" :success 0 :skip 2 :fail 0
+                             :deferred 0 :failed-titles nil
+                             :skipped-titles
+                             '("Healed (no linked content synced)"
+                               "Still Pending (no linked content synced)"))))
+                (pending
+                 (list (list :module-id 100 :marker pending-marker
+                             :title "Still Pending" :dir default-directory)
+                       (list :module-id 100 :marker healed-marker
+                             :title "Healed" :dir default-directory)))
+                (warnings nil))
+           (cl-letf (((symbol-function 'org-canvas--module-retry-single-pending)
+                      (lambda (entry &optional _cache)
+                        (when (equal (plist-get entry :title) "Healed")
+                          "Healed")))
+                     ((symbol-function 'org-canvas--log-warning)
+                      (lambda (_l fmt &rest args)
+                        (push (apply #'format fmt args) warnings))))
+             (org-canvas--module-retry-pending-items pending))
+           ;; Healed item moved from skip to success
+           (let ((entry (car org-canvas--sync-global-feature-stats)))
+             (expect (plist-get entry :success) :to-equal 1)
+             (expect (plist-get entry :skip) :to-equal 1)
+             (expect (plist-get entry :skipped-titles)
+                     :to-equal '("Still Pending (no linked content synced)")))
+           (expect (plist-get org-canvas--sync-global-counters :success)
+                   :to-equal 1)
+           ;; Remaining item produced the re-run hint
+           (expect (cl-find-if
+                    (lambda (w)
+                      (string-match-p "still pending: 'Still Pending'.*org-canvas-sync-modules" w))
+                    warnings)
+                   :to-be-truthy)))))))
+
+;;;; Prune Module Items
+
+(describe "org-canvas-prune-module-items (issues #177, #179)"
+  (defmacro test-org-canvas-177--with-course (remote &rest body)
+    "Run BODY with `test-org-canvas-177--files' and every item list REMOTE.
+REMOTE is a vector form, or the symbol `fail'.  `requests' collects
+\(METHOD URL); `answer' is what `y-or-n-p' returns."
+    (declare (indent 1))
+    `(with-test-course (dir :files test-org-canvas-177--files)
+       (let ((requests nil)
+             (answer t))
+         (with-test-api
+           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                      (lambda (&rest _)
+                        (if (eq ,remote 'fail) (error "listing failed") ,remote)))
+                     ((symbol-function 'org-canvas-api-request)
+                      (lambda (method url &rest _)
+                        (push (list method url) requests) nil))
+                     ((symbol-function 'y-or-n-p) (lambda (&rest _) answer))
+                     ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                     ((symbol-function 'message) (lambda (&rest _) nil)))
+             ,@body)))))
+
+  (defconst test-org-canvas-177--files
+    '(("modules.org"
+       :headings (("Week 3" :props (("CANVAS_ID" . "781703"))
+                    :body "** [[file:assignments.org::*R3][R3: Stakeholders]]
+:PROPERTIES:
+:CANVAS_ID: 5864670
+:END:
+")
+                  ("Week 4"))))
+    "One synced module claiming one item, and an unsynced module.")
+
+  (it "deletes the items no heading claims after confirming, and returns the count"
+    (test-org-canvas-177--with-course
+        [((id . 5864670) (title . "R3: Stakeholders"))
+         ((id . 5864661) (title . "R3: Stakeholders"))]
+      (expect (org-canvas-prune-module-items) :to-equal 1)
+      (expect (length requests) :to-equal 1)
+      (expect (car requests) :to-equal
+              (list 'DELETE (org-canvas-api-course-endpoint "modules/781703/items/5864661")))))
+
+  (it "asks with the unclaimed titles and sends nothing when declined"
+    (test-org-canvas-177--with-course
+        [((id . 5864661) (title . "R3: Stakeholders"))]
+      (setq answer nil)
+      (expect (org-canvas-prune-module-items) :to-equal 0)
+      (expect requests :to-be nil)))
+
+  (it "says so and asks nothing when every item is claimed"
+    (test-org-canvas-177--with-course
+        [((id . 5864670) (title . "R3: Stakeholders"))]
+      (let ((asked nil))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (setq asked t))))
+          (expect (org-canvas-prune-module-items) :to-equal 0))
+        (expect asked :to-be nil))
+      (expect requests :to-be nil)))
+
+  (it "sends no delete during a dry run"
+    (test-org-canvas-177--with-course
+        [((id . 5864661) (title . "R3: Stakeholders"))]
+      (let ((org-canvas--dry-run t))
+        (expect (org-canvas-prune-module-items) :to-equal 0))
+      (expect requests :to-be nil)))
+
+  (it "skips a module whose item list cannot be fetched"
+    (test-org-canvas-177--with-course 'fail
+      (expect (org-canvas-prune-module-items) :to-equal 0)
+      (expect requests :to-be nil)))
+
+  (it "counts a failed delete as not deleted and goes on"
+    (test-org-canvas-177--with-course
+        [((id . 5864661) (title . "R3: Stakeholders"))
+         ((id . 5864662) (title . "R3: Stakeholders"))]
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method url &rest _)
+                   (push (list 'DELETE url) requests)
+                   (when (string-match-p "5864661$" url) (error "HTTP 500"))
+                   nil)))
+        (expect (org-canvas-prune-module-items) :to-equal 1))
+      (expect (length requests) :to-equal 2)))
+
+  (it "refuses to run without modules.org"
+    (let ((org-canvas-modules-file "/nonexistent/modules.org"))
+      (with-org-canvas-test-config
+        (expect (org-canvas-prune-module-items) :to-throw 'user-error)))))
+
+(describe "org-canvas--module-delete-departed-item"
+  (it "sends nothing during a dry run"
+    (with-test-api
+      (let ((org-canvas--dry-run t)
+            (logged nil))
+        (cl-letf (((symbol-function 'org-canvas--log-info)
+                   (lambda (_l fmt &rest args)
+                     (push (apply #'format fmt args) logged))))
+          (org-canvas--module-delete-departed-item
+           10 '((id . 5) (title . "Reading")) "Week 2"))
+        (expect (car logged)
+                :to-match "\\[DRY-RUN\\] Would remove item 5 'Reading' from module 10")
+        (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+
+;;;; Pull (Items)
+
+(describe "org-canvas--module-resolve-item-link"
+  (it "resolves Page by CANVAS_URL"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Welcome
+:PROPERTIES:
+:CANVAS_URL: welcome-page
+:END:
+"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Page" "welcome-page" "Welcome")))
+                (expect link :to-equal
+                        "[[file:pages.org::*Welcome][Welcome]]"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves Assignment by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* Homework 1
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-assignments-file assign-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Assignment" 42 "Homework 1")))
+                (expect link :to-equal
+                        "[[file:assignments.org::*Homework 1][Homework 1]]"))))
+        (let ((buf (find-buffer-visiting assign-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves Discussion by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (disc-file (expand-file-name "discussions.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file disc-file
+              (insert "* Week 1 Forum\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-discussions-file disc-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-item-link
+                       "Discussion" 7 "Week 1 Forum")
+                      :to-equal
+                      "[[file:discussions.org::*Week 1 Forum][Week 1 Forum]]")))
+        (let ((buf (find-buffer-visiting disc-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves Quiz by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file quiz-file
+              (insert "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-quizzes-file quiz-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-item-link
+                       "Quiz" 9 "Quiz 1")
+                      :to-equal "[[file:quizzes.org::*Quiz 1][Quiz 1]]")))
+        (let ((buf (find-buffer-visiting quiz-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves a File-typed org link through the files var"
+    ;; `org-canvas--module-resolve-item-link' routes File items to the
+    ;; direct file link; the org-link resolver keeps its own File arm for
+    ;; anything that reaches it typed that way.
+    (let* ((temp-dir (make-temp-file "mod-link-file-arm" t))
+           (files-file (expand-file-name "course-files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-file
+              (insert "* Reading\n:PROPERTIES:\n:CANVAS_ID: 3\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-files-file files-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-org-item-link
+                       "File" 3 "Reading")
+                      :to-equal "[[file:course-files.org::*Reading][Reading]]")))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns title when file not found"
+    (let ((org-canvas-directory "/nonexistent-dir/")
+          (org-canvas-pages-file "/nonexistent-dir/pages.org"))
+      (expect (org-canvas--module-resolve-item-link "Page" 999 "My Page")
+              :to-equal "My Page")))
+
+  (it "returns title for unknown type"
+    (expect (org-canvas--module-resolve-item-link "UnknownType" 1 "Item")
+            :to-equal "Item"))
+
+  (it "returns Untitled when title and file both nil"
+    (expect (org-canvas--module-resolve-item-link "UnknownType" 1 nil)
+            :to-equal "Untitled"))
+
+  (it "uses heading-name as display text when title is nil"
+    (let* ((temp-dir (make-temp-file "mod-link-nil-title" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* My Page\n:PROPERTIES:\n:CANVAS_URL: my-page\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Page" "my-page" nil)))
+                ;; When title is nil, (or title heading-name) falls back to heading-name
+                (expect link :to-match "\\[\\[file:")
+                (expect link :to-match "My Page"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns Untitled when heading not found in existing file"
+    (let* ((temp-dir (make-temp-file "mod-link-no-match" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Some Other Page\n:PROPERTIES:\n:CANVAS_URL: other\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Page" "nonexistent-id" nil)))
+                ;; heading-name is nil and title is nil → "Untitled"
+                (expect link :to-equal "Untitled"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves through a renamed pages file (issue #435)"
+    (let* ((temp-dir (make-temp-file "mod-link-renamed" t))
+           (pages-file (expand-file-name "site-pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Welcome\n:PROPERTIES:\n:CANVAS_URL: welcome-page\n:END:\n"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-pages-file pages-file)
+                  (org-canvas-modules-file
+                   (expand-file-name "modules.org" temp-dir)))
+              (expect (org-canvas--module-resolve-item-link
+                       "Page" "welcome-page" "Welcome")
+                      :to-equal "[[file:site-pages.org::*Welcome][Welcome]]")))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--module-resolve-item-link for File items"
+  (it "links directly to the file path, not via files.org indirection"
+    ;; Regression: previously this produced a brittle link of the form
+    ;; `[[file:files.org::*[[file:content/foo.pdf][foo.pdf]]][foo.pdf]]'
+    ;; — the search target embedded the entire raw heading because file
+    ;; headings in files.org are themselves links.  Now we look up the
+    ;; CANVAS_ID in files.org and emit the file's own path directly so
+    ;; the link is both readable and click-navigable.
+    (let* ((tmpdir (make-temp-file "resolve-link" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((org-canvas-files-file files-path))
+              (let* ((link (org-canvas--module-resolve-item-link
+                            "File" 42 "foo.pdf")))
+                (expect link :to-equal "[[file:content/foo.pdf][foo.pdf]]")
+                (with-temp-buffer
+                  (org-mode)
+                  (insert (format "* parent\n** %s\n" link))
+                  (goto-char (point-min))
+                  (search-forward "[[file:")
+                  (goto-char (match-beginning 0))
+                  ;; Pre-bind `:type' outside `expect': buttercup's
+                  ;; `expect' oclosure shadows the `:type' keyword on
+                  ;; Emacs 29.x, silently returning nil.
+                  (let* ((parsed (org-element-link-parser))
+                         (parsed-type (org-element-property :type parsed)))
+                    (expect parsed-type :to-equal "file")
+                    (expect (org-element-property :path parsed)
+                            :to-equal "content/foo.pdf")
+                    ;; No `::*search-option' on the new clean form.
+                    (expect (org-element-property :search-option parsed)
+                            :to-be nil))))))
+        (delete-directory tmpdir t))))
+
+  (it "resolves files nested under folder headings in files.org"
+    ;; Files can live arbitrarily deep under folder headings, so the
+    ;; lookup must scan all entries (not just LEVEL=1).
+    (let* ((tmpdir (make-temp-file "resolve-link" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* readings\n"
+                      "** books\n"
+                      "*** [[file:content/readings/books/x.pdf][x.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 77\n:END:\n"))
+            (let ((org-canvas-files-file files-path))
+              (expect (org-canvas--module-resolve-item-link "File" 77 "x.pdf")
+                      :to-equal "[[file:content/readings/books/x.pdf][x.pdf]]")))
+        (delete-directory tmpdir t))))
+
+  (it "falls back to title when CANVAS_ID is not found in files.org"
+    (let* ((tmpdir (make-temp-file "resolve-link" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path (insert ""))
+            (let ((org-canvas-files-file files-path))
+              (expect (org-canvas--module-resolve-item-link "File" 999 "missing.pdf")
+                      :to-equal "missing.pdf")))
+        (delete-directory tmpdir t)))))
+
+(describe "org-canvas--module-resolve-file-item-link fallbacks"
+  (it "returns the title, or Untitled, when files.org is missing"
+    (with-test-course (dir)
+      (expect (org-canvas--module-resolve-file-item-link 5 "Syllabus")
+              :to-equal "Syllabus")
+      (expect (org-canvas--module-resolve-file-item-link 5 nil)
+              :to-equal "Untitled")))
+
+  (it "links the heading's path, naming it by the link description when the item has no title"
+    (with-test-course
+        (dir :files '(("files.org"
+                      :headings (("Week 1"
+                                  :body "** [[file:content/a.pdf][A.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 5
+:END:
+")))))
+      (expect (org-canvas--module-resolve-file-item-link 5 "Given")
+              :to-equal "[[file:content/a.pdf][Given]]")
+      (expect (org-canvas--module-resolve-file-item-link 5 nil)
+              :to-equal "[[file:content/a.pdf][A.pdf]]"))))
+
+(describe "org-canvas--module-pull-insert-items"
+  (it "inserts SubHeader as L2 heading"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (let ((count (org-canvas--module-pull-insert-items
+                   [((type . "SubHeader") (title . "Week 1")
+                     (id . 101) (content_id . nil) (indent . nil))])))
+       (expect count :to-equal 1)
+       (expect (buffer-string) :to-match "\\*\\* Week 1"))))
+
+  (it "inserts ExternalUrl item with EXTERNAL_URL and NEW_TAB properties"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (let ((count (org-canvas--module-pull-insert-items
+                   [((type . "ExternalUrl") (title . "Google")
+                     (id . 301) (external_url . "https://www.google.com")
+                     (new_tab . t) (indent . nil))])))
+       (expect count :to-equal 1)
+       (expect (buffer-string) :to-match "\\*\\* Google")
+       ;; Find the ExternalUrl heading and verify properties
+       (goto-char (point-min))
+       (search-forward "Google")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "EXTERNAL_URL")
+               :to-equal "https://www.google.com")
+       (expect (org-entry-get (point) "NEW_TAB")
+               :to-equal "true")
+       (expect (org-entry-get (point) "CANVAS_ID")
+               :to-equal "301"))))
+
+  (it "omits NEW_TAB property when new_tab is nil"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-items
+      [((type . "ExternalUrl") (title . "Link")
+        (id . 302) (external_url . "https://example.com")
+        (new_tab . nil) (indent . nil))])
+     (goto-char (point-min))
+     (search-forward "Link")
+     (org-back-to-heading)
+     (expect (org-entry-get (point) "EXTERNAL_URL")
+             :to-equal "https://example.com")
+     (expect (org-entry-get (point) "NEW_TAB") :to-be nil)))
+
+  (it "sets INDENT property on ExternalUrl when indent is present"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-items
+      [((type . "ExternalUrl") (title . "Indented Link")
+        (id . 303) (external_url . "https://example.com/indented")
+        (new_tab . nil) (indent . 2))])
+     (goto-char (point-min))
+     (search-forward "Indented Link")
+     (org-back-to-heading)
+     (expect (org-entry-get (point) "INDENT") :to-equal "2")
+     (expect (org-entry-get (point) "EXTERNAL_URL")
+             :to-equal "https://example.com/indented")))
+
+  (it "inserts linked items with INDENT"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (let ((count (org-canvas--module-pull-insert-items
+                     [((type . "Assignment") (title . "HW1")
+                       (id . 201) (content_id . 42) (indent . 2))])))
+         (expect count :to-equal 1)
+         (expect (buffer-string) :to-match "\\*\\* HW1")))))
+
+  (it "inserts multiple items on separate lines without concatenation"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (let ((count (org-canvas--module-pull-insert-items
+                   [((type . "SubHeader") (title . "First")
+                     (id . 101) (content_id . nil) (indent . nil))
+                    ((type . "SubHeader") (title . "Second")
+                     (id . 102) (content_id . nil) (indent . nil))
+                    ((type . "SubHeader") (title . "Third")
+                     (id . 103) (content_id . nil) (indent . nil))])))
+       (expect count :to-equal 3)
+       ;; Each heading must start at column 0; no ":END:** " concatenation.
+       (expect (buffer-string) :not :to-match ":END:\\*\\*")
+       (expect (length (split-string (buffer-string) "^\\*\\* " t))
+               :to-equal 4)))))
+
+(describe "org-canvas--module-pull-insert-items (published)"
+  (it "sets PUBLISHED property on pulled items"
+    (with-temp-org-buffer
+     "* Module
+"
+     (goto-char (point-max))
+     (let ((items [((type . "SubHeader") (title . "Section 1")
+                    (id . 1) (published . :json-false))]))
+       (org-canvas--module-pull-insert-items items)
+       (goto-char (point-min))
+       (re-search-forward "Section 1")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
+
+  (it "sets PUBLISHED true on linked items (when org-canvas-emit-defaults)"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Module
+"
+       (goto-char (point-max))
+       (let ((items [((type . "ExternalUrl") (title . "Link")
+                      (id . 2) (external_url . "https://x.com")
+                      (published . t))]))
+         (org-canvas--module-pull-insert-items items)
+         (goto-char (point-min))
+         (re-search-forward "Link")
+         (org-back-to-heading)
+         (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+
+  (it "writes PUBLISHED true for a published item under a terse drawer (issue #323)"
+    ;; Module items register PUBLISHED with no default (absent means
+    ;; "inherit the content's state"), so a published item is not a
+    ;; default to suppress, whatever pages or modules declare.
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Module
+"
+       (goto-char (point-max))
+       (let ((items [((type . "SubHeader") (title . "Section 1")
+                      (id . 1) (published . t))
+                     ((type . "ExternalUrl") (title . "Link")
+                      (id . 2) (external_url . "https://x.com")
+                      (published . t))]))
+         (org-canvas--module-pull-insert-items items)
+         (dolist (title '("Section 1" "Link"))
+           (goto-char (point-min))
+           (re-search-forward title)
+           (org-back-to-heading)
+           (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))))
+
+  (it "writes no PUBLISHED when Canvas leaves the field out (issue #487)"
+    ;; A student token gets module items with no `published' key; that
+    ;; is silence, not false, and a false would unpublish on push.
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Module
+"
+       (goto-char (point-max))
+       (let ((items [((type . "SubHeader") (title . "Section 1") (id . 1))
+                     ((type . "ExternalUrl") (title . "Link") (id . 2)
+                      (external_url . "https://x.com"))
+                     ((type . "Assignment") (title . "HW 1") (id . 3)
+                      (content_id . 99))]))
+         (org-canvas--module-pull-insert-items items)
+         (dolist (title '("Section 1" "Link" "HW 1"))
+           (goto-char (point-min))
+           (re-search-forward title)
+           (org-back-to-heading)
+           (expect (org-entry-get (point) "CANVAS_ID") :not :to-be nil)
+           (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))))
+
+  (it "rewrites an unpublished item as published on a re-pull (issue #323)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 10
+:END:
+** Section 1
+:PROPERTIES:
+:CANVAS_ID: 1
+:ITEM_TYPE: SubHeader
+:PUBLISHED: false
+:END:
+"
+       (goto-char (point-min))
+       (org-canvas--module-pull-item
+        '((id . 10) (name . "Week 1") (published . t)
+          (items . [((type . "SubHeader") (title . "Section 1")
+                     (id . 1) (published . t))]))
+        (point))
+       (goto-char (point-min))
+       (re-search-forward "Section 1")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+
+(describe "module :INDENT: suppression"
+  (it "omits :INDENT: when value is 0 on linked content item"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 1) (type . "Page") (title . "x")
+          (content_id . 99) (indent . 0))
+        1 nil))
+     (expect (buffer-string) :not :to-match ":INDENT:")))
+
+  (it "emits :INDENT: when value is nonzero on linked content item"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 1) (type . "Page") (title . "x")
+          (content_id . 99) (indent . 2))
+        1 nil))
+     (expect (buffer-string) :to-match ":INDENT: +2")))
+
+  (it "omits :INDENT: when value is 0 on ExternalUrl"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-external-url
+      '((title . "Link") (external_url . "https://example.com")
+        (new_tab . nil) (indent . 0))
+      1 nil)
+     (expect (buffer-string) :not :to-match ":INDENT:")))
+
+  (it "emits :INDENT: when value is nonzero on ExternalUrl"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-external-url
+      '((title . "Link") (external_url . "https://example.com")
+        (new_tab . nil) (indent . 3))
+      1 nil)
+     (expect (buffer-string) :to-match ":INDENT: +3")))
+
+  (it "omits :INDENT: on SubHeader when 0"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-items
+      [((type . "SubHeader") (title . "Hdr")
+        (id . 1) (indent . 0))])
+     (expect (buffer-string) :not :to-match ":INDENT:")))
+
+  (it "emits :INDENT: on SubHeader when nonzero"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-items
+      [((type . "SubHeader") (title . "Hdr")
+        (id . 1) (indent . 1))])
+     (expect (buffer-string) :to-match ":INDENT: +1"))))
+
+(describe "org-canvas--module-pull-insert-content-item (issue #199)"
+  (defmacro test-199--in-module (&rest body)
+    "Run BODY with point at the end of a module heading's subtree."
+    `(with-temp-org-buffer "* Module\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (goto-char (save-excursion (org-end-of-subtree t) (point)))
+       ,@body))
+
+  (it "resolves a Page item by its page_url, since it carries no content_id"
+    (test-199--in-module
+     (let ((asked nil))
+       (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                  (lambda (type cid title) (setq asked (list type cid)) (or title "Untitled"))))
+         (org-canvas--module-pull-insert-content-item
+          '((id . 2) (type . "Page") (title . "Course Home") (page_url . "course-home"))
+          2 t))
+       (expect asked :to-equal '("Page" "course-home")))))
+
+  (it "still resolves every other type by content_id"
+    (test-199--in-module
+     (let ((asked nil))
+       (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                  (lambda (type cid title) (setq asked (list type cid)) (or title "Untitled"))))
+         (org-canvas--module-pull-insert-content-item
+          '((id . 3) (type . "Assignment") (title . "HW1") (content_id . 77))
+          3 t))
+       (expect asked :to-equal '("Assignment" 77)))))
+
+  (it "links a Page item to the pages.org heading carrying its CANVAS_URL"
+    (let* ((dir (make-temp-file "pull-page-" t))
+           (org-canvas-directory dir)
+           (org-canvas-pages-file (expand-file-name "pages.org" dir))
+           (org-canvas-modules-file (expand-file-name "modules.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name "pages.org" dir)
+              (insert "* Course Home\n:PROPERTIES:\n:CANVAS_URL: course-home\n:END:\n"))
+            (test-199--in-module
+             (org-canvas--module-pull-insert-content-item
+              '((id . 2) (type . "Page") (title . "Course Home") (page_url . "course-home"))
+              2 t)
+             (expect (buffer-string)
+                     :to-match "\\*\\* \\[\\[file:pages.org::\\*Course Home\\]\\[Course Home\\]\\]")))
+        (let ((buf (find-buffer-visiting (expand-file-name "pages.org" dir))))
+          (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "writes the completion requirement and its minimum score"
+    (test-199--in-module
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 4) (type . "Quiz") (title . "Quiz 1") (content_id . 9)
+          (completion_requirement . ((type . "min_score") (min_score . 80))))
+        4 t))
+     (org-back-to-heading t)
+     (expect (org-entry-get (point) "COMPLETION_REQUIREMENT") :to-equal "min_score")
+     (expect (org-entry-get (point) "MIN_SCORE") :to-equal "80")))
+
+  (it "writes nothing for an item without a requirement, or with a null one"
+    (test-199--in-module
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 5) (type . "Assignment") (title . "HW2") (content_id . 8)
+          (completion_requirement . :null))
+        5 t))
+     (org-back-to-heading t)
+     (expect (org-entry-get (point) "COMPLETION_REQUIREMENT") :to-be nil)
+     (expect (org-entry-get (point) "MIN_SCORE") :to-be nil))))
+
+(describe "org-canvas--module-pull-item"
+  (it "sets module properties from the response"
+    (with-org-canvas-test-config
+      ;; An explicitly empty items list must NOT trigger a fetch
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (error "Must not hit the API"))))
+        (with-temp-org-buffer
+         "* Old Name\n:PROPERTIES:\n:CANVAS_ID: 500\n:END:\n"
+         (org-back-to-heading)
+         (org-canvas--module-pull-item
+          '((id . 500) (name . "Week 1") (position . 3)
+            (published . :json-false)
+            (require_sequential_progress . t)
+            (unlock_at . "2027-01-15T08:00:00Z")
+            (prerequisite_module_ids . (77 88))
+            (items . nil))
+          (point))
+         (expect (org-entry-get (point) "POSITION") :to-equal "3")
+         ;; published t is the registry default and gets suppressed;
+         ;; the non-default false must be written out
+         (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+         (expect (org-entry-get (point) "REQUIRE_SEQUENTIAL_PROGRESSION")
+                 :to-equal "true")
+         (expect (org-entry-get (point) "UNLOCK_AT") :to-match "2027-01-15")
+         (expect (org-entry-get (point) "PREREQUISITE_MODULE_IDS")
+                 :to-equal "77,88")))))
+
+  (it "replaces child items with the included remote list"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (error "Must not hit the API"))))
+        (with-temp-org-buffer
+         "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 500\n:END:\n** Stale Local Item\n"
+         (org-back-to-heading)
+         (org-canvas--module-pull-item
+          '((id . 500) (name . "Week 1")
+            (items . (((id . 501) (type . "SubHeader")
+                       (title . "Remote Header") (published . t)))))
+          (point))
+         (expect (buffer-string) :not :to-match "Stale Local Item")
+         (expect (buffer-string) :to-match "\\*\\* Remote Header")))))
+
+  (it "fetches items from the endpoint when the response lacks them"
+    ;; The conflict-check GET returns the module without items.
+    (with-org-canvas-test-config
+      (let ((fetched-url nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _args)
+                     (setq fetched-url url)
+                     '(((id . 502) (type . "SubHeader")
+                        (title . "Fetched Header") (published . t))))))
+          (with-temp-org-buffer
+           "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 500\n:END:\n** Old Item\n"
+           (org-back-to-heading)
+           (org-canvas--module-pull-item '((id . 500) (name . "Week 1")) (point))
+           (expect fetched-url :to-match "modules/500/items")
+           (expect (buffer-string) :not :to-match "Old Item")
+           (expect (buffer-string) :to-match "\\*\\* Fetched Header"))))))
+
+  (it "is registered as the pull-item-fn for the modules sync"
+    ;; The generated sync binds it dynamically; expanding the macro
+    ;; form is the cheapest wiring check.
+    (let ((expansion (macroexpand-1
+                      '(org-canvas-define-sync modules
+                         :file org-canvas-modules-file
+                         :parse #'org-canvas--module-parse-entry
+                         :build #'org-canvas--module-build-payload
+                         :push #'org-canvas--module-push-to-api
+                         :finalize #'org-canvas--module-finalize
+                         :pull-item-fn #'org-canvas--module-pull-item))))
+      (expect (format "%S" expansion)
+              :to-match "org-canvas--module-pull-item"))))
+
+(describe "module pull reads the registry (issue #135)"
+  (it "reads require_sequential_progress, the field the registry names"
+    (with-pull-property-test #'org-canvas--module-pull-item
+      '((id . 1) (name . "Week 1") (require_sequential_progress . t) (items . []))
+      "REQUIRE_SEQUENTIAL_PROGRESSION" :to-equal "true"))
+
+  (it "never overwrites PUBLISH_AT, org-canvas's own schedule"
+    (with-temp-org-buffer
+     "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 1\n:PUBLISH_AT: <2026-09-01 Tue 08:00>\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--module-pull-item
+      '((id . 1) (name . "Week 1") (publish_at . "2030-01-01T00:00:00Z") (items . []))
+      (point))
+     (expect (org-entry-get (point) "PUBLISH_AT")
+             :to-equal "<2026-09-01 Tue 08:00>")))
+
+  (it "writes PREREQUISITE_MODULE_IDS as a comma list"
+    (with-pull-property-test #'org-canvas--module-pull-item
+      '((id . 2) (name . "Week 2") (prerequisite_module_ids . [7 8]) (items . []))
+      "PREREQUISITE_MODULE_IDS" :to-equal "7,8")))
+
+
+(describe "module pull keeps the following modules intact (issue #133)"
+  (it "gives every inserted item its own drawer and leaves the next module's alone"
+    (with-temp-org-buffer
+     "* Week 03
+:PROPERTIES:
+:CANVAS_ID: 781703
+:POSITION: 3
+:END:
+
+** Old item
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+
+* Week 04
+:PROPERTIES:
+:CANVAS_ID: 781704
+:POSITION: 4
+:END:
+
+** Item in week 4
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\* Week 03")
+     (org-back-to-heading t)
+     (org-canvas--module-pull-item
+      '((id . 781703) (name . "Week 03") (published . :json-false)
+        (items . [((id . 5701150) (type . "SubHeader")
+                   (title . "--- Monday ---") (position . 1))
+                  ((id . 5707143) (type . "Assignment")
+                   (title . "Chapter Check 01") (content_id . 2497355)
+                   (position . 2))
+                  ((id . 5707144) (type . "ExternalUrl") (title . "Link")
+                   (external_url . "https://example.edu") (position . 3))]))
+      (point))
+     (let ((ids nil) (modules nil))
+       (org-map-entries
+        (lambda ()
+          (if (= (org-current-level) 1)
+              (push (cons (org-get-heading t t t t)
+                          (org-entry-get (point) "CANVAS_ID"))
+                    modules)
+            (push (cons (org-get-heading t t t t)
+                        (list (org-entry-get (point) "CANVAS_ID")
+                              (org-entry-get (point) "ITEM_TYPE")))
+                  ids)))
+        nil 'file)
+       (setq ids (nreverse ids) modules (nreverse modules))
+       ;; Two modules, each still holding its own id and nothing of an item's.
+       (expect modules :to-equal '(("Week 03" . "781703") ("Week 04" . "781704")))
+       (expect (org-entry-get (org-find-exact-headline-in-buffer "Week 04") "ITEM_TYPE")
+               :to-be nil)
+       ;; Every pulled item carries its own drawer, in order, and week 4's item survives.
+       (expect (mapcar #'cadr ids)
+               :to-equal '("5701150" "5707143" "5707144" "2"))
+       (expect (mapcar #'caddr ids)
+               :to-equal '("SubHeader" "Assignment" "ExternalUrl" nil))
+       ;; The old item under Week 03 was replaced, not kept.
+       (expect (assoc "Old item" ids) :to-be nil)))))
+
+(provide 'org-canvas-module-items-test)
+;;; org-canvas-module-items-test.el ends here
