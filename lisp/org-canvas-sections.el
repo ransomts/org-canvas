@@ -1655,8 +1655,11 @@ plus `org-canvas-extend-student-late-hours'.  Otherwise as
          (lock-time (if lock (org-read-date t t lock)
                       (org-canvas--extend-lock-time due-time)))
          (marker (org-canvas--sync-find-heading
-                  file "LEVEL=1" (or id assignment) (if id 'canvas-id 'title)
-                  "CANVAS_ID" "assignment" "extend")))
+                  :file file :query "LEVEL=1"
+                  :target (or id assignment)
+                  :by (if id 'canvas-id 'title)
+                  :id-property "CANVAS_ID"
+                  :feature "assignment" :verb "extend")))
     (unwind-protect
         (with-current-buffer (marker-buffer marker)
           (save-excursion

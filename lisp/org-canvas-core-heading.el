@@ -300,15 +300,15 @@ point at each heading.  FILE is visited through
                        query 'file))
     (nreverse found)))
 
-(defun org-canvas--sync-find-heading (file query target by id-property feature
-                                            &optional verb)
+(cl-defun org-canvas--sync-find-heading (&key file query target by
+                                              id-property feature verb)
   "Return a marker at the one heading of FILE that TARGET names.
 QUERY, BY and ID-PROPERTY are as in `org-canvas--sync-heading-matches-p';
 FEATURE names the module in the error, and VERB (default \"sync\") what
-to do at point instead.  No match and more than one
-match are both a `user-error': a script must never push the wrong
-heading, and two headings with one title or one stamp are a file to
-fix (or a job for the at-point command) rather than a guess."
+to do at point instead.  Every argument is a keyword.  No match and
+more than one match are both a `user-error': a script must never push
+the wrong heading, and two headings with one title or one stamp are a
+file to fix (or a job for the at-point command) rather than a guess."
   (let ((markers (org-canvas--sync-heading-markers
                   file query
                   (lambda () (org-canvas--sync-heading-matches-p target by id-property))))
@@ -353,8 +353,9 @@ and saves; the context's :outcome says how it ended."
          (query (plist-get spec :query))
          (target (or target (org-canvas--sync-heading-ask feature file query)))
          (marker (org-canvas--sync-find-heading
-                  file query target by
-                  (or (plist-get spec :id-property) "CANVAS_ID") feature)))
+                  :file file :query query :target target :by by
+                  :id-property (or (plist-get spec :id-property) "CANVAS_ID")
+                  :feature feature)))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)
@@ -590,7 +591,8 @@ Return the plist `org-canvas--pull-heading-here' builds, with
   (let* ((target (or target
                      (org-canvas--sync-heading-ask singular file query "pull")))
          (marker (org-canvas--sync-find-heading
-                  file query target by id-property singular "pull")))
+                  :file file :query query :target target :by by
+                  :id-property id-property :feature singular :verb "pull")))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)
@@ -681,8 +683,10 @@ context's :outcome is DELETER's answer, `failed' for nil, and its
 :heading-report names the id property and the id deleted."
   (let* ((id-property (or (plist-get feature :id-property) "CANVAS_ID"))
          (marker (org-canvas--sync-find-heading
-                  (expand-file-name (symbol-value (plist-get feature :file-var)))
-                  query target by id-property singular "delete")))
+                  :file (expand-file-name
+                         (symbol-value (plist-get feature :file-var)))
+                  :query query :target target :by by
+                  :id-property id-property :feature singular :verb "delete")))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)

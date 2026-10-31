@@ -442,9 +442,13 @@ history and not a finding at all.")
 
     (it "marks a pre-first-sync link warning, which no read-only course can act on"
       (let ((issue (org-canvas--validate-resolve-file-link
-                    "[[file:nowhere.org::*Nothing][Nothing]]" "CANVAS_ID"
-                    "assignments.org" '(:file "assignments.org" :line 1 :heading "H")
-                    "GROUP" "not a link" "no CANVAS_ID yet")))
+                    "[[file:nowhere.org::*Nothing][Nothing]]"
+                    :id-property "CANVAS_ID"
+                    :source-file "assignments.org"
+                    :loc '(:file "assignments.org" :line 1 :heading "H")
+                    :property "GROUP"
+                    :not-link-msg "not a link"
+                    :unresolved-msg "no CANVAS_ID yet")))
         (expect (plist-get issue :push-only) :to-be t)
         (expect (plist-get issue :pending-sync) :to-be t)))))
 

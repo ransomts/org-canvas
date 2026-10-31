@@ -1994,8 +1994,9 @@
   ;; macro) has a bug where :type is shadowed by the oclosure type slot.
   (it "classifies heading with file link as unresolved link"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    "[[file:assignments.org::*HW1][HW1]]"
-                    "HW1" nil 0 1 t))
+                    :heading-with-links "[[file:assignments.org::*HW1][HW1]]"
+                    :raw-heading "HW1" :canvas-id nil
+                    :indent 0 :published 1 :pom t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "Assignment")
       (expect (plist-get result :title) :to-equal "HW1")
@@ -2003,52 +2004,60 @@
 
   (it "extracts title from display part of file link"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    "[[file:pages.org::*Welcome][Welcome Page]]"
-                    "Welcome Page" nil 0 1 t))
+                    :heading-with-links "[[file:pages.org::*Welcome][Welcome Page]]"
+                    :raw-heading "Welcome Page" :canvas-id nil
+                    :indent 0 :published 1 :pom t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "Page")
       (expect (plist-get result :title) :to-equal "Welcome Page")))
 
   (it "uses raw-heading as title when link has no display part"
     (let ((result (org-canvas--module-classify-unlinked-heading
-                   "[[file:quizzes.org::*Quiz 1]]"
-                   "Quiz 1" nil 0 1 t)))
+                   :heading-with-links "[[file:quizzes.org::*Quiz 1]]"
+                   :raw-heading "Quiz 1" :canvas-id nil
+                   :indent 0 :published 1 :pom t)))
       ;; No ][...]] display part, so link-title is nil, falls back to raw-heading
       (expect (plist-get result :title) :to-equal "Quiz 1")))
 
   (it "classifies plain text heading as SubHeader"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    "Section Divider" "Section Divider" nil 0 1 t))
+                    :heading-with-links "Section Divider"
+                    :raw-heading "Section Divider" :canvas-id nil
+                    :indent 0 :published 1 :pom t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "SubHeader")
       (expect (plist-get result :title) :to-equal "Section Divider")))
 
   (it "preserves canvas-id and indent"
     (let ((result (org-canvas--module-classify-unlinked-heading
-                   "[[file:files.org::*Doc][Doc]]"
-                   "Doc" "existing-id" 2 t 100)))
+                   :heading-with-links "[[file:files.org::*Doc][Doc]]"
+                   :raw-heading "Doc" :canvas-id "existing-id"
+                   :indent 2 :published t :pom 100)))
       (expect (plist-get result :canvas-id) :to-equal "existing-id")
       (expect (plist-get result :indent) :to-equal 2)
       (expect (plist-get result :pom) :to-equal 100)))
 
   (it "determines type from file link filename"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    "[[file:discussions.org::*Topic][Topic]]"
-                    "Topic" nil 0 1 t))
+                    :heading-with-links "[[file:discussions.org::*Topic][Topic]]"
+                    :raw-heading "Topic" :canvas-id nil
+                    :indent 0 :published 1 :pom t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "Discussion")))
 
   (it "uses heading-with-links over raw-heading for link detection"
     ;; When heading-with-links has the link but raw-heading is stripped
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    "[[file:files.org::*Upload][Upload]]"
-                    "Upload" nil 0 1 t))
+                    :heading-with-links "[[file:files.org::*Upload][Upload]]"
+                    :raw-heading "Upload" :canvas-id nil
+                    :indent 0 :published 1 :pom t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "File")))
 
   (it "falls back to raw-heading when heading-with-links is nil"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    nil "Plain Text" nil 0 1 t))
+                    :heading-with-links nil :raw-heading "Plain Text"
+                    :canvas-id nil :indent 0 :published 1 :pom t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "SubHeader")
       (expect (plist-get result :title) :to-equal "Plain Text"))))
@@ -3098,11 +3107,11 @@
             (transformed (org-canvas--module-item-transform-props raw))
             (data (or transformed
                       (org-canvas--module-classify-unlinked-heading
-                       (plist-get raw :heading-with-links)
-                       (org-canvas--strip-statistics-cookie
-                        (plist-get raw :title-raw))
-                       (plist-get raw :canvas-id)
-                       0 t (point))))
+                       :heading-with-links (plist-get raw :heading-with-links)
+                       :raw-heading (org-canvas--strip-statistics-cookie
+                                     (plist-get raw :title-raw))
+                       :canvas-id (plist-get raw :canvas-id)
+                       :indent 0 :published t :pom (point))))
             (data-type (plist-get data :type)))
        (expect data-type :to-equal "SubHeader"))))
 
@@ -3121,11 +3130,11 @@
             (transformed (org-canvas--module-item-transform-props raw))
             (data (or transformed
                       (org-canvas--module-classify-unlinked-heading
-                       (plist-get raw :heading-with-links)
-                       (org-canvas--strip-statistics-cookie
-                        (plist-get raw :title-raw))
-                       (plist-get raw :canvas-id)
-                       0 t (point))))
+                       :heading-with-links (plist-get raw :heading-with-links)
+                       :raw-heading (org-canvas--strip-statistics-cookie
+                                     (plist-get raw :title-raw))
+                       :canvas-id (plist-get raw :canvas-id)
+                       :indent 0 :published t :pom (point))))
             (data-type (plist-get data :type)))
        ;; classify-unlinked-heading should still produce SubHeader here
        (expect data-type :to-equal "SubHeader")))))

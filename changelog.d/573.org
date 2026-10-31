@@ -1,0 +1,4 @@
+* Changed
+- #573 The functions that took six or more positional arguments take
+  named ones where a call site could not say what it meant.  No
+  behaviour change.

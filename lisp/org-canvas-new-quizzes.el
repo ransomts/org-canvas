@@ -826,7 +826,8 @@ anything else."
   (let* ((file (expand-file-name org-canvas-new-quizzes-file))
          (target (or target (org-canvas--sync-heading-ask "new-quiz" file "LEVEL=1")))
          (marker (org-canvas--sync-find-heading
-                  file "LEVEL=1" target by "CANVAS_ASSIGNMENT_ID" "new-quiz")))
+                  :file file :query "LEVEL=1" :target target :by by
+                  :id-property "CANVAS_ASSIGNMENT_ID" :feature "new-quiz")))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)

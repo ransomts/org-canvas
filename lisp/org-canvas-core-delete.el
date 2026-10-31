@@ -257,13 +257,20 @@ else the answer `y-or-n-p' reads."
   (or org-canvas-delete-confirmed
       (y-or-n-p (format "Delete '%s' from Canvas? " title))))
 
-(defun org-canvas--delete-item-send (feature-name title canvas-id url pom
-                                                  delete-data post-delete-fn)
+(cl-defun org-canvas--delete-item-send (feature-name
+                                        &key
+                                        title
+                                        canvas-id
+                                        url
+                                        pom
+                                        delete-data
+                                        post-delete-fn)
   "Send the DELETE of FEATURE-NAME's TITLE, CANVAS-ID, to URL; clean POM.
-POM is the heading's position.  URL is a function of no arguments
-returning the request's URL.  DELETE-DATA and POST-DELETE-FN are as
-in `org-canvas--delete-item-at-point'.  Return `deleted', or nil after
-logging the failure."
+TITLE, CANVAS-ID, URL, POM, DELETE-DATA and POST-DELETE-FN are keyword
+arguments: POM is the heading's position, and URL is a function of no
+arguments returning the request's URL.  DELETE-DATA and POST-DELETE-FN
+are as in `org-canvas--delete-item-at-point'.  Return `deleted', or nil
+after logging the failure."
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--log-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
@@ -330,11 +337,15 @@ delete failed (issue #525)."
       'dry-run)
      ((not (org-canvas--delete-confirm title)) 'declined)
      (t (org-canvas--delete-item-send
-         feature-name title canvas-id
-         (lambda () (if delete-url-fn
-                        (funcall delete-url-fn canvas-id)
-                      (org-canvas-api-course-endpoint endpoint canvas-id)))
-         pom delete-data post-delete-fn)))))
+         feature-name
+         :title title
+         :canvas-id canvas-id
+         :url (lambda () (if delete-url-fn
+                             (funcall delete-url-fn canvas-id)
+                           (org-canvas-api-course-endpoint endpoint canvas-id)))
+         :pom pom
+         :delete-data delete-data
+         :post-delete-fn post-delete-fn)))))
 
 (defun org-canvas--delete-all-runtime (spec)
   "Runtime body for generated delete-all functions.

@@ -1030,9 +1030,9 @@ Returns the text shown."
          (file (and var (boundp var) (symbol-value var)))
          (query (or (plist-get (org-canvas--drift-props feature) :query) "LEVEL=1"))
          (marker (org-canvas--sync-find-heading
-                  file query target by
-                  (or (plist-get feature :id-property) "CANVAS_ID")
-                  (plist-get feature :name) "show")))
+                  :file file :query query :target target :by by
+                  :id-property (or (plist-get feature :id-property) "CANVAS_ID")
+                  :feature (plist-get feature :name) :verb "show")))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)
