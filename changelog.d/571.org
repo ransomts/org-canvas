@@ -1,0 +1,7 @@
+* Changed
+- #571 =org-canvas-define-sync=, =org-canvas-define-pull= and
+  =org-canvas-define-parse= are now thin expanders over ordinary
+  functions that build the forms, so a module's generated code can be
+  stepped through in the debugger instead of being buried inside one
+  macro body.  What they expand to is unchanged, so no call site and no
+  generated command changes.

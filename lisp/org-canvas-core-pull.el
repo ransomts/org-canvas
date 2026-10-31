@@ -1381,80 +1381,131 @@ Example:
     :params \\='((\"only_announcements\" . \"true\"))
     :pull-item-fn #\\='org-canvas--announcement-pull-item)"
   (declare (indent 1))
+  (org-canvas--pull-gen-forms feature args))
+
+(defun org-canvas--pull-gen-spec (feature args)
+  "Return the generation spec `org-canvas-define-pull' works from.
+FEATURE and ARGS are the macro's arguments; the spec resolves the
+command's name, its label and the options with their defaults once, so
+the emitters below never read ARGS again."
   (let* ((feature-name (symbol-name feature))
-         (pull-fn-name (intern (format "org-canvas-pull-%s" feature-name)))
-         (file-expr (plist-get args :file))
-         (endpoint-expr (plist-get args :endpoint))
-         (params-expr (plist-get args :params))
-         (list-fallback-fn (plist-get args :list-fallback-fn))
-         (item-fn (plist-get args :pull-item-fn))
-         (skip-fn (plist-get args :skip-fn))
-         (skip-reason (plist-get args :skip-reason))
-         (id-field (or (plist-get args :id-field) ''id))
-         (title-field (or (plist-get args :title-field) ''title))
-         (id-property (or (plist-get args :id-property) "CANVAS_ID"))
-         (secondary-sort-key (plist-get args :secondary-sort-key))
-         (tertiary-sort-key (plist-get args :tertiary-sort-key))
-         (op-label (upcase (replace-regexp-in-string "-" " " feature-name))))
-    (unless file-expr (error "org-canvas-define-pull: :file is required"))
-    (unless endpoint-expr (error "org-canvas-define-pull: :endpoint is required"))
-    (unless item-fn (error "org-canvas-define-pull: :pull-item-fn is required"))
+         (id-property (or (plist-get args :id-property) "CANVAS_ID")))
+    (list :feature-name feature-name
+          :pull-fn (intern (format "org-canvas-pull-%s" feature-name))
+          :op-label (upcase (replace-regexp-in-string "-" " " feature-name))
+          :file-expr (plist-get args :file)
+          :endpoint-expr (plist-get args :endpoint)
+          :params-expr (plist-get args :params)
+          :list-fallback-fn (plist-get args :list-fallback-fn)
+          :item-fn (plist-get args :pull-item-fn)
+          :skip-fn (plist-get args :skip-fn)
+          :skip-reason (plist-get args :skip-reason)
+          :id-field (or (plist-get args :id-field) ''id)
+          :title-field (or (plist-get args :title-field) ''title)
+          :id-property id-property
+          :secondary-sort-key (plist-get args :secondary-sort-key)
+          :tertiary-sort-key (plist-get args :tertiary-sort-key))))
+
+(defun org-canvas--pull-gen-check (spec)
+  "Check SPEC for an option `org-canvas-define-pull' requires."
+  (unless (plist-get spec :file-expr)
+    (error "org-canvas-define-pull: :file is required"))
+  (unless (plist-get spec :endpoint-expr)
+    (error "org-canvas-define-pull: :endpoint is required"))
+  (unless (plist-get spec :item-fn)
+    (error "org-canvas-define-pull: :pull-item-fn is required")))
+
+(defun org-canvas--pull-gen-item-config (spec)
+  "Return the per-item config form SPEC describes.
+`org-canvas--pull-handle-item' reads it once per item, so what the module
+skips and how it names things travel with the call rather than in a
+global."
+  `(list :id-field ,(plist-get spec :id-field)
+         :title-field ,(plist-get spec :title-field)
+         :id-property ,(plist-get spec :id-property)
+         :pull-item-fn ,(plist-get spec :item-fn)
+         :skip-fn ,(plist-get spec :skip-fn)
+         :skip-reason ,(plist-get spec :skip-reason)))
+
+(defun org-canvas--pull-gen-body (spec)
+  "Return SPEC's generated pull-command body.
+It lists the remote items, upserts one heading per item, marks the
+headings Canvas no longer lists and writes the file header."
+  (let ((feature-name (plist-get spec :feature-name))
+        (id-property (plist-get spec :id-property))
+        (id-field (plist-get spec :id-field)))
+    `(let* ((file (expand-file-name ,(plist-get spec :file-expr)))
+            (endpoint (org-canvas-api-course-endpoint
+                       ,(plist-get spec :endpoint-expr)))
+            (remote (org-canvas--pull-list-remote
+                     endpoint ,(plist-get spec :params-expr)
+                     ,(plist-get spec :list-fallback-fn)))
+            (count 0)
+            (skipped 0)
+            (known-ids (when managed-only
+                         (org-canvas--pull-known-ids file ,id-property)))
+            (was-fresh (org-canvas--pull-was-fresh-p file))
+            (unlisted nil))
+       (org-canvas--pull-confirm-overwrite file ,feature-name)
+       (org-canvas--pull-confirm-unsaved file ,feature-name)
+       (if (and (zerop (length remote))
+                (not (org-canvas--pull-file-has-headings-p file)))
+           (org-canvas--pull-emit-empty-file
+            file (org-canvas--pull-label-for ,feature-name))
+         (org-canvas--create-file file)
+         (with-current-buffer (org-canvas--find-file-noselect file)
+           (let ((idless-before
+                  (org-canvas--pull-idless-entry-count ,id-property)))
+             (dolist (item (org-canvas--pull-sort-items
+                            remote ,(plist-get spec :secondary-sort-key)
+                            ,(plist-get spec :tertiary-sort-key)))
+               (pcase (org-canvas--pull-handle-item
+                       item file
+                       ,(org-canvas--pull-gen-item-config spec)
+                       managed-only known-ids)
+                 ('processed (cl-incf count))
+                 ('skipped (cl-incf skipped))))
+             (org-canvas--pull-check-entry-count
+              ,feature-name file ,id-property idless-before count))
+           (setq unlisted (org-canvas--pull-mark-unlisted
+                           file ,feature-name remote ,id-field ,id-property))
+           (org-canvas--pull-write-file-header)
+           (org-canvas--save-buffer)))
+       (org-canvas--pull-kill-fresh-buffer file was-fresh)
+       (let ((skip-note (concat (org-canvas--pull-skip-suffix
+                                 skipped ,(plist-get spec :skip-reason))
+                                (org-canvas--pull-gone-suffix unlisted))))
+         (org-canvas--log-info org-canvas--logger
+           ,(format "%s pull complete: %%d items%%s"
+                    (capitalize feature-name)) count skip-note)
+         (message ,(format "%s pull complete: %%d items%%s."
+                           (capitalize feature-name)) count skip-note)))))
+
+(defun org-canvas--pull-gen-forms (feature args)
+  "Return the forms `org-canvas-define-pull' emits for FEATURE and ARGS.
+This is the pull DSL's expander proper; the macro is a thin expander
+over it, so a module's expansion can be stepped through here in the
+debugger instead of being buried inside one macro body."
+  (let ((spec (org-canvas--pull-gen-spec feature args)))
+    (org-canvas--pull-gen-check spec)
     `(progn
-       (org-canvas-register-pull-item-fn ,feature-name ,item-fn)
-       ;;;###autoload
-       (defun ,pull-fn-name (&optional managed-only)
-         ,(format "Pull %s from Canvas into the local Org file.
+       (org-canvas-register-pull-item-fn ,(plist-get spec :feature-name)
+                                         ,(plist-get spec :item-fn))
+       ,@(let ((pull-fn (plist-get spec :pull-fn))
+               (feature-name (plist-get spec :feature-name)))
+           `(;;;###autoload
+             (defun ,pull-fn (&optional managed-only)
+               ,(format "Pull %s from Canvas into the local Org file.
 
 With a prefix argument, MANAGED-ONLY restricts the pull to items the
 Org file already claims — headings carrying a Canvas id — so a course
 holding items you do not manage is refreshed rather than imported
 wholesale (issue #67)." feature-name)
-         (interactive "P")
-         (org-canvas--start-operation ,(format "PULLING %s" op-label))
-         (let* ((file (expand-file-name ,file-expr))
-                (endpoint (org-canvas-api-course-endpoint ,endpoint-expr))
-                (remote (org-canvas--pull-list-remote
-                         endpoint ,params-expr ,list-fallback-fn))
-                (count 0)
-                (skipped 0)
-                (known-ids (when managed-only
-                             (org-canvas--pull-known-ids file ,id-property)))
-                (was-fresh (org-canvas--pull-was-fresh-p file))
-                (unlisted nil))
-           (org-canvas--pull-confirm-overwrite file ,feature-name)
-           (org-canvas--pull-confirm-unsaved file ,feature-name)
-           (if (and (zerop (length remote))
-                    (not (org-canvas--pull-file-has-headings-p file)))
-               (org-canvas--pull-emit-empty-file
-                file (org-canvas--pull-label-for ,feature-name))
-             (org-canvas--create-file file)
-             (with-current-buffer (org-canvas--find-file-noselect file)
-               (let ((idless-before
-                      (org-canvas--pull-idless-entry-count ,id-property)))
-                 (dolist (item (org-canvas--pull-sort-items
-                                remote ,secondary-sort-key ,tertiary-sort-key))
-                   (pcase (org-canvas--pull-handle-item
-                           item file
-                           (list :id-field ,id-field :title-field ,title-field
-                                 :id-property ,id-property :pull-item-fn ,item-fn
-                                 :skip-fn ,skip-fn :skip-reason ,skip-reason)
-                           managed-only known-ids)
-                     ('processed (cl-incf count))
-                     ('skipped (cl-incf skipped))))
-                 (org-canvas--pull-check-entry-count
-                  ,feature-name file ,id-property idless-before count))
-               (setq unlisted (org-canvas--pull-mark-unlisted
-                               file ,feature-name remote ,id-field ,id-property))
-               (org-canvas--pull-write-file-header)
-               (org-canvas--save-buffer)))
-           (org-canvas--pull-kill-fresh-buffer file was-fresh)
-           (let ((skip-note (concat (org-canvas--pull-skip-suffix skipped ,skip-reason)
-                                    (org-canvas--pull-gone-suffix unlisted))))
-             (org-canvas--log-info org-canvas--logger
-               ,(format "%s pull complete: %%d items%%s"
-                        (capitalize feature-name)) count skip-note)
-             (message ,(format "%s pull complete: %%d items%%s."
-                               (capitalize feature-name)) count skip-note)))))))
+               (interactive "P")
+               (org-canvas--start-operation
+                ,(format "PULLING %s" (plist-get spec :op-label)))
+               ,(org-canvas--pull-gen-body spec)))))))
+
 
 ;;;; Pull Summary Accumulator
 
