@@ -1,0 +1,10 @@
+* Changed
+- #609 A merged pull request closes the issues its body names.  The
+  repository merges with =gh pr merge --auto --rebase=, and a rebase
+  replays the branch's own commits while discarding the pull request
+  body, so the =Closes #N= the template asks for was read by nobody: two
+  pull requests merged green on 2026-10-31 and their issues stayed open.
+  =close-linked-issues.yml= now reads the body after the merge, which
+  also covers a merge made by hand in the web UI.  A =#N= that names a
+  pull request is left alone, and closing an already-closed issue is a
+  no-op, so it keeps working if the merge method changes.
