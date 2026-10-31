@@ -3,13 +3,15 @@
 #
 #   scripts/org-canvas [-C DIR] [--dry-run] [--json] COMMAND [ARGS...]
 #   scripts/org-canvas --help | --version
-#   scripts/org-canvas push [--conflict push|pull|skip] FEATURE:TITLE...
+#   scripts/org-canvas push [--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE...
 #   scripts/org-canvas delete --yes | --dry-run FEATURE:TITLE...
 #   scripts/org-canvas search REGEXP | search-dates
 #   scripts/org-canvas cleanup-orphans [--yes]
 #
 # --help lists every command.  push's --conflict sets
-# org-canvas-conflict-strategy for that run (issue #470).  delete's
+# org-canvas-conflict-strategy for that run (issue #470), and
+# --prune-overrides deletes the overrides a pushed heading's table no
+# longer claims instead of keeping them (issue #566).  delete's
 # --yes answers the delete confirmation and nothing else (issue #525);
 # cleanup-orphans' --yes answers its own confirmation the same way, and
 # without it the report prints and nothing is deleted (issue #554).

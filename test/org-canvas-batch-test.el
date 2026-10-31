@@ -329,7 +329,7 @@
             :to-equal "diff takes no arguments")
     (expect (condition-case err (org-canvas-batch-parse-args '("push"))
               (org-canvas-batch-usage-error (cadr err)))
-            :to-equal "push takes [--conflict push|pull|skip] FEATURE:TITLE...")))
+            :to-equal "push takes [--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE...")))
 
 (describe "org-canvas-batch-heading-entry"
   (it "reads a heading by title, a colon in the title kept"
@@ -649,6 +649,17 @@
         (expect (test-batch--run '("push" "page:Week 1")) :to-equal 0)
         (expect seen :to-be 'skip))))
 
+  (it "binds the override prune --prune-overrides names for the push alone (#566)"
+    (let ((seen nil) (org-canvas--override-prune nil))
+      (cl-letf (((symbol-function 'org-canvas-sync-headings)
+                 (lambda (_e) (push org-canvas--override-prune seen)
+                   (list (list :outcome 'synced)))))
+        (expect (test-batch--run '("push" "--prune-overrides" "assignment:A"))
+                :to-equal 0)
+        (expect (test-batch--run '("push" "assignment:A")) :to-equal 0)
+        (expect (reverse seen) :to-equal '(t nil))
+        (expect org-canvas--override-prune :to-be nil))))
+
   (it "refuses a --conflict that names no strategy, or no heading (#470)"
     (let ((called nil) (messages nil))
       (cl-letf (((symbol-function 'org-canvas-sync-headings)
@@ -665,7 +676,7 @@
               :to-equal
               '("org-canvas: --conflict takes push, pull or skip, not ask"
                 "org-canvas: --conflict needs push, pull or skip"
-                "org-canvas: push takes [--conflict push|pull|skip] FEATURE:TITLE..."))))
+                "org-canvas: push takes [--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE..."))))
 
   (it "pushes each grading file's sent comment changes, exiting 1 on one unsent (#425)"
     (let ((calls nil) (refused 0))

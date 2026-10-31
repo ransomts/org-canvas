@@ -689,18 +689,30 @@ it encodes as a JSON array)."
                          "")))
              items "; "))
 
+(defvar org-canvas--override-prune nil
+  "When non-nil, a push by heading deletes the overrides its table lacks.
+Bound by `push --prune-overrides' for that run, the way `delete --yes'
+answers its own question (issue #566).  A student's extension is still
+not recoverable, so the flag is the consent: without it an interactive
+push asks, and a batch push keeps them (issue #411).")
+
 (defun org-canvas--override-confirm-deletes (items)
   "Ask whether a push by heading may delete ITEMS, overrides its table lacks.
-Asks with `y-or-n-p' whatever `org-canvas-assume-yes' says, since a
-student's extension is not recoverable from Org once gone; under
-`noninteractive' answers nil, keeping them, so a batch push of one
-heading never deletes an override no one has seen (issue #411).
-Answers t without asking when ITEMS is empty."
+Answers t without asking when ITEMS is empty, or when
+`org-canvas--override-prune' is non-nil — the user said
+`--prune-overrides' (issue #566).  Otherwise asks with `y-or-n-p'
+whatever `org-canvas-assume-yes' says, since a student's extension is
+not recoverable from Org once gone; under `noninteractive' answers nil,
+keeping them, so a batch push of one heading never deletes an override
+no one has seen (issue #411).  A dry run asks nothing and answers as
+the same batch push would, keeping them: the only other answer a live
+push can get is a prompt nobody has answered yet (issue #566)."
   (cond
    ((null items) t)
-   (noninteractive
+   (org-canvas--override-prune t)
+   ((or noninteractive org-canvas--dry-run)
     (org-canvas--log-warning org-canvas--logger
-      "[Override] Keeping %d override(s) Canvas holds that the table lacks (%s): a batch push of one heading deletes none; drop the rows and push interactively, or run org-canvas-sync-overrides"
+      "[Override] Keeping %d override(s) Canvas holds that the table lacks (%s): a push of one heading deletes none in a batch Emacs or under a dry run; drop the rows and push interactively, or push --prune-overrides (issue #566)"
       (length items) (org-canvas--override-describe-unclaimed items))
     nil)
    (t (y-or-n-p (format "Delete %d override(s) Canvas holds that this table lacks (%s)? "
@@ -717,10 +729,12 @@ override lacks by nature (issue #224).  ENDPOINT is the overrides API
 URL.  Returns (DELETED . KEPT): the number deleted, and the number
 kept because CONFIRM was non-nil and `org-canvas--override-confirm-deletes'
 said no (issue #411).  During a dry run the deletions are logged but
-never issued, and nothing is asked."
+never issued, and the confirm answers as the same batch push would, so
+a dry run reports the kept overrides the real push would leave
+\(issue #566)."
   (let ((deleted 0)
         (unclaimed (org-canvas--override-unclaimed existing matched-ids)))
-    (when (and confirm unclaimed (not org-canvas--dry-run)
+    (when (and confirm unclaimed
                (not (org-canvas--override-confirm-deletes unclaimed)))
       (org-canvas--log-info org-canvas--logger
         "[Override] %d override(s) Canvas holds kept, not deleted" (length unclaimed))
@@ -875,12 +889,15 @@ Fetches existing overrides from Canvas, then for each local override:
     carries the row's dates is left alone and counted nowhere (#380)
   - Creates a new override when none is claimed (POST)
   - Deletes the remote overrides no row claimed (DELETE), by id — after
-    asking, when CONFIRM is non-nil (issue #411)
+    asking, when CONFIRM is non-nil (issue #411), or without asking
+    when `org-canvas--override-prune' says the user asked for it
+    (issue #566)
 Returns a plist (:created N :updated N :deleted N :kept N), KEPT the
 overrides Canvas holds that no row claims and the reconcile did
 not delete: always 0 without CONFIRM.
 Under `org-canvas--dry-run' the remote is still read but no write is
-issued; the counts then report what would have been done."
+issued; the counts then report what the same batch push would have
+done, overrides the table lacks counted as kept (issue #566)."
   (let* ((endpoint (org-canvas-api-course-endpoint
                     "assignments/%s/overrides" assignment-id))
          (existing (org-canvas--override-fetch-existing endpoint assignment-id))

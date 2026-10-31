@@ -2102,7 +2102,7 @@ in no container."
         (dates (plist-get entry :dates)))
     (pcase (plist-get entry :state)
       ('extra
-       (format "  EXTRA     %s (override id %s of %s%s; no row of the heading's overrides table claims it, so the next push of that heading deletes it — p pulls the table%s)\n"
+       (format "  EXTRA     %s (override id %s of %s%s; no row of the heading's overrides table claims it, so a push keeps it — push --prune-overrides drops it, or p pulls the table%s)\n"
                who (plist-get entry :id) where
                (if (string-empty-p dates) "" (concat ", " dates))
                (if (plist-get entry :redundant)
