@@ -944,10 +944,9 @@ cache. If a course has no images, no extra API call is made.
 * Complexity Management
 
 The codebase targets no function above cognitive complexity 15
-(measured by =eldev complexity=); the two pre-existing macros
-=org-canvas-define-sync= and =org-canvas-define-push-at-point= are the
-budgeted exceptions in CI and the pre-push hook. Common extraction
-patterns:
+(measured by =eldev complexity=), and both the CI job and the pre-push
+hook allow none: a function above 15 fails the gate rather than using
+up a budget.  Common extraction patterns:
 
 - *Single-item helpers*: Extract the body of =dolist= into a named
   function (e.g., =file-sync-parsed-entry=, =settings-sync-single-tab=)
@@ -969,7 +968,9 @@ Functions are kept below a cognitive complexity threshold of 15. Common extracti
 - *Payload wrapping*: Extract nested payload restructuring into helpers (e.g., =org-canvas--new-quiz-item-wrap-payload=)
 - *Pull property setters*: Extract property-setting blocks from pull functions into dedicated helpers (e.g., =org-canvas--file-pull-set-properties=, =org-canvas--settings-pull-late-policy-properties=)
 
-Run =eldev complexity= to check current metrics. Target: no function above threshold (>15) beyond the two budgeted macros.
+Run =eldev complexity= to check current metrics.  Target: no function
+above the threshold (>15), with no exceptions; the summary line reads
+=0 above cognitive threshold=.
 
 * Key Lessons
 

@@ -59,4 +59,4 @@ Naming, logging, JSON/API, error handling, conflict resolution, Org interaction 
 - Property drawers are stripped before the body link resolver runs — design.org, "Key Lessons"
 
 ## Complexity
-Keep functions below cognitive complexity 15 (`eldev complexity`; the pre-push hook budgets two pre-existing macros). Patterns: single-item helpers, data-driven loops (`pcase` over a field-spec constant), conflict extraction, `org-canvas--timeout-error-p`, payload-wrapping helpers, pull property setters — design.org, "Complexity Management".
+Keep functions below cognitive complexity 15 (`eldev complexity`; the pre-push hook and CI allow no exceptions). Patterns: single-item helpers, data-driven loops (`pcase` over a field-spec constant), conflict extraction, `org-canvas--timeout-error-p`, payload-wrapping helpers, pull property setters — design.org, "Complexity Management".

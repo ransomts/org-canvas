@@ -265,8 +265,8 @@ jobs:
           output=$(eldev complexity 2>&1) || true
           echo "$output"
           violations=$(echo "$output" | grep -oP '\d+(?= above cognitive threshold)' || echo "0")
-          if [ "$violations" -gt 2 ]; then
-            echo "BLOCKED: $violations function(s) above threshold (budget: 2)."
+          if [ "$violations" -gt 0 ]; then
+            echo "BLOCKED: $violations function(s) above threshold (budget: 0)."
             exit 1
           fi
 

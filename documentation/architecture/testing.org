@@ -671,7 +671,7 @@ The =.githooks/pre-push= hook runs four gates:
 | Gate | Command                                       | Threshold  |
 |------+-----------------------------------------------+------------|
 |    1 | =eldev lint= on Emacs 30 (via nix-shell)      | 0 warnings |
-|    2 | =eldev complexity=                            | budget: 2  |
+|    2 | =eldev complexity=                            | 0 above 15 |
 |    3 | =eldev test= on Emacs 29 (via nix-shell)      | 0 failures |
 |    4 | =eldev test= with coverage on Emacs 30 (nix)   | >= 99%     |
 
@@ -679,9 +679,11 @@ Gates 1 and 4 use =nix-shell= with a pinned nixpkgs archive for Emacs
 30, the version CI lints and measures coverage with; gate 3 uses a
 separate pinned archive for Emacs 29.  Coverage is parsed from the
 Codecov JSON output.  The complexity budget (=COMPLEXITY_BUDGET= in the
-hook, the same number in CI's =complexity= job) allows the two
-pre-existing macros above the threshold, =org-canvas-define-sync= and
-=org-canvas-define-push-at-point=; any other function above 15 blocks.
+hook, the same number in CI's =complexity= job) is zero: any function
+above 15 blocks.  It was two, for =org-canvas-define-sync= and
+=org-canvas-define-push-at-point=; #588 and #594 took the last two
+functions above the threshold back under it, the second macro no longer
+exists, and the slack would only have let the next regression through.
 
 Gates 3 and 4 capture the suite's stderr as well as its stdout
 (=> "$LOG" 2>&1=, the redirect order the lint log always used):

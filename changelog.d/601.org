@@ -1,0 +1,5 @@
+* Changed
+- #601 The complexity gate allows no function above cognitive 15, in
+  the pre-push hook and in CI alike, where it allowed two.  The
+  documentation no longer names exceptions: the macro it called
+  budgeted now scores 0, and the other one no longer exists.

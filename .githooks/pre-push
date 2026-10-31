@@ -22,7 +22,7 @@
 set -euo pipefail
 
 COVERAGE_TARGET=99
-COMPLEXITY_BUDGET=2  # pre-existing: org-canvas-define-sync, org-canvas-define-push-at-point
+COMPLEXITY_BUDGET=0  # no function is above the threshold; see design.org
 
 # Pin each Emacs version to a specific nixpkgs snapshot
 declare -A NIX_ARCHIVES=(
@@ -83,7 +83,7 @@ if [ "$violations" -gt "$COMPLEXITY_BUDGET" ]; then
   exit 1
 fi
 echo "Checking cognitive complexity..."
-echo "Complexity OK ($violations/$COMPLEXITY_BUDGET budget used)."
+echo "Complexity OK ($violations function(s) above threshold; budget $COMPLEXITY_BUDGET)."
 echo ""
 
 rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
