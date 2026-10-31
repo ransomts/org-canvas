@@ -6,6 +6,13 @@ name: auto-merge
 #
 # Arming is not merging: branch protection still decides when it may
 # land, so this changes who presses the button, not what may merge.
+#
+# The merge, when it comes, is made by `github-actions[bot]` with the
+# repository's token, and GitHub starts no workflow for an event that
+# token caused: the `pull_request: closed` run close-linked-issues.yml
+# waits for never starts, which is why #611's body closed nothing.  So
+# this job waits for the merge it armed and starts that workflow itself,
+# with `workflow_dispatch`, which GitHub exempts (issue #609).
 
 on:
   pull_request:
@@ -23,10 +30,12 @@ jobs:
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # The wait below is 40 minutes; the timeout leaves it room to fail.
+    timeout-minutes: 45
     permissions:
       contents: write
       pull-requests: write
+      actions: write
 
     steps:
       - name: Arm rebase auto-merge
@@ -40,3 +49,32 @@ jobs:
           # say so and leave the merge to a person.
           gh pr merge "$PR" --repo "$REPO" --auto --rebase \
             || echo "::warning::could not arm auto-merge; merge by hand once green."
+
+      - name: Close the issues the merge names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # The checks take minutes, not seconds; 120 rounds of 20 s is
+          # 40 minutes.  A merge by hand is a person's event and starts
+          # close-linked-issues.yml on its own, so this only has to
+          # cover the bot's own merge.
+          state=
+          for _ in $(seq 1 120); do
+            state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state 2>/dev/null || true)
+            case "$state" in
+              MERGED) break ;;
+              CLOSED) echo "#$PR was closed unmerged; nothing to close"; exit 0 ;;
+            esac
+            sleep 20
+          done
+
+          if [ "$state" = "MERGED" ]; then
+            gh workflow run close-linked-issues.yml --repo "$REPO" -f pr="$PR" \
+              || echo "::error::#${PR} merged, but close-linked-issues could not be started; close its issues by hand."
+          else
+            echo "::warning::#${PR} did not merge within 40 minutes; close its issues by hand."
+          fi
