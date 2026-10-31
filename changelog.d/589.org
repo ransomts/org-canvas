@@ -1,0 +1,2 @@
+* Changed
+- #589 `eldev complexity` measures a function's length from its first body form rather than from the end of the preceding form, so docstrings and the `;;;;` commentary above a defun no longer count as code.  No user-visible change.

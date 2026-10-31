@@ -107,6 +107,40 @@
     (setq body (cdr body)))
   body)
 
+(defun org-canvas--complexity-peek-form ()
+  "Read the next form in the buffer without moving point.
+Answer nil when no form follows, so a defun with an empty body asks
+rather than errors."
+  (ignore-errors
+    (save-excursion
+      (read (current-buffer)))))
+
+(defun org-canvas--complexity-body-start ()
+  "Return where the defun just read starts its body forms.
+Point is at the defun's end.  The docstring and any `declare' or
+`interactive' forms are preamble, skipped here exactly as
+`org-canvas--complexity-skip-preamble' skips them in the parsed body,
+so the length metric counts the code and not the prose that
+documents it (issue #589)."
+  (save-excursion
+    (backward-sexp 1)                  ; back to the form's opening paren
+    (down-list 1)                      ; inside it: the reads below must
+                                        ; never leave the form, or they
+                                        ; walk into the next one
+    (read (current-buffer))            ; the head: defun, cl-defun, ...
+    (read (current-buffer))            ; the name
+    (read (current-buffer))            ; the argument list
+    (when (stringp (org-canvas--complexity-peek-form))
+      (read (current-buffer)))         ; the docstring
+    (while (let ((form (org-canvas--complexity-peek-form)))
+             (and (consp form)
+                  (memq (car form) '(declare interactive))))
+      (read (current-buffer)))         ; a declare or interactive form
+    ;; Land on the first body form rather than at the preamble's closing
+    ;; delimiter, so the docstring's last line is not counted as code.
+    (skip-chars-forward " \t\n")
+    (point)))
+
 (defun org-canvas--complexity-count-params (arglist)
   "Count the number of required + optional parameters in ARGLIST.
 Excludes &rest, &optional, &key keywords themselves but counts their arguments."
@@ -125,14 +159,18 @@ Excludes &rest, &optional, &key keywords themselves but counts their arguments."
       (goto-char (point-min))
       (condition-case nil
           (while t
-            (let ((start-pos (point))
-                  (sexp (read (current-buffer))))
+            (let ((sexp (read (current-buffer))))
               (when (and (consp sexp)
                          (memq (car sexp) '(defun cl-defun defmacro defsubst)))
                 (let* ((name (nth 1 sexp))
                        (arglist (nth 2 sexp))
                        (params (org-canvas--complexity-count-params arglist))
-                       (loc (count-lines start-pos (point)))
+                       ;; From the first body form, not from before the
+                       ;; defun: a `loc' taken from before the form charged
+                       ;; the docstring and the `;;;;' commentary above it
+                       ;; to the function below (issue #589).
+                       (loc (count-lines (org-canvas--complexity-body-start)
+                                         (point)))
                        (body (org-canvas--complexity-skip-preamble (cdddr sexp)))
                        (cog 0) (cyc 0))
                   (dolist (form body)
