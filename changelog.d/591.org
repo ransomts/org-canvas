@@ -1,0 +1,4 @@
+* Changed
+- #591 CI tests Emacs 31.1: the whole suite, then the linter, on the
+  current stable series, beside the 29.x and 30.x legs.  The minimum in
+  =Package-Requires= does not move.
