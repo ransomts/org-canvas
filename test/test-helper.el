@@ -1522,5 +1522,78 @@ ITEMS is the text of the Comments section.  MORE follows the student."
           "** Comments\n- *Prof* [22] :: Mine, rewritten.\n\n"
           "** Comment to post\nSee me.\n"))
 
+;;;; Validation Test Helpers
+
+(defmacro with-validate-test-dir (temp-dir-var &rest body)
+  "Create a temp dir, bind all org-canvas file vars to it, run BODY.
+TEMP-DIR-VAR is bound to the temp directory path.
+Cleans up on exit."
+  (declare (indent 1))
+  `(let* ((,temp-dir-var (make-temp-file "org-val-int-" t))
+          (org-canvas-directory ,temp-dir-var)
+          (org-canvas-assignments-file (expand-file-name "assignments.org" ,temp-dir-var))
+          (org-canvas-pages-file (expand-file-name "pages.org" ,temp-dir-var))
+          (org-canvas-quizzes-file (expand-file-name "quizzes.org" ,temp-dir-var))
+          (org-canvas-modules-file (expand-file-name "modules.org" ,temp-dir-var))
+          (org-canvas-files-file (expand-file-name "files.org" ,temp-dir-var))
+          (org-canvas-outcomes-file (expand-file-name "outcomes.org" ,temp-dir-var))
+          (org-canvas-rubrics-file (expand-file-name "rubrics.org" ,temp-dir-var))
+          (org-canvas-discussions-file (expand-file-name "discussions.org" ,temp-dir-var))
+          (org-canvas-announcements-file (expand-file-name "announcements.org" ,temp-dir-var))
+          (org-canvas-assignment-groups-file (expand-file-name "assignment-groups.org" ,temp-dir-var))
+          (org-canvas-sections-file (expand-file-name "sections.org" ,temp-dir-var))
+          (org-canvas-settings-file (expand-file-name "settings.org" ,temp-dir-var))
+          (org-canvas-new-quizzes-file (expand-file-name "new-quizzes.org" ,temp-dir-var))
+          (org-canvas-group-categories-file (expand-file-name "group-categories.org" ,temp-dir-var))
+          (org-canvas-calendar-events-file (expand-file-name "calendar.org" ,temp-dir-var)))
+     (unwind-protect
+         (progn ,@body)
+       (delete-directory ,temp-dir-var t))))
+
+(defun test-validate-create-empty-files (dir &optional except)
+  "Create empty org files for all content types in DIR.
+EXCEPT is a list of filenames to skip."
+  (dolist (f '("assignments.org" "pages.org" "quizzes.org"
+               "modules.org" "files.org" "outcomes.org"
+               "rubrics.org" "discussions.org" "announcements.org"
+               "assignment-groups.org" "sections.org" "settings.org"
+               "new-quizzes.org" "group-categories.org" "calendar.org"))
+    (unless (member f except)
+      (with-temp-file (expand-file-name f dir)
+        (insert "#+TITLE: Test\n")))))
+
+(defun test-validate-538--entry (props &optional table)
+  "Return the findings of an assignment heading, whole plists.
+PROPS is its drawer text and TABLE an override table under it; the
+heading is checked as the assignment spec checks it."
+  (with-temp-org-buffer
+      (format "* HW\n:PROPERTIES:\n%s:END:\n%s"
+              props (if table (concat "\n#+NAME: overrides\n" table) ""))
+    (org-back-to-heading t)
+    (org-canvas--validate-entry-at-marker
+     nil '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
+     #'org-canvas--validate-assignment-structure "/c/assignments.org")))
+
+(defun test-validate-538--brief (issues)
+  "Return ISSUES as (SEVERITY LINE CHECK ACCEPTED MESSAGE) lists."
+  (mapcar (lambda (i)
+            (list (plist-get i :severity) (plist-get i :line)
+                  (plist-get i :check) (plist-get i :accepted)
+                  (plist-get i :message)))
+          issues))
+
+(defconst test-validate-538--online
+  ":SUBMISSION: online_upload\n:UNLOCK_AT: <2099-03-01 Sun 00:00>\n:DUE_AT: <2099-03-10 Tue 23:59>\n"
+  "An online heading, unlocked and due, with no lock date.")
+
+(defun test-validate--weights-file (dir &rest weights)
+  "Write assignment-groups.org in DIR with one group per entry in WEIGHTS."
+  (with-temp-file (expand-file-name "assignment-groups.org" dir)
+    (insert "* Assignment Groups\n")
+    (let ((n 0))
+      (dolist (w weights)
+        (setq n (1+ n))
+        (insert (format "** Group %d\n:PROPERTIES:\n:WEIGHT: %s\n:END:\n" n w))))))
+
 (provide 'test-helper)
 ;;; test-helper.el ends here

@@ -28,7 +28,10 @@ lisp/
 ├── org-canvas-core-conflict.el  # Interactive conflict resolution UI
 ├── org-canvas-core-delete.el    # Delete/prune infrastructure and macros
 ├── org-canvas-credentials.el    # Secrets (API token, course ID) — gitignored
-├── org-canvas-validate.el       # Offline validation engine (no API contact)
+├── org-canvas-validate-issue.el # Finding vocabulary: issue plists, check ids, dates, roster
+├── org-canvas-validate-content.el # Content checks: pages, quizzes, modules, settings, files…
+├── org-canvas-validate-grading.el # Grading checks: periods, overrides, schemes, weighting
+├── org-canvas-validate.el       # Offline validation engine (no API contact): runs and reports
 ├── org-canvas-diff.el           # Read-only drift report: registry lookup, the per-feature pass and its entry points (org-canvas-diff, org-canvas-diff-batch)
 ├── org-canvas-diff-fields.el    # Drift report's field and body comparison, referenced media, EXTRA details and New Quiz assignments (requires diff)
 ├── org-canvas-diff-items.el     # Drift report's module items, New Quiz items and assignment overrides child passes (requires diff, diff-fields)
@@ -101,6 +104,7 @@ lisp/
 - batch.el sits above everything: it requires `org-canvas` itself (after putting the dependencies on `load-path`) and nothing requires it; a batch Emacs loads it with `-l` (#416)
 - diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
+- `org-canvas-validate` and its check-family files are one command: `-content` and `-grading` require `-issue` for the shared finding vocabulary, and the engine requires all three; no feature module requires any of them
 
 ## 4-Stage Pipeline Pattern
 

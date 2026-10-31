@@ -1,0 +1,2 @@
+* Changed
+- #570 The course validator's checks live in files of their own.  No behaviour changes.

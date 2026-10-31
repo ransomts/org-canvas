@@ -224,8 +224,8 @@ jobs:
     #  1. files.el + sections.el have a triaged baseline of accepted
     #     survivors, so they get a FULL pass gated on it — the job fails
     #     only on a NEW survivor, never on the (noisy, sampled) score.
-    #  2. validate.el + core-sync.el have no baseline yet, so they keep
-    #     the crude sampled score floor until someone triages them.
+    #  2. the validate files + core-sync.el have no baseline yet, so they
+    #     keep the crude sampled score floor until someone triages them.
     # Scheduled weekly, or dispatched by hand with the `mutation` input
     # set; never blocks PRs.  A plain dispatch — a CI run on a branch
     # that has no pull request — must not burn the 90 minutes.
@@ -270,7 +270,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           python3 test/mutation/mutate.py \
-            --files lisp/org-canvas-validate.el lisp/org-canvas-core-sync.el \
+            --files lisp/org-canvas-validate.el \
+                    lisp/org-canvas-validate-issue.el \
+                    lisp/org-canvas-validate-content.el \
+                    lisp/org-canvas-validate-grading.el \
+                    lisp/org-canvas-core-sync.el \
             --max 50 --jobs 2 --timeout 120 --min-score 40 \
             --json mutation-result.json
 
