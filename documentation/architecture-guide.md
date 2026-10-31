@@ -22,7 +22,9 @@ lisp/
 ├── org-canvas-core-html.el      # HTML export (links, images) and HTML→Org conversion on pull
 ├── org-canvas-core-pull.el      # Pull helpers, file-URL rewriter, pull macros, pull summary
 ├── org-canvas-core-macros.el    # Declarative parse and payload DSL (define-parse, define-payload)
-├── org-canvas-core-sync.el      # Sync pipeline macro, push/finalize infra, snapshots, duplicate guard
+├── org-canvas-core-sync.el      # Sync pipeline core: per-entry pipeline, counters, define-sync DSL
+├── org-canvas-core-push.el      # Push guards: remote drift, conflict check, timeout/404 recovery, duplicate guard, echo check
+├── org-canvas-core-heading.el   # At-point and by-heading push, sync, pull and delete
 ├── org-canvas-core-conflict.el  # Interactive conflict resolution UI
 ├── org-canvas-core-delete.el    # Delete/prune infrastructure and macros
 ├── org-canvas-credentials.el    # Secrets (API token, course ID) — gitignored

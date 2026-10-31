@@ -1,0 +1,2 @@
+* Changed
+- #570 The sync engine's core lives in files of its own.  No behaviour changes.

@@ -16,7 +16,9 @@
 ;;   org-canvas-core-macros   - Declarative payload/parse DSL (code generation)
 ;;   org-canvas-core-conflict - Interactive conflict resolution UI
 ;;   org-canvas-core-delete   - Delete-all / delete-at-point macros + runtime
-;;   org-canvas-core-sync     - Sync pipeline and push-to-API infrastructure
+;;   org-canvas-core-sync     - Sync pipeline core and the define-sync DSL
+;;   org-canvas-core-push     - Push guards: drift, conflict, recovery, echo
+;;   org-canvas-core-heading  - At-point and by-heading commands
 ;;
 ;; DEPENDENCY RULES
 ;; ================
@@ -47,6 +49,8 @@
 (require 'org-canvas-core-conflict)
 (require 'org-canvas-core-delete)
 (require 'org-canvas-core-sync)
+(require 'org-canvas-core-push)
+(require 'org-canvas-core-heading)
 
 (provide 'org-canvas-core)
 ;;; org-canvas-core.el ends here
