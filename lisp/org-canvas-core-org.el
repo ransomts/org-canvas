@@ -851,6 +851,21 @@ FILE is nil or missing."
            match 'file)))
       title)))
 
+(defun org-canvas--heading-link (file heading text)
+  "Return an Org link to HEADING in FILE, labelled TEXT.
+HEADING is a heading as `org-get-heading' returns it, brackets
+backslash-escaped.  `org-link-make-string' escapes the target of a
+link in turn, so unescaping first is what keeps the target the
+headline itself.  Nil when FILE or HEADING is nil, so a caller may
+pass a file variable guarded only by `boundp' and a lookup that found
+nothing."
+  (when (and file heading)
+    (org-link-make-string
+     (format "file:%s::*%s"
+             (file-name-nondirectory file)
+             (org-canvas--unescape-org-brackets heading))
+     text)))
+
 ;;;; Body Fragments Stranded by an Older Pull (issue #391)
 ;;
 ;; Before #175 a heading in a pulled body became an Org headline, which

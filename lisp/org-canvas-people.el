@@ -263,32 +263,19 @@ not return keeps nil ids, so their properties are left out."
 (defun org-canvas--people-section-heading (section-id)
   "Return the sections.org heading carrying SECTION-ID, or nil.
 Nil as well when `org-canvas-sections-file' is unset or missing."
-  (let ((file (and (boundp 'org-canvas-sections-file) org-canvas-sections-file)))
-    (when (and file (file-exists-p file))
-      (let ((target (format "%s" section-id)) (heading nil))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (save-excursion
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (and (not heading)
-                          (equal (org-entry-get (point) "CANVAS_ID") target))
-                 (setq heading (org-get-heading t t t t))))
-             "LEVEL=1" 'file)))
-        heading))))
+  (org-canvas--heading-title-by-property
+   (and (boundp 'org-canvas-sections-file) org-canvas-sections-file)
+   "CANVAS_ID" section-id "LEVEL=1"))
 
 (defun org-canvas--people-section-text (section-id names)
   "Return the SECTIONS text for SECTION-ID: a sections.org link, or its name.
 NAMES maps section ids to the names the course reports."
-  (let ((heading (org-canvas--people-section-heading section-id))
-        (name (or (alist-get section-id names) (format "%s" section-id))))
-    (if heading
-        (let ((unescaped (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" heading)))
-          (org-link-make-string
-           (format "file:%s::*%s"
-                   (file-name-nondirectory org-canvas-sections-file) unescaped)
-           name))
-      name)))
+  (let ((name (or (alist-get section-id names) (format "%s" section-id))))
+    (or (org-canvas--heading-link
+         (and (boundp 'org-canvas-sections-file) org-canvas-sections-file)
+         (org-canvas--people-section-heading section-id)
+         name)
+        name)))
 
 (defun org-canvas--people-fetch-section-names ()
   "Return an alist of section id to name for the course."

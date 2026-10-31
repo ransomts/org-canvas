@@ -752,10 +752,7 @@ or the heading is not there."
     (when (and id file (file-exists-p file))
       (let ((heading (gethash (format "%s" id)
                               (org-canvas--pull-link-index file id-prop))))
-        (when heading
-          (org-link-make-string
-           (format "file:%s::*%s" (file-name-nondirectory file) heading)
-           heading))))))
+        (org-canvas--heading-link file heading heading)))))
 
 (defun org-canvas--registry-remote-as-org (spec value)
   "Return VALUE spelled as an Org property string of SPEC's type.

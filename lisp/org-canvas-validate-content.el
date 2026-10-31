@@ -291,9 +291,7 @@ Nil too when RAW-HEADING holds no such link.  LOC is a
           (list (org-canvas--validate-make-issue
                  'error loc nil
                  (format "Module item links to missing file: %s" file-path)))
-        (let ((clean-heading (replace-regexp-in-string
-                              "\\\\[][]"
-                              (lambda (m) (substring m 1))
+        (let ((clean-heading (org-canvas--unescape-org-brackets
                               (match-string 2 raw-heading))))
           (org-canvas--validate-module-item-target
            abs-path clean-heading file-path loc))))))

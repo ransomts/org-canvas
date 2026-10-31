@@ -120,26 +120,15 @@ The link is used when `org-canvas-discussions-file' exists and holds a
 level-1 heading stamped with the topic's id, as the modules pull links
 its items; the discussions module is never loaded for it."
   (let* ((title (or (alist-get 'title topic) "Untitled"))
-         (id (format "%s" (alist-get 'id topic)))
          (file (and (boundp 'org-canvas-discussions-file)
                     org-canvas-discussions-file
-                    (expand-file-name org-canvas-discussions-file)))
-         (heading nil))
-    (when (and file (file-exists-p file))
-      (with-current-buffer (org-canvas--find-file-noselect file)
-        (save-excursion
-          (goto-char (point-min))
-          (org-map-entries
-           (lambda ()
-             (when (and (null heading)
-                        (equal (org-entry-get (point) "CANVAS_ID") id))
-               (setq heading (org-get-heading t t t t))))
-           "LEVEL=1" 'file))))
-    (if heading
-        (org-link-make-string
-         (format "file:%s::*%s" (file-name-nondirectory file) heading)
+                    (expand-file-name org-canvas-discussions-file))))
+    (or (org-canvas--heading-link
+         file
+         (org-canvas--heading-title-by-property
+          file "CANVAS_ID" (alist-get 'id topic) "LEVEL=1")
          title)
-      title)))
+        title)))
 
 (defun org-canvas--reply-heading-text (entry)
   "Return the heading text for ENTRY: `Reply by NAME (YYYY-MM-DD HH:MM)'.

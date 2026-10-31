@@ -174,8 +174,7 @@ Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil."
 Org escapes brackets inside link components, so `\\[' and `\\]' are
 unescaped before quoting; the stars tolerate extra spaces."
   (format "^\\*+ +%s"
-          (regexp-quote (replace-regexp-in-string
-                         "\\\\[][]" (lambda (m) (substring m 1)) heading))))
+          (regexp-quote (org-canvas--unescape-org-brackets heading))))
 
 (defun org-canvas--module-search-heading-for-id (abs-file heading title)
   "Search ABS-FILE for HEADING and return its Canvas IDs.

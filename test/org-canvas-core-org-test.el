@@ -694,6 +694,17 @@ Body text only.
   (it "handles empty string"
     (expect (org-canvas--unescape-org-brackets "") :to-equal "")))
 
+(describe "org-canvas--heading-link"
+  (it "escapes a bracketed heading's target once, not twice"
+    (let ((link (org-canvas--heading-link
+                 "/tmp/course/group-categories.org"
+                 "Teams \\[2026\\]" "Teams [2026]")))
+      (expect link :to-match (regexp-quote "group-categories.org::*Teams \\[2026\\]]"))))
+
+  (it "returns nil when the file or the heading is nil"
+    (expect (org-canvas--heading-link nil "Heading" "text") :to-be nil)
+    (expect (org-canvas--heading-link "/tmp/course/x.org" nil "text") :to-be nil)))
+
 ;;;; Bracket-Escaped Link Resolution
 
 (describe "org-canvas--resolve-link-property bracket escaping"

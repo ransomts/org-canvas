@@ -1244,7 +1244,7 @@ other link is known by its description."
   (let ((key (or (and (string-match "::\\*\\(.+\\)\\'" link) (match-string 1 link))
                  description
                  link)))
-    (string-trim (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" key))))
+    (string-trim (org-canvas--unescape-org-brackets key))))
 
 (defun org-canvas--section-keys (text)
   "Return the sections TEXT names, as sections.org heading titles.

@@ -80,37 +80,22 @@ repository (issue #549)."
   "Return the group-categories.org heading carrying CATEGORY-ID, or nil.
 Nil as well when `org-canvas-group-categories-file' is unset or the
 file does not exist; the pull then writes the category's name plainly."
-  (let ((file (and (boundp 'org-canvas-group-categories-file)
-                   org-canvas-group-categories-file)))
-    (when (and file (file-exists-p file))
-      (let ((target (format "%s" category-id))
-            (heading nil))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (save-excursion
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (and (not heading)
-                          (equal (org-entry-get (point) "CANVAS_ID") target))
-                 (setq heading (org-get-heading t t t t))))
-             "LEVEL=1" 'file)))
-        heading))))
+  (org-canvas--heading-title-by-property
+   (and (boundp 'org-canvas-group-categories-file)
+        org-canvas-group-categories-file)
+   "CANVAS_ID" category-id "LEVEL=1"))
 
 (defun org-canvas--group-category-title (category-id name)
   "Return the heading text for the category CATEGORY-ID named NAME.
 A link to the category's heading in group-categories.org when that
 file holds the id, as the modules pull links its items; NAME alone
 otherwise."
-  (let ((heading (org-canvas--group-category-heading category-id)))
-    (if heading
-        (let ((unescaped (replace-regexp-in-string
-                          "\\\\\\([][]\\)" "\\1" heading)))
-          (org-link-make-string
-           (format "file:%s::*%s"
-                   (file-name-nondirectory org-canvas-group-categories-file)
-                   unescaped)
-           name))
-      name)))
+  (or (org-canvas--heading-link
+       (and (boundp 'org-canvas-group-categories-file)
+            org-canvas-group-categories-file)
+       (org-canvas--group-category-heading category-id)
+       name)
+      name))
 
 ;;;; Heading Upsert
 
