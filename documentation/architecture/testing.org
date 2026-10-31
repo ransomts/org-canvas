@@ -506,7 +506,9 @@ Only =:type= is affected; other keywords work fine.
   generated-artifacts
                     the contract fixture regenerates to itself; the
                     changelog fragments validate
-  mutation          weekly, or dispatched with the mutation input
+  mutation          weekly, or dispatched with the mutation input;
+                    four shards, each a full pass over its files gated
+                    on test/mutation/accepted-survivors.txt
 #+end_example
 
 The Emacs setup every job repeats (Emacs, Eldev, the cached =.eldev=,

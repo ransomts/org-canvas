@@ -220,17 +220,43 @@ jobs:
           fi
 
   mutation:
-    # Assertion-depth ratchet.  Two legs:
-    #  1. files.el + sections.el have a triaged baseline of accepted
-    #     survivors, so they get a FULL pass gated on it — the job fails
-    #     only on a NEW survivor, never on the (noisy, sampled) score.
-    #  2. the validate files + core-sync.el have no baseline yet, so they
-    #     keep the crude sampled score floor until someone triages them.
-    # Scheduled weekly, or dispatched by hand with the `mutation` input
-    # set; never blocks PRs.  A plain dispatch — a CI run on a branch
-    # that has no pull request — must not burn the 90 minutes.
-    # The timeout covers the full pass: ~195 mutations at --jobs 3, plus
-    # six known non-terminating mutants that each burn the 120s timeout.
+    # Assertion-depth ratchet.  Every file in the baseline gets a FULL
+    # pass gated on `test/mutation/accepted-survivors.txt': the job
+    # fails only on a survivor that is not in that file, never on the
+    # (noisy, sampled) score -- see test/mutation/README.md.
+    #
+    # The pass is sharded because a full run over all nine files is
+    # ~1,060 mutations at ~20s each, more than one runner can do inside
+    # the 90-minute budget at --jobs 3.  Each shard covers a disjoint,
+    # balanced set of files and checks the same baseline; `--baseline'
+    # only treats an entry as stale when this run covered its site, so
+    # shards do not report each other's entries as stale.
+    #
+    # Scheduled weekly, or dispatched by hand with the `mutation' input
+    # set; never blocks PRs.  A plain dispatch -- a CI run on a branch
+    # that has no pull request -- must not burn the 90 minutes.
+    strategy:
+      # One shard failing must not cancel the others: the survivors it
+      # reports are the useful output, and every shard's report is
+      # uploaded.
+      fail-fast: false
+      matrix:
+        shard:
+          - name: files
+            files: lisp/org-canvas-files.el
+          - name: sections
+            files: lisp/org-canvas-sections.el
+          - name: validate
+            files: >-
+              lisp/org-canvas-validate.el
+              lisp/org-canvas-validate-issue.el
+              lisp/org-canvas-validate-content.el
+              lisp/org-canvas-validate-grading.el
+          - name: sync-push-heading
+            files: >-
+              lisp/org-canvas-core-sync.el
+              lisp/org-canvas-core-push.el
+              lisp/org-canvas-core-heading.el
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mutation)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -250,39 +276,22 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Full pass gated on the accepted-survivors baseline
+      - name: Full pass gated on the accepted-survivors baseline (${{ matrix.shard.name }})
         # Fails only on a survivor absent from the baseline.  Stale
         # entries (accepted but no longer surviving) are reported, not
-        # failed — see test/mutation/README.md for why, including the
+        # failed -- see test/mutation/README.md for why, including the
         # ~1-spurious-kill-per-pass hazard (#44) that makes any
         # score-based gate on a full pass unreliable.
         run: |
           python3 test/mutation/mutate.py \
-            --files lisp/org-canvas-files.el lisp/org-canvas-sections.el \
+            --files ${{ matrix.shard.files }} \
             --max 0 --jobs 3 --timeout 120 \
             --baseline test/mutation/accepted-survivors.txt \
-            --json mutation-baseline-result.json
-
-      - name: Sampled mutation run with score floor
-        # --jobs 2 suits the 2-4 core GitHub runner (each eldev test spawns
-        # ~2 processes). Floor of 40% allows for equivalent mutants in the
-        # sample while catching a real depth regression.
-        if: ${{ !cancelled() }}
-        run: |
-          python3 test/mutation/mutate.py \
-            --files lisp/org-canvas-validate.el \
-                    lisp/org-canvas-validate-issue.el \
-                    lisp/org-canvas-validate-content.el \
-                    lisp/org-canvas-validate-grading.el \
-                    lisp/org-canvas-core-sync.el \
-            --max 50 --jobs 2 --timeout 120 --min-score 40 \
-            --json mutation-result.json
+            --json "mutation-baseline-${{ matrix.shard.name }}.json"
 
       - name: Upload mutation results
         uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: mutation-result
-          path: |
-            mutation-result.json
-            mutation-baseline-result.json
+          name: mutation-result-${{ matrix.shard.name }}
+          path: mutation-baseline-${{ matrix.shard.name }}.json

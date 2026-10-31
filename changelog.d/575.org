@@ -1,0 +1,16 @@
+* Changed
+- #575 Mutation testing now covers the four =validate= modules plus
+  =core-sync.el=, =core-push.el= and =core-heading.el=, not just
+  =files.el= and =sections.el=.  The first full pass over them ran 636
+  mutations, of which the suite killed 433; each of the 119 remaining
+  survivor keys is either killed by a new spec or recorded in
+  =test/mutation/accepted-survivors.txt= with the reason it is accepted.
+  The weekly CI job runs one full pass per shard against that file and
+  fails only on a survivor that is not in it, so the crude sampled
+  =--min-score 40= floor is gone.
+
+* Fixed
+- #575 =org-canvas--dry-run-response-p= is now covered by a spec that
+  hands it a copy of the sentinel, pinning the value comparison its
+  docstring promises; the previous specs only ever passed the one object
+  itself, so =equal= could have been weakened to =eq= unnoticed.
