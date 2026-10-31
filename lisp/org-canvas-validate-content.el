@@ -65,11 +65,17 @@ Returns an issue or nil."
     (when (and outcome-cell
                (not (string-empty-p (string-trim outcome-cell))))
       (org-canvas--validate-resolve-file-link
-       outcome-cell "CANVAS_ID" file loc nil
+       outcome-cell
+       :id-property "CANVAS_ID"
+       :source-file file
+       :loc loc
+       :property nil
+       :not-link-msg
        (format "Rubric criterion '%s' outcome is not a file link" criterion)
+       :unresolved-msg
        (format "Rubric criterion '%s' outcome link has no CANVAS_ID (sync outcomes first)"
                criterion)
-       'warning))))
+       :not-link-severity 'warning))))
 
 (defun org-canvas--validate-rubric-outcome-links (table-data file loc)
   "Validate outcome links in 4th column of rubric TABLE-DATA.

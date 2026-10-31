@@ -1521,18 +1521,26 @@
           (progn
             (with-temp-file target (insert "* Target\n"))
             (let ((issue (org-canvas--validate-resolve-file-link
-                          "[[file:t.org::*Target][Target]]" "CANVAS_ID" src
-                          '(:file "s.org" :line 1 :heading "H") "GROUP"
-                          "not a link" "GROUP: link target has no CANVAS_ID (sync target first)")))
+                          "[[file:t.org::*Target][Target]]"
+                          :id-property "CANVAS_ID"
+                          :source-file src
+                          :loc '(:file "s.org" :line 1 :heading "H")
+                          :property "GROUP"
+                          :not-link-msg "not a link"
+                          :unresolved-msg "GROUP: link target has no CANVAS_ID (sync target first)")))
               (expect (plist-get issue :pending-sync) :to-be t)
               (expect (plist-get issue :severity) :to-equal 'warning)))
         (delete-directory dir t))))
 
   (it "does not mark non-link errors as pending-sync"
     (let ((issue (org-canvas--validate-resolve-file-link
-                  "plain text" "CANVAS_ID" "/tmp/s.org"
-                  '(:file "s.org" :line 1 :heading "H") "GROUP"
-                  "not a link" "unresolved")))
+                  "plain text"
+                  :id-property "CANVAS_ID"
+                  :source-file "/tmp/s.org"
+                  :loc '(:file "s.org" :line 1 :heading "H")
+                  :property "GROUP"
+                  :not-link-msg "not a link"
+                  :unresolved-msg "unresolved")))
       (expect (plist-get issue :pending-sync) :to-be nil)
       (expect (plist-get issue :severity) :to-equal 'error))))
 

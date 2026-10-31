@@ -306,16 +306,23 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
         'error loc property
         (format "%s: '%s' is not a valid Org timestamp" property value))))))
 
-(defun org-canvas--validate-resolve-file-link (value id-property source-file loc property
-                                                     not-link-msg unresolved-msg
-                                                     &optional not-link-severity)
+(cl-defun org-canvas--validate-resolve-file-link (value
+                                                  &key
+                                                  id-property
+                                                  source-file
+                                                  loc
+                                                  property
+                                                  not-link-msg
+                                                  unresolved-msg
+                                                  not-link-severity)
   "Check VALUE as a file link, verifying ID-PROPERTY resolves.
 SOURCE-FILE is the file containing the link (for relative path resolution).
 LOC is a (:file :line :heading) plist.  PROPERTY is the property name (or nil).
 NOT-LINK-MSG is the message when VALUE is not a file link.
 UNRESOLVED-MSG is the warning message when the link target has no ID-PROPERTY.
 NOT-LINK-SEVERITY is the severity for non-link values (default: \\='error).
-Returns nil (valid) or an issue plist."
+Every argument but VALUE is a keyword.  Returns nil (valid) or an issue
+plist."
   (cond
    ((not (string-match "\\[\\[file:" value))
     (org-canvas--validate-make-issue (or not-link-severity 'error)
@@ -332,9 +339,15 @@ ID-PROPERTY is the Canvas ID property expected on the target heading.
 LOC is a (:file :line :heading) plist."
   (when value
     (org-canvas--validate-resolve-file-link
-     value id-property (plist-get loc :file) loc property
+     value
+     :id-property id-property
+     :source-file (plist-get loc :file)
+     :loc loc
+     :property property
+     :not-link-msg
      (format "%s: '%s' is not a file link (expected [[file:...::*heading][...]])"
              property value)
+     :unresolved-msg
      (format "%s: link target has no %s (sync target first)"
              property id-property))))
 

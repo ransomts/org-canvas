@@ -1007,8 +1007,14 @@ lives (`org-canvas--sync-item-url', issue #344)."
          "[Finalize] Could not re-read '%s' after its post-sync write (%s); the next drift report may report this push as a change"
          title (error-message-string err))))))
 
-(defun org-canvas--finalize-run-post-fn (post-fn data response pom endpoint id
-                                                 field title ctx)
+(cl-defun org-canvas--finalize-run-post-fn (post-fn data response
+                                                   &key
+                                                   pom
+                                                   endpoint
+                                                   id
+                                                   field
+                                                   title
+                                                   ctx)
   "Call POST-FN with DATA, RESPONSE and CTX, then restamp if it wrote to Canvas.
 POM, ENDPOINT, ID, FIELD, TITLE and CTX are passed on to
 `org-canvas--finalize-restamp-updated', which runs only when POST-FN
@@ -1174,9 +1180,10 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
               (org-canvas-org-set-property pom "CANVAS_UPDATED_AT"
                                            (format "%s" updated-at))))
           (when post-fn
-            (org-canvas--finalize-run-post-fn post-fn data response pom
-                                              endpoint id updated-field title
-                                              (or ctx (org-canvas--sync-make-ctx))))
+            (org-canvas--finalize-run-post-fn
+             post-fn data response
+             :pom pom :endpoint endpoint :id id :field updated-field
+             :title title :ctx (or ctx (org-canvas--sync-make-ctx))))
           (org-canvas--log-info org-canvas--logger "[Finalize] Complete for '%s'" title))
       (org-canvas--log-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
       (org-canvas--signal 'org-canvas-api-error

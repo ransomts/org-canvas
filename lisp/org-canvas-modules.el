@@ -482,9 +482,9 @@ when available."
      ;; No link resolved — return nil to signal wrapper should classify
      (t nil))))
 
-(defun org-canvas--module-classify-unlinked-heading
-    (heading-with-links raw-heading canvas-id indent published pom
-                        &optional published-specified)
+(cl-defun org-canvas--module-classify-unlinked-heading
+    (&key heading-with-links raw-heading canvas-id indent published pom
+          published-specified)
   "Classify a module item heading whose link could not be fully resolved.
 Distinguishes two cases:
   1. Heading contains a [[file:...]] link but the target has no CANVAS_ID
@@ -494,7 +494,7 @@ Distinguishes two cases:
 HEADING-WITH-LINKS is the raw buffer text (from `org-complex-heading-regexp'
 group 4), RAW-HEADING is from `org-get-heading'.  CANVAS-ID, INDENT,
 PUBLISHED, POM, and PUBLISHED-SPECIFIED are passed through to the
-returned plist."
+returned plist.  Every argument is a keyword."
   (let* ((link-src (or heading-with-links raw-heading))
          (link-file (when (and link-src
                                (string-match "\\[\\[file:\\([^]:]+\\)" link-src))
@@ -553,12 +553,16 @@ MODULES-FILE-DIR is used to resolve relative file links."
      ;; No link resolved — classify as SubHeader or unresolved link
      (t
       (let ((result (org-canvas--module-classify-unlinked-heading
-                     (plist-get raw :heading-with-links)
-                     (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
-                     (plist-get raw :canvas-id)
-                     (org-canvas--interpret-number (plist-get raw :indent-raw) 0)
-                     (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
-                     pom
+                     :heading-with-links (plist-get raw :heading-with-links)
+                     :raw-heading (org-canvas--strip-statistics-cookie
+                                   (plist-get raw :title-raw))
+                     :canvas-id (plist-get raw :canvas-id)
+                     :indent (org-canvas--interpret-number
+                              (plist-get raw :indent-raw) 0)
+                     :published (org-canvas--interpret-boolean
+                                 (plist-get raw :published-raw) t)
+                     :pom pom
+                     :published-specified
                      (and (plist-get raw :published-raw) t))))
         result)))))
 

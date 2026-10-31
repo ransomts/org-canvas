@@ -420,11 +420,13 @@ heading's file is saved.  Return what
 `org-canvas-set-published-at-point' returns (issue #466)."
   (let* ((feature (org-canvas--publish-feature-named feature))
          (marker (org-canvas--sync-find-heading
-                  (expand-file-name (symbol-value (plist-get feature :file-var)))
-                  "LEVEL=1" target by
-                  (or (plist-get feature :id-property) "CANVAS_ID")
-                  (org-canvas--publish-singular (plist-get feature :name))
-                  (if published "publish" "unpublish"))))
+                  :file (expand-file-name
+                         (symbol-value (plist-get feature :file-var)))
+                  :query "LEVEL=1" :target target :by by
+                  :id-property (or (plist-get feature :id-property) "CANVAS_ID")
+                  :feature (org-canvas--publish-singular
+                            (plist-get feature :name))
+                  :verb (if published "publish" "unpublish"))))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)

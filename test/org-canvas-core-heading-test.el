@@ -331,8 +331,10 @@ Body.
 (describe "org-canvas--sync-find-heading"
   (it "finds a heading by its exact title"
     (with-temp-org-buffer test-org-canvas-heading-file-content
-      (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL=1"
-                                              "Week 06 objectives" nil "CANVAS_ID" "page")))
+      (let ((m (org-canvas--sync-find-heading
+                :file buffer-file-name :query "LEVEL=1"
+                :target "Week 06 objectives" :by nil
+                :id-property "CANVAS_ID" :feature "page")))
         (expect (markerp m) :to-be-truthy)
         (expect (marker-buffer m) :to-be (current-buffer))
         (save-excursion (goto-char m)
@@ -341,28 +343,35 @@ Body.
   (it "finds a heading by its stamp, as a string or a number"
     (with-temp-org-buffer test-org-canvas-heading-file-content
       (dolist (target '("501" 501))
-        (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL=1"
-                                                target 'canvas-id "CANVAS_ID" "page")))
+        (let ((m (org-canvas--sync-find-heading
+                  :file buffer-file-name :query "LEVEL=1"
+                  :target target :by 'canvas-id
+                  :id-property "CANVAS_ID" :feature "page")))
           (save-excursion (goto-char m)
                           (expect (org-get-heading t t t t) :to-equal "Week 05 objectives"))))))
 
   (it "does not let a prefix of a title match (R1 is not R10)"
     (with-temp-org-buffer "* R1\n* R10\n"
-      (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "R1" nil "CANVAS_ID" "x")))
+      (let ((m (org-canvas--sync-find-heading
+                :file buffer-file-name :query "LEVEL=1" :target "R1" :by nil
+                :id-property "CANVAS_ID" :feature "x")))
         (save-excursion (goto-char m) (expect (org-get-heading t t t t) :to-equal "R1")))))
 
   (it "matches a heading that is a link by its text as written"
     (with-temp-org-buffer test-org-canvas-heading-file-content
       (let ((m (org-canvas--sync-find-heading
-                buffer-file-name "LEVEL=1"
-                "[[file:content/syllabus.pdf][Syllabus.pdf]]" nil "CANVAS_ID" "file")))
+                :file buffer-file-name :query "LEVEL=1"
+                :target "[[file:content/syllabus.pdf][Syllabus.pdf]]" :by nil
+                :id-property "CANVAS_ID" :feature "file")))
         (expect (markerp m) :to-be-truthy))))
 
   (it "matches a files.org link heading by its description (issue #446)"
     (with-temp-org-buffer "* course\n** [[file:../syllabus.pdf][syllabus.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 31861753\n:END:\n"
       (dolist (target '("syllabus.pdf" "[[file:../syllabus.pdf][syllabus.pdf]]"))
-        (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL>0"
-                                                target nil "CANVAS_ID" "file")))
+        (let ((m (org-canvas--sync-find-heading
+                  :file buffer-file-name :query "LEVEL>0"
+                  :target target :by nil
+                  :id-property "CANVAS_ID" :feature "file")))
           (save-excursion (goto-char m)
                           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "31861753"))))))
 
@@ -383,35 +392,51 @@ Body.
 
   (it "looks only at the headings the query selects"
     (with-temp-org-buffer test-org-canvas-heading-file-content
-      (expect (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "A child" nil "CANVAS_ID" "page")
+      (expect (org-canvas--sync-find-heading
+               :file buffer-file-name :query "LEVEL=1" :target "A child" :by nil
+               :id-property "CANVAS_ID" :feature "page")
               :to-throw 'user-error)
-      (expect (markerp (org-canvas--sync-find-heading buffer-file-name "LEVEL=2" "A child" nil "CANVAS_ID" "page"))
+      (expect (markerp (org-canvas--sync-find-heading
+                        :file buffer-file-name :query "LEVEL=2"
+                        :target "A child" :by nil
+                        :id-property "CANVAS_ID" :feature "page"))
               :to-be-truthy)))
 
   (it "is a user-error naming the file when nothing matches"
     (with-temp-org-buffer test-org-canvas-heading-file-content
       (condition-case err
-          (progn (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "Week 07" nil "CANVAS_ID" "page")
+          (progn (org-canvas--sync-find-heading
+                  :file buffer-file-name :query "LEVEL=1"
+                  :target "Week 07" :by nil
+                  :id-property "CANVAS_ID" :feature "page")
                  (expect nil :to-be-truthy))
         (user-error (expect (cadr err) :to-match "No page heading titled \"Week 07\" in org-test-")))))
 
   (it "is a user-error when two headings carry the title"
     (with-temp-org-buffer test-org-canvas-heading-file-content
       (condition-case err
-          (progn (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "Twice" nil "CANVAS_ID" "page")
+          (progn (org-canvas--sync-find-heading
+                  :file buffer-file-name :query "LEVEL=1"
+                  :target "Twice" :by nil
+                  :id-property "CANVAS_ID" :feature "page")
                  (expect nil :to-be-truthy))
         (user-error (expect (cadr err) :to-match "2 page headings titled \"Twice\".*at point")))))
 
   (it "names the stamp in the error for a by-id lookup"
     (with-temp-org-buffer test-org-canvas-heading-file-content
       (condition-case err
-          (progn (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "9" 'canvas-id "CANVAS_URL" "page")
+          (progn (org-canvas--sync-find-heading
+                  :file buffer-file-name :query "LEVEL=1"
+                  :target "9" :by 'canvas-id
+                  :id-property "CANVAS_URL" :feature "page")
                  (expect nil :to-be-truthy))
         (user-error (expect (cadr err) :to-match "No page heading CANVAS_URL 9")))))
 
   (it "rejects a BY it does not know"
     (with-temp-org-buffer test-org-canvas-heading-file-content
-      (expect (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "x" 'name "CANVAS_ID" "page")
+      (expect (org-canvas--sync-find-heading
+               :file buffer-file-name :query "LEVEL=1" :target "x" :by 'name
+               :id-property "CANVAS_ID" :feature "page")
               :to-throw 'user-error))))
 
 (describe "org-canvas--sync-heading-ask"

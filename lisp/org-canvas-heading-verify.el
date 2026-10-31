@@ -375,8 +375,10 @@ PROPS is the feature's property registration.  Return the result plist."
 PROPS is the feature's property registration, whose query selects the
 headings."
   (org-canvas--sync-find-heading
-   (symbol-value (plist-get feature :file-var)) (plist-get props :query)
-   target by "CANVAS_ID" (plist-get feature :name) "verify"))
+   :file (symbol-value (plist-get feature :file-var))
+   :query (plist-get props :query)
+   :target target :by by
+   :id-property "CANVAS_ID" :feature (plist-get feature :name) :verb "verify"))
 
 (defun org-canvas--heading-verify-one (entry)
   "Verify heading ENTRY, (KIND TARGET BY), and return its result plist.
