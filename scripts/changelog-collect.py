@@ -16,6 +16,19 @@ Fixed, Security), each followed by one or more `- #N ...` items.
     scripts/changelog-collect.py            fold every fragment in, delete them
     scripts/changelog-collect.py --check    validate them and the fold, write nothing
     scripts/changelog-collect.py --dry-run  print the CHANGELOG.org the fold would write
+    scripts/changelog-collect.py --branch-check BRANCH
+                                            does BRANCH bring the fragment its
+                                            name promises?
+
+`--branch-check` answers the question a pull request asks of its own
+branch.  A branch named for an issue (`fix/601-complexity-budget`,
+`docs/598-branch-check`) must bring `changelog.d/601.org` or
+`601-<slug>.org`.  An `integration/` branch lands several issues at
+once, one commit and one fragment each, and carries a date rather than
+an issue in its name, so it must bring at least one *new* fragment
+against `--base` (default `origin/main`); every fragment it brings is
+validated like any other.  A branch with no issue number in its name
+is only validated, exactly as `--check` does.
 
 Entries land at the top of their section under `* Unreleased`, newest
 (highest number) first, a missing section created in the order above.
@@ -24,6 +37,7 @@ Entries land at the top of their section under `* Unreleased`, newest
 import argparse
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -32,10 +46,38 @@ CHANGELOG = ROOT / "CHANGELOG.org"
 SECTIONS = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
 NAME = re.compile(r"^(\d+)(?:-[A-Za-z0-9._-]+)?\.org$")
 ITEM = re.compile(r"^- #\d+\b")
+# A branch named for an issue: `fix/601-...`, `docs/598`, `chore/575_...`.
+BRANCH_ISSUE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*/(\d+)(?:[-_.]|$)")
+INTEGRATION = "integration/"
 
 
 class FragmentError(Exception):
     pass
+
+
+def branch_issue(branch):
+    """Return the issue BRANCH is named for, or None.
+
+    An `integration/` branch carries a date, not an issue: it lands
+    several issues at once, and its name must not be read as one
+    (issue #598 read `integration/2026-10-31` as issue 2026)."""
+    if branch == INTEGRATION.rstrip("/") or branch.startswith(INTEGRATION):
+        return None
+    match = BRANCH_ISSUE.match(branch)
+    return int(match.group(1)) if match else None
+
+
+def branch_fragments(base):
+    """Return the fragments BRANCH adds against BASE."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=A",
+             f"{base}...HEAD", "--", "changelog.d"],
+            cwd=ROOT, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as err:
+        detail = getattr(err, "stderr", "") or err
+        raise FragmentError(f"cannot compare against {base}: {detail}")
+    return [ROOT / line for line in result.stdout.splitlines() if line.strip()]
 
 
 def fragment_files():
@@ -114,6 +156,11 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="validate the fragments and the fold; write nothing")
     mode.add_argument("--dry-run", action="store_true", help="print the folded CHANGELOG.org; write nothing")
+    parser.add_argument("--branch-check", metavar="BRANCH",
+                        help="require the fragment BRANCH's issue promises; an "
+                             "integration/ branch must add at least one fragment")
+    parser.add_argument("--base", default="origin/main", metavar="REF",
+                        help="what an integration/ branch is compared against (default: origin/main)")
     args = parser.parse_args()
     try:
         paths = fragment_files()
@@ -122,6 +169,29 @@ def main():
             for section, items in parse_fragment(path).items():
                 collected.setdefault(section, []).extend(items)
         result = fold(CHANGELOG.read_text(encoding="utf-8"), collected)
+        if args.branch_check:
+            issue = branch_issue(args.branch_check)
+            if issue is None and args.branch_check.startswith(INTEGRATION):
+                added = branch_fragments(args.base)
+                if not added:
+                    raise FragmentError(
+                        f"{args.branch_check}: an integration/ branch adds one "
+                        f"changelog.d/<issue>.org per issue; this one adds none "
+                        f"against {args.base}")
+                print(f"changelog-collect: {args.branch_check} adds "
+                      f"{len(added)} fragment(s): " + ", ".join(p.name for p in added))
+            elif issue is None:
+                print(f"changelog-collect: {args.branch_check} carries no issue "
+                      "number; the fragments are validated only")
+            else:
+                named = [p for p in paths if int(NAME.match(p.name).group(1)) == issue]
+                if not named:
+                    raise FragmentError(
+                        f"{args.branch_check}: no changelog.d/{issue}.org (or "
+                        f"{issue}-<slug>.org); see changelog.d/README.org")
+                print(f"changelog-collect: {args.branch_check} brings "
+                      + ", ".join(p.name for p in named))
+            return 0
     except FragmentError as err:
         print(f"changelog-collect: {err}", file=sys.stderr)
         return 1
