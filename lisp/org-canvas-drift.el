@@ -47,6 +47,12 @@
 (require 'cl-lib)
 (require 'org-canvas-core)
 (require 'org-canvas-diff)
+;; The report's rows, field comparison, child passes and verbs, which
+;; this file's two verbs reuse rather than duplicate.
+(require 'org-canvas-diff-fields)
+(require 'org-canvas-diff-items)
+(require 'org-canvas-diff-report)
+(require 'org-canvas-diff-verbs)
 ;; An assignment's rubric, to show what the heading links beside it (#567).
 (require 'org-canvas-rubrics)
 

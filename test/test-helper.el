@@ -867,6 +867,295 @@ Handles both Emacs 29 (transient 0.4) and Emacs 30 (transient 0.7+) layout forma
     (cl-some (lambda (col) (test-org-canvas-transient--column-has-command-p col command))
              columns)))
 
+;;;; Drift Report Fixtures
+
+;; Helpers more than one of the drift report's spec files needs: the
+;; report buffer and its row navigation (`org-canvas-diff-test.el' and
+;; the report, verbs and items files), the delete and batch-delete
+;; stubs, the New Quiz and moved-item fixtures.
+
+(defvar test-org-canvas--diff-delete-requests nil
+  "Requests the delete stub recorded, newest first, as (METHOD URL ARGS).")
+
+(defun test-org-canvas--diff-delete-stub (method url &rest args)
+  "Record METHOD, URL and ARGS; answer a GET with a small object."
+  (push (list method url args) test-org-canvas--diff-delete-requests)
+  (when (eq method 'GET) '((id . 1) (title . "Snapshot me"))))
+
+(defun test-org-canvas--diff-deletes ()
+  "Return the DELETE requests the stub recorded, oldest first."
+  (reverse (cl-remove-if-not (lambda (r) (eq (car r) 'DELETE))
+                             test-org-canvas--diff-delete-requests)))
+
+(defmacro test-org-canvas--with-snapshot-dir (&rest body)
+  "Run BODY with the delete snapshots going to a fresh temporary directory.
+The directory is bound to `snapshot-dir' and removed afterwards."
+  (declare (indent 0))
+  `(let* ((snapshot-dir (make-temp-file "diff-snapshots-" t))
+          (org-canvas-diff-delete-snapshot-directory snapshot-dir)
+          (test-org-canvas--diff-delete-requests nil))
+     (ignore snapshot-dir)
+     (unwind-protect (progn ,@body)
+       (delete-directory snapshot-dir t))))
+
+;;;; Deleting Rows Without Asking (issue #345)
+
+(defconst test-org-canvas--diff-reshuffle-results
+  '((:name "Assignments"
+     :extra ((:kind extra :title "Session 87" :id "701")
+             (:kind unclaimed :title "Session 88" :id "702" :property "CANVAS_ID")))
+    (:name "Rubrics"
+     :extra ((:kind extra :title "Old rubric" :id "801")))
+    (:name "Module Items"
+     :divergences ((:kind stale-ack :id "999"))
+     :extra ((:kind extra :title "87-surveillance-capitalism" :id "5787192"
+              :module-id "781715" :where "Week 9")
+             (:kind extra :title "88-privacy" :id "5787193"
+              :module-id "781715" :where "Week 9")
+             (:kind moved :title "Closer" :id "5787194"
+              :module-id "781715" :where "Week 9" :to "Week 10"))))
+  "What the report found after the calendar reshuffle of issue #345.")
+
+(defmacro test-org-canvas--with-batch-delete (&rest body)
+  "Run BODY against the mock API with snapshots in a temporary directory.
+Preflight is stubbed; `snapshot-dir' names the directory."
+  (declare (indent 0))
+  `(with-org-canvas-test-config
+     (test-org-canvas--with-snapshot-dir
+       (with-mock-api
+         (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore))
+           ,@body)))))
+
+(defun test-org-canvas--diff-outcome (outcomes id)
+  "Return the outcome symbol OUTCOMES record for ID."
+  (plist-get (cl-find id outcomes :key (lambda (o) (plist-get o :id))
+                      :test #'equal)
+             :outcome))
+
+(defun test-org-canvas--diff-deleted-urls ()
+  "Return the URLs the mock API received a DELETE for, oldest first."
+  (reverse (delq nil (mapcar (lambda (c) (and (eq (car c) 'DELETE) (nth 1 c)))
+                             test-org-canvas-api-calls))))
+
+;;;; Stamping a MOVED Row and the RELOCATE Row (issues #342, #343)
+
+(defconst test-org-canvas-342--modules-org
+  "* Week 5
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+* Week 6
+:PROPERTIES:
+:CANVAS_ID: 781704
+:END:
+** [[file:assignments.org::*R7: Arguing Both Sides][R7: Arguing Both Sides]]
+** Readings
+"
+  "Week 6 holds a renumbered item heading and a Readings header, both unstamped.")
+
+(defconst test-org-canvas-342--r7
+  "[[file:assignments.org::*R7: Arguing Both Sides][R7: Arguing Both Sides]]"
+  "The raw text of the renumbered heading, as the report records it.")
+
+(defmacro test-org-canvas-342--with-modules-file (var &rest body)
+  "Bind VAR to a temporary modules file holding the #342 fixture, run BODY."
+  (declare (indent 1))
+  `(let ((,var (make-temp-file "diff-342-" nil ".org")))
+     (unwind-protect
+         (progn
+           (with-temp-file ,var (insert test-org-canvas-342--modules-org))
+           ,@body)
+       (let ((buf (find-buffer-visiting ,var))) (when buf (kill-buffer buf)))
+       (delete-file ,var))))
+
+(defun test-org-canvas-342--ids (file)
+  "Return (HEADING CANVAS_ID) for each level-2 heading of FILE.
+HEADING is the shown text, the same on Emacs 29 and 30."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (org-map-entries
+     (lambda ()
+       (list (org-link-display-format (org-get-heading t t t t))
+             (org-entry-get (point) "CANVAS_ID")))
+     "LEVEL=2")))
+
+(defun test-org-canvas-342--moved (file &rest overrides)
+  "Return the MOVED entry naming the R7 heading of FILE, with OVERRIDES."
+  (let ((entry (list :kind 'moved :title "R6: Arguing Both Sides" :id "5707155"
+                     :module-id "781703" :where "Week 5" :to "Week 6"
+                     :file file :line 10
+                     :partner-heading test-org-canvas-342--r7
+                     :partner-title "R7: Arguing Both Sides")))
+    (while overrides
+      (setq entry (plist-put entry (pop overrides) (pop overrides))))
+    entry))
+
+(defun test-org-canvas-342--row-buffer (entry)
+  "Return a report buffer whose Module Items section holds ENTRY."
+  (test-org-canvas--diff-report-buffer
+   `((:name "Modules" :children (:name "Module Items" :extra (,entry))))))
+
+;;;; New Quizzes in the drift report (issue #313)
+
+(defconst test-nq-313--file
+  (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:TIME_LIMIT: 30\n:SCORING_POLICY: keep_highest\n:END:\n"
+          "Read carefully.\n\n"
+          "** Q1\n:PROPERTIES:\n:CANVAS_ITEM_ID: 9\n:TYPE: essay\n:END:\n"
+          "* Final\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+          "* Draft\n")
+  "A new-quizzes.org with a drifted quiz, a deleted one and an unpushed one.")
+
+(defconst test-nq-313--remote
+  '(((id . "41") (assignment_id . "41") (title . "Midterm")
+     (instructions . "<p>Read slowly.</p>")
+     (quiz_settings (has_time_limit . t)
+                    (session_time_limit_in_seconds . 2700)
+                    (multiple_attempts (multiple_attempts_enabled . :json-false)
+                                       (score_to_keep . "highest"))))
+    ((id . "43") (assignment_id . "43") (title . "Web Quiz")))
+  "The quiz service's list for `test-nq-313--file'.
+Midterm's settings sit under `quiz_settings' as Canvas keeps them
+\(issue #321): its time limit differs, its SCORING_POLICY agrees.")
+
+(defmacro test-nq-313--with-file (content &rest body)
+  "Run BODY with `org-canvas-new-quizzes-file' holding CONTENT."
+  (declare (indent 1))
+  `(let ((file (make-temp-file "diff-nq-" nil ".org")))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (let ((org-canvas-new-quizzes-file file))
+             ,@body))
+       (let ((buf (find-buffer-visiting file)))
+         (when buf
+           (with-current-buffer buf (set-buffer-modified-p nil))
+           (kill-buffer buf)))
+       (delete-file file))))
+
+;;;; Assignment Overrides (issue #411)
+
+(defconst test-diff-411--assignments
+  (concat "* R6: The Verdict\n:PROPERTIES:\n:CANVAS_ID: 456\n"
+          ":CANVAS_UPDATED_AT: 2026-09-28T16:32:20Z\n:END:\n\nBody.\n\n"
+          "#+NAME: overrides\n"
+          "| Section | Due At | Lock At |\n"
+          "|---------+--------+---------|\n"
+          "| [[file:sections.org::*Section A][Section A]] | <2026-09-28 Mon 14:15> | |\n"
+          "| [[file:sections.org::*Section C][Section C]] | <2026-09-30 Wed 14:15> | |\n"
+          "| Students: #279871 | <2026-09-29 Tue 14:00> | <2026-10-01 Thu 14:00> |\n"
+          "* No overrides\n:PROPERTIES:\n:CANVAS_ID: 457\n:END:\n"
+          "* Gone\n:PROPERTIES:\n:CANVAS_ID: 458\n:CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"
+          "* Draft\n")
+  "One heading with a table, one without, one a pull marked deleted, one unstamped.")
+
+(defun test-diff-411--iso (org-timestamp)
+  "Return ORG-TIMESTAMP as the ISO 8601 string the table's parse gives it."
+  (org-canvas-org-parse-timestamp org-timestamp))
+
+(defun test-diff-411--items ()
+  "Return the Assignments list reply, overrides included, as Canvas sends it.
+Section A's override agrees with its row; the student's lacks the
+row's lock; Section B's no row claims; id 14 no row claims and its
+due date is the assignment's own."
+  (let ((due (test-diff-411--iso "<2026-09-28 Mon 14:15>")))
+    (vector
+     `((id . 456) (name . "R6: The Verdict") (due_at . ,due)
+       (updated_at . "2026-09-28T16:32:20Z")
+       (html_url . "https://canvas.example/courses/1/assignments/456")
+       (overrides . [((id . 10) (course_section_id . 777) (due_at . ,due))
+                     ((id . 11) (student_ids . [279871])
+                      (due_at . ,(test-diff-411--iso "<2026-09-29 Tue 14:00>")))
+                     ((id . 12) (course_section_id . 779)
+                      (due_at . ,(test-diff-411--iso "<2026-10-02 Fri 14:15>")))
+                     ((id . 14) (student_ids . [300]) (due_at . ,due))]))
+     '((id . 457) (name . "No overrides") (updated_at . "2026-09-28T16:32:20Z")
+       (overrides . [])))))
+
+(defun test-diff-411--result (items &optional excluded fn)
+  "Run the Assignments diff over the scratch course with ITEMS as the list.
+EXCLUDED binds `org-canvas-diff-excluded-features'.  Returns (RESULT
+FILE PARAMS): the Assignments result, the assignments file, and the
+parameters the list was read with.  FN, when given, is called with
+RESULT and FILE while the scratch course still exists."
+  (let ((dir (make-temp-file "diff-411-" t))
+        (params nil))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir)))
+          (with-temp-file (expand-file-name "sections.org" dir)
+            (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"
+                    "* Section B\n:PROPERTIES:\n:CANVAS_ID: 779\n:END:\n"
+                    "* Section C\n:PROPERTIES:\n:CANVAS_ID: 778\n:END:\n"))
+          (with-temp-file file (insert test-diff-411--assignments))
+          (let ((org-canvas-assignments-file file)
+                (org-canvas-sections-file (expand-file-name "sections.org" dir))
+                (org-canvas-diff-excluded-features excluded))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional p &rest _)
+                           (setq params p)
+                           items))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _) (error "The report must not write"))))
+                (let ((result (org-canvas--diff-feature
+                               (org-canvas--registry-find-feature "assignments"))))
+                  (when fn (funcall fn result file))
+                  (list result file params))))))
+      (dolist (name '("assignments.org" "sections.org"))
+        (let ((buf (find-buffer-visiting (expand-file-name name dir))))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
+      (delete-directory dir t))))
+
+(defun test-diff-411--by-state (entries state)
+  "Return the entries of ENTRIES whose :state is STATE."
+  (cl-remove-if-not (lambda (e) (eq (plist-get e :state) state)) entries))
+
+(defun test-org-canvas--diff-report-buffer (results)
+  "Render RESULTS the way `org-canvas-diff' does and return the buffer."
+  (with-org-canvas-test-config
+    (let ((noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                ;; The referenced-media scan (#102) would otherwise
+                ;; read the syllabus, one request these specs count.
+                ((symbol-function 'org-canvas--diff-syllabus-references)
+                 (lambda () nil))
+                ((symbol-function 'org-canvas--diff-feature)
+                 (lambda (feature)
+                   (or (cl-find (plist-get feature :name) results
+                                :key (lambda (r) (plist-get r :name))
+                                :test #'string=)
+                       (list :name (plist-get feature :name))))))
+        (org-canvas-diff)
+        (get-buffer org-canvas--diff-buffer-name)))))
+
+(defun test-org-canvas--diff-goto-row (kind)
+  "Put point on the first row of KIND in the current buffer."
+  (goto-char (point-min))
+  (let (found)
+    (while (and (not found) (not (eobp)))
+      (let ((row (get-text-property (point) 'org-canvas-diff-row)))
+        (if (and row (eq (plist-get (plist-get row :entry) :kind) kind))
+            (setq found t)
+          (forward-line 1))))
+    (unless found (error "No %s row" kind))))
+
+(defun test-org-canvas--diff-browse (results kind &optional edit)
+  "Browse the first KIND row of a report of RESULTS; return the URL opened.
+EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
+  (let ((opened nil)
+        (org-canvas-base-url "https://canvas.test")
+        (org-canvas-course-id "42"))
+    (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+      (with-current-buffer (test-org-canvas--diff-report-buffer results)
+        (test-org-canvas--diff-goto-row kind)
+        (condition-case e
+            (progn (org-canvas-diff-browse edit) opened)
+          (user-error (list 'error (error-message-string e))))))))
+
 ;; Pin the zone Org timestamps are read and written in (issue #136).  With
 ;; nil the converters would use this machine's local zone whenever no
 ;; settings.org names a course zone, and every exact timestamp expectation

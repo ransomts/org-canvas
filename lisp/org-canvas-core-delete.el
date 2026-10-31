@@ -26,7 +26,7 @@
 ;; caller (#345); `org-canvas' requires every command file, so the
 ;; delete-all runtime can reach it the way core-pull reaches the file
 ;; download it declares (issue #555).
-(declare-function org-canvas--diff-snapshot-write "org-canvas-diff"
+(declare-function org-canvas--diff-snapshot-write "org-canvas-diff-verbs"
                   (feature-name id object))
 
 (defun org-canvas--delete-log-skipped (items skip-fn title-field

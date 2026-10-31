@@ -1,5 +1,6 @@
 # Seconds each test file takes when run alone (eldev test FILE), measured
-# 2026-09-24 on a local machine.  scripts/test-shard.sh balances CI shards
+# 2026-10-30.  The 2026-09-24 machine ran some files slower; only relative
+# weight matters.  scripts/test-shard.sh balances CI shards
 # with these; a file missing here counts as 3.  Refresh with:
 #   scripts/test-each-file.sh --timings > test/shard-weights.txt
 # Stale numbers only unbalance the shards; they never drop a file.
@@ -21,7 +22,11 @@
 3.3 test/org-canvas-core-sync-test.el
 2.5 test/org-canvas-core-usability-test.el
 3.5 test/org-canvas-demo-course-test.el
-4.3 test/org-canvas-diff-test.el
+0.8 test/org-canvas-diff-fields-test.el
+1.0 test/org-canvas-diff-items-test.el
+0.8 test/org-canvas-diff-report-test.el
+0.8 test/org-canvas-diff-test.el
+0.9 test/org-canvas-diff-verbs-test.el
 3.2 test/org-canvas-discussion-replies-test.el
 4.2 test/org-canvas-discussions-test.el
 2.8 test/org-canvas-doc-reference-test.el
