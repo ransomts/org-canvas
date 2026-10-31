@@ -40,7 +40,7 @@
 
 (declare-function org-canvas--file-pull-download "org-canvas-files"
                   (display-name download-url local-path size))
-(declare-function org-canvas--validate-settings-structure "org-canvas-validate")
+(declare-function org-canvas--validate-settings-structure "org-canvas-validate-content")
 
 ;;;; Configuration
 

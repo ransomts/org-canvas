@@ -47,8 +47,8 @@
 (require 'org-canvas-core)
 (require 'cl-lib)
 
-(declare-function org-canvas--validate-module-item-link "org-canvas-validate")
-(declare-function org-canvas--validate-module-item-ids "org-canvas-validate")
+(declare-function org-canvas--validate-module-item-link "org-canvas-validate-content")
+(declare-function org-canvas--validate-module-item-ids "org-canvas-validate-content")
 
 ;;;; Configuration
 

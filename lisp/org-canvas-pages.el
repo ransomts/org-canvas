@@ -48,7 +48,7 @@
 (require 'org-canvas-core)
 (require 'ox-html)
 
-(declare-function org-canvas--validate-page-structure "org-canvas-validate")
+(declare-function org-canvas--validate-page-structure "org-canvas-validate-content")
 
 ;;;; Configuration
 

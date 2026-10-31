@@ -37,7 +37,7 @@
 (require 'ox-html)
 (require 'cl-lib)
 
-(declare-function org-canvas--validate-all-day-span "org-canvas-validate")
+(declare-function org-canvas--validate-all-day-span "org-canvas-validate-content")
 
 ;;;; Configuration
 

@@ -42,8 +42,8 @@
 ;;; Code:
 (require 'org-canvas-core)
 
-(declare-function org-canvas--validate-drop-rules "org-canvas-validate")
-(declare-function org-canvas--validate-weight-sum "org-canvas-validate")
+(declare-function org-canvas--validate-drop-rules "org-canvas-validate-grading")
+(declare-function org-canvas--validate-weight-sum "org-canvas-validate-grading")
 
 ;;;; Configuration
 

@@ -74,7 +74,7 @@
 (require 'ox-html)
 (require 'cl-lib)
 
-(declare-function org-canvas--validate-quiz-point-total "org-canvas-validate")
+(declare-function org-canvas--validate-quiz-point-total "org-canvas-validate-content")
 ;; Per-student accommodations (issue #230) live in their own module,
 ;; reached the way assignments reach the override table in sections.el.
 (declare-function org-canvas--accommodation-write-table "org-canvas-quiz-accommodations"

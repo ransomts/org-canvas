@@ -49,8 +49,8 @@
 (require 'org-canvas-core)
 (require 'cl-lib)
 
-(declare-function org-canvas--validate-grading-scheme-structure "org-canvas-validate")
-(declare-function org-canvas--validate-grading-standard-ids "org-canvas-validate")
+(declare-function org-canvas--validate-grading-scheme-structure "org-canvas-validate-grading")
+(declare-function org-canvas--validate-grading-standard-ids "org-canvas-validate-grading")
 
 ;;;; Configuration
 

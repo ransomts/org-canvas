@@ -61,7 +61,7 @@
 (require 'org-table)
 (require 'cl-lib)
 
-(declare-function org-canvas--validate-rubric-structure "org-canvas-validate")
+(declare-function org-canvas--validate-rubric-structure "org-canvas-validate-content")
 ;; The assignment read and the stamp check the override restamp uses
 ;; (issues #348, #478); sections is a sibling feature, loaded by
 ;; org-canvas before any push runs.

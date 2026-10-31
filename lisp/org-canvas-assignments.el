@@ -58,7 +58,7 @@
                   (overrides entries source-dir))
 (declare-function org-canvas--override-warn-unclaimed-accepts
                   "org-canvas-sections" (entries title))
-(declare-function org-canvas--validate-assignment-structure "org-canvas-validate")
+(declare-function org-canvas--validate-assignment-structure "org-canvas-validate-grading")
 (declare-function org-canvas--override-sync-entry "org-canvas-sections"
                   (pom &optional source-dir options))
 
