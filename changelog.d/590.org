@@ -1,0 +1,5 @@
+* Changed
+- #590 The complexity analyzer behind =eldev complexity= lives in
+  =scripts/complexity.el=, loaded from =Eldev=, so the build file says
+  how the project builds and nothing else.  The report and its exit
+  code are unchanged.
