@@ -1,0 +1,4 @@
+* Changed
+- #588 The dispatch menu's duplicate-key check reads through one helper
+  per layout shape instead of one nested walk, so the complexity report
+  is back to zero functions above its gate.  No behaviour changes.
