@@ -1,10 +1,15 @@
 * Changed
-- #609 A merged pull request closes the issues its body names.  The
-  repository merges with =gh pr merge --auto --rebase=, and a rebase
-  replays the branch's own commits while discarding the pull request
-  body, so the =Closes #N= the template asks for was read by nobody: two
-  pull requests merged green on 2026-10-31 and their issues stayed open.
-  =close-linked-issues.yml= now reads the body after the merge, which
-  also covers a merge made by hand in the web UI.  A =#N= that names a
-  pull request is left alone, and closing an already-closed issue is a
-  no-op, so it keeps working if the merge method changes.
+- #609 A merged pull request closes the issues its body names, whatever
+  merged it.  The repository merges with =gh pr merge --auto --rebase=,
+  and a rebase replays the branch's own commits while discarding the
+  pull request body, so the =Closes #N= the template asks for was read
+  by nobody: two pull requests merged green on 2026-10-31 and their
+  issues stayed open.  =close-linked-issues.yml= reads the body after
+  the merge, which also covers a merge made by hand in the web UI, and a
+  =#N= that names a pull request is left alone.  Because the auto-merge
+  is made by =github-actions[bot]= with the repository's own token,
+  GitHub starts no workflow for the =closed= event that merge causes, so
+  =auto-merge.yml= waits for the merge it armed and starts that workflow
+  itself with =workflow_dispatch=, which GitHub exempts from that rule.
+  Closing an already-closed issue is a no-op, so this keeps working if
+  the merge method changes.

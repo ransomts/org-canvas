@@ -12,10 +12,24 @@ name: close-linked-issues
 # web UI closes too, where no local skill is watching.  Closing an
 # already-closed issue is a no-op, so it keeps working if the repo ever
 # switches to squash or merge commits.
+#
+# The `pull_request: closed` event does not fire for an auto-merge: that
+# merge is performed by `github-actions[bot]` with the repository's own
+# token, and GitHub starts no workflow for an event the token caused.
+# #611 merged at 20:18 on 2026-10-31 and this file, already on the
+# default branch, never ran.  auto-merge.yml therefore waits for the
+# merge and starts this workflow with `workflow_dispatch`, which GitHub
+# exempts from that rule.  Both triggers read the body the same way.
 
 on:
   pull_request:
     types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The merged pull request whose body names the issues
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -24,7 +38,9 @@ permissions:
 
 jobs:
   close:
-    if: github.event.pull_request.merged == true
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -33,11 +49,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          # Passed through the environment, never interpolated into the
-          # script, so a body quoting `$(...)` runs nothing.
-          BODY: ${{ github.event.pull_request.body }}
+          # The pull request event carries it; a dispatch is told it.
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
         run: |
           set -uo pipefail
+
+          # `select(.mergedAt != null)` makes an unmerged pull request,
+          # dispatched by hand or by mistake, close nothing.
+          BODY=$(gh pr view "$PR" --repo "$REPO" --json body,mergedAt \
+                   --jq 'select(.mergedAt != null) | .body' || true)
 
           # GitHub's own keywords, in the forms its parser accepts:
           # close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved,
@@ -48,7 +68,7 @@ jobs:
             | sort -un || true)
 
           if [ -z "$numbers" ]; then
-            echo "no closing keyword in the body; nothing to close"
+            echo "no closing keyword in the body of #$PR; nothing to close"
             exit 0
           fi
 
