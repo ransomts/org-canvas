@@ -41,6 +41,7 @@
 ;; A command file above the feature modules: it reads the announcement
 ;; registry entries and compares bodies the drift report's way.
 (require 'org-canvas-diff)
+(require 'org-canvas-diff-fields)
 (require 'org-canvas-announcements)
 
 (defconst org-canvas--announcement-verify-buffer "*canvas-verify-announcements*"

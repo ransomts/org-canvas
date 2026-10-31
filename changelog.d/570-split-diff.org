@@ -1,0 +1,3 @@
+* Changed
+- #570 The drift report's rendering, its field comparison and its adoption
+  side live in files of their own.  No behaviour changes.

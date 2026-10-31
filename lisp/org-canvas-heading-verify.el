@@ -50,6 +50,7 @@
 ;; as the module sync does, and reports in the announcement verify's
 ;; rows.
 (require 'org-canvas-diff)
+(require 'org-canvas-diff-fields)
 (require 'org-canvas-announcements-verify)
 (require 'org-canvas-assignments)
 (require 'org-canvas-modules)
