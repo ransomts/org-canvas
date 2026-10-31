@@ -1284,6 +1284,24 @@
                :to-equal "[[file:assignment-groups.org::*Homework][Homework]]")
        (expect (car warnings) :to-match "GROUP")))))
 
+(describe "org-canvas--pull-resolve-link bracketed heading"
+  (it "escapes the target once, so the link still names the headline"
+    (let ((target (make-temp-file "org-canvas-brackets-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file target
+              (insert "* Teams \\[2026\\]\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"))
+            (let* ((org-canvas-assignment-groups-file target)
+                   (spec '(:type link
+                           :target-file org-canvas-assignment-groups-file)))
+              (expect (org-canvas--pull-resolve-link spec 7)
+                      :to-match (regexp-quote "::*Teams \\[2026\\]]"))))
+        (let ((buf (find-buffer-visiting target)))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+        (delete-file target)))))
+
 (describe "org-canvas--pull-resolve-link"
   (it "links to the heading the target file keeps for the id, and tracks edits"
     (let ((target (make-temp-file "org-canvas-groups-" nil ".org")))

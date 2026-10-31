@@ -174,30 +174,18 @@ Keys: :id, :name, :rubric-id, :submissions, :assessed and :rows, one
 (defun org-canvas--rubric-results-assignment-heading (assignment-id)
   "Return the assignments.org heading carrying ASSIGNMENT-ID, or nil.
 Nil as well when `org-canvas-assignments-file' is unset or missing."
-  (let ((file (and (boundp 'org-canvas-assignments-file) org-canvas-assignments-file)))
-    (when (and file (file-exists-p file))
-      (let ((target (format "%s" assignment-id)) (heading nil))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (save-excursion
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (and (not heading)
-                          (equal (org-entry-get (point) "CANVAS_ID") target))
-                 (setq heading (org-get-heading t t t t))))
-             "CANVAS_ID={.}" 'file)))
-        heading))))
+  (org-canvas--heading-title-by-property
+   (and (boundp 'org-canvas-assignments-file) org-canvas-assignments-file)
+   "CANVAS_ID" assignment-id "CANVAS_ID={.}"))
 
 (defun org-canvas--rubric-results-title (entry)
   "Return ENTRY's heading title: a link to its assignments.org heading, else the name."
-  (let ((heading (org-canvas--rubric-results-assignment-heading (plist-get entry :id)))
-        (name (plist-get entry :name)))
-    (if heading
-        (org-link-make-string
-         (format "file:%s::*%s" (file-name-nondirectory org-canvas-assignments-file)
-                 (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" heading))
+  (let ((name (plist-get entry :name)))
+    (or (org-canvas--heading-link
+         (and (boundp 'org-canvas-assignments-file) org-canvas-assignments-file)
+         (org-canvas--rubric-results-assignment-heading (plist-get entry :id))
          name)
-      name)))
+        name)))
 
 (defun org-canvas--rubric-results-insert-table (rows)
   "Insert the criterion table for ROWS at point and align it."

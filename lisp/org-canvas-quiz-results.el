@@ -327,30 +327,18 @@ DECIMALS defaults to one; an integer keeps none."
 (defun org-canvas--quiz-results-quiz-heading (quiz-id)
   "Return the quizzes.org heading carrying QUIZ-ID, or nil.
 Nil as well when `org-canvas-quizzes-file' is unset or missing."
-  (let ((file (and (boundp 'org-canvas-quizzes-file) org-canvas-quizzes-file)))
-    (when (and file (file-exists-p file))
-      (let ((target (format "%s" quiz-id)) (heading nil))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (save-excursion
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (and (not heading)
-                          (equal (org-entry-get (point) "CANVAS_ID") target))
-                 (setq heading (org-get-heading t t t t))))
-             "LEVEL=1+CANVAS_ID={.}" 'file)))
-        heading))))
+  (org-canvas--heading-title-by-property
+   (and (boundp 'org-canvas-quizzes-file) org-canvas-quizzes-file)
+   "CANVAS_ID" quiz-id "LEVEL=1+CANVAS_ID={.}"))
 
 (defun org-canvas--quiz-results-title (entry)
   "Return ENTRY's heading title: a link to its quizzes.org heading, else the name."
-  (let ((heading (org-canvas--quiz-results-quiz-heading (plist-get entry :id)))
-        (name (plist-get entry :name)))
-    (if heading
-        (org-link-make-string
-         (format "file:%s::*%s" (file-name-nondirectory org-canvas-quizzes-file)
-                 (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" heading))
+  (let ((name (plist-get entry :name)))
+    (or (org-canvas--heading-link
+         (and (boundp 'org-canvas-quizzes-file) org-canvas-quizzes-file)
+         (org-canvas--quiz-results-quiz-heading (plist-get entry :id))
          name)
-      name)))
+        name)))
 
 (defun org-canvas--quiz-results-row-cells (row survey)
   "Return ROW's table cells as strings, without the scoring ones for a SURVEY."

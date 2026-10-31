@@ -230,11 +230,7 @@ CONTEXT_CODE is written only for a bank this course does not own."
   "Return the list item naming USE, a quiz group drawing from the bank.
 The group is a level-2 heading, so its quiz is always there to link."
   (let* ((quiz (plist-get use :quiz))
-         (link (org-link-make-string
-                (format "file:%s::*%s"
-                        (file-name-nondirectory org-canvas-quizzes-file)
-                        (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" quiz))
-                quiz))
+         (link (org-canvas--heading-link org-canvas-quizzes-file quiz quiz))
          (pick (plist-get use :pick)))
     (format "- %s: group %s%s\n" link (plist-get use :group)
             (if pick (format ", pick %s" pick) ""))))

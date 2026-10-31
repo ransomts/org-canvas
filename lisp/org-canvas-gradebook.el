@@ -410,10 +410,7 @@ Nil as well when `org-canvas-people-file' is unset or missing."
   "Return an Org link to HEADING in the course FILE, shown as TEXT.
 Brackets Org escaped in HEADING are unescaped, so the link target is
 the heading as written."
-  (org-link-make-string
-   (format "file:%s::*%s" (file-name-nondirectory file)
-           (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" heading))
-   text))
+  (org-canvas--heading-link file heading text))
 
 (defun org-canvas--gradebook-student-cell (row)
   "Return ROW's Student cell: a link to the roster heading when known, else the name."

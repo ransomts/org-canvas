@@ -1,0 +1,8 @@
+* Changed
+- #605 The pull-only readers find a heading and build a link to one
+  through the shared helpers, instead of a copy of each in every module.
+
+* Fixed
+- #605 A link to a heading whose title carries brackets is written with
+  the brackets escaped once, so it names the headline rather than a
+  title no heading has.

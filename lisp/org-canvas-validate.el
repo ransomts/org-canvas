@@ -323,8 +323,7 @@ back to its basename in DIR, as the sync's resolver does."
         (unless (file-exists-p file)
           (setq file (expand-file-name (file-name-nondirectory path) dir)))
         (list 'heading file
-              (replace-regexp-in-string
-               "\\\\[][]" (lambda (m) (substring m 1)) heading))))
+              (org-canvas--unescape-org-brackets heading))))
      (path (list 'path (expand-file-name path dir))))))
 
 (defun org-canvas--validate-heading-key (file pos)
