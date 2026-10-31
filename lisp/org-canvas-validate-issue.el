@@ -306,30 +306,38 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
         'error loc property
         (format "%s: '%s' is not a valid Org timestamp" property value))))))
 
-(cl-defun org-canvas--validate-resolve-file-link (value
-                                                  &key
-                                                  id-property
-                                                  source-file
-                                                  loc
-                                                  property
-                                                  not-link-msg
-                                                  unresolved-msg
-                                                  not-link-severity)
-  "Check VALUE as a file link, verifying ID-PROPERTY resolves.
-SOURCE-FILE is the file containing the link (for relative path resolution).
-LOC is a (:file :line :heading) plist.  PROPERTY is the property name (or nil).
-NOT-LINK-MSG is the message when VALUE is not a file link.
-UNRESOLVED-MSG is the warning message when the link target has no ID-PROPERTY.
-NOT-LINK-SEVERITY is the severity for non-link values (default: \\='error).
-Every argument but VALUE is a keyword.  Returns nil (valid) or an issue
-plist."
-  (cond
-   ((not (string-match "\\[\\[file:" value))
-    (org-canvas--validate-make-issue (or not-link-severity 'error)
-                                     loc property not-link-msg))
-   ((not (org-canvas--resolve-link-property value id-property source-file))
-    (org-canvas--validate-push-only
-     (org-canvas--validate-make-issue 'warning loc property unresolved-msg t)))))
+(cl-defstruct (org-canvas--validate-link-check (:copier nil)
+               (:constructor org-canvas--validate-link-check))
+  "One file-link property check, as a validator declares it.
+ID-PROPERTY is the Canvas id property the link's target has to carry
+and SOURCE-FILE the file the link sits in, for resolving a relative
+target.  LOC is the (:file :line :heading) plist the issue is reported
+at, PROPERTY the property name, or nil.  NOT-LINK-MSG and
+UNRESOLVED-MSG say what to report, and NOT-LINK-SEVERITY how badly
+when VALUE is no link at all, default `error'.  They are one check's
+whole definition, so they come in one argument."
+  id-property source-file loc property not-link-msg unresolved-msg
+  not-link-severity)
+
+(defun org-canvas--validate-resolve-file-link (value check)
+  "Check VALUE as a file link, verifying CHECK's ID-PROPERTY resolves.
+CHECK is an `org-canvas--validate-link-check'.  Returns nil (valid) or
+an issue plist."
+  (let ((loc (org-canvas--validate-link-check-loc check))
+        (property (org-canvas--validate-link-check-property check)))
+    (cond
+     ((not (string-match "\\[\\[file:" value))
+      (org-canvas--validate-make-issue
+       (or (org-canvas--validate-link-check-not-link-severity check) 'error)
+       loc property (org-canvas--validate-link-check-not-link-msg check)))
+     ((not (org-canvas--resolve-link-property
+            value
+            (org-canvas--validate-link-check-id-property check)
+            (org-canvas--validate-link-check-source-file check)))
+      (org-canvas--validate-push-only
+       (org-canvas--validate-make-issue
+        'warning loc property
+        (org-canvas--validate-link-check-unresolved-msg check) t))))))
 
 (defun org-canvas--validate-check-link (value property _target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
@@ -340,16 +348,17 @@ LOC is a (:file :line :heading) plist."
   (when value
     (org-canvas--validate-resolve-file-link
      value
-     :id-property id-property
-     :source-file (plist-get loc :file)
-     :loc loc
-     :property property
-     :not-link-msg
-     (format "%s: '%s' is not a file link (expected [[file:...::*heading][...]])"
-             property value)
-     :unresolved-msg
-     (format "%s: link target has no %s (sync target first)"
-             property id-property))))
+     (org-canvas--validate-link-check
+      :id-property id-property
+      :source-file (plist-get loc :file)
+      :loc loc
+      :property property
+      :not-link-msg
+      (format "%s: '%s' is not a file link (expected [[file:...::*heading][...]])"
+              property value)
+      :unresolved-msg
+      (format "%s: link target has no %s (sync target first)"
+              property id-property)))))
 
 ;;;; 4. Date Ordering Check
 

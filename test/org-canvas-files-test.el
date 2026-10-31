@@ -4547,18 +4547,26 @@ Returns the symbol naming the path taken."
   (it "asks about the course-scoped file and offers a working pull"
     (let (args)
       (cl-letf (((symbol-function 'org-canvas--push-check-and-resolve-conflict)
-                 (lambda (endpoint id _data title &optional _modified-field ctx)
-                   (setq args (list endpoint id title
-                                    (plist-get ctx :pull-item-fn)))
+                 (lambda (data id options)
+                   (setq args (list (org-canvas--push-options-endpoint options)
+                                    id
+                                    (plist-get data (org-canvas--push-options-title-key
+                                                     options))
+                                    (org-canvas--push-options-updated-field options)
+                                    (plist-get (org-canvas--push-options-ctx options)
+                                               :pull-item-fn)))
                    'push)))
         (org-canvas--file-check-conflict
          '(:canvas-id "42" :display-name "Syllabus.pdf"))
         (expect (nth 0 args) :to-equal "files")
         (expect (nth 1 args) :to-equal "42")
         (expect (nth 2 args) :to-equal "Syllabus.pdf")
+        ;; A metadata-only touch must not read as a remote change
+        ;; (issue #94).
+        (expect (nth 3 args) :to-be 'modified_at)
         ;; Without a pull function the prompt's pull option degrades to a
         ;; skip, which would make the offer a lie.
-        (expect (nth 3 args) :to-be #'org-canvas--file-pull-item)))))
+        (expect (nth 4 args) :to-be #'org-canvas--file-pull-item)))))
 
 (describe "org-canvas--file-pull-item"
   (it "overwrites the local copy and refreshes the properties"

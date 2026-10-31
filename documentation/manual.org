@@ -4753,11 +4753,12 @@ A ruling is a decision made after grading for a list of students, not a judgment
 #+begin_src emacs-lisp
 (org-canvas-submissions-apply-ruling
  "Essay_1" '(5001 5002)                ; the grading file, then USER_IDs
- :rows 0                               ; every row's Score; 'empty, or nil to leave
- :row-comment "There's no link on your PDF, so it scores zero."  ; or 'empty, or nil
- :score 0                              ; or (lambda (total max) (- total (* 0.2 max)))
- :comment "Draft for Comment to post"  ; nil leaves the draft
- :note "Open-link rule, announced 2026-09-28.")
+ (org-canvas-submissions-ruling
+  :rows 0                              ; every row's Score; 'empty, or nil to leave
+  :row-comment "There's no link on your PDF, so it scores zero."  ; or 'empty, or nil
+  :score 0                             ; or (lambda (total max) (- total (* 0.2 max)))
+  :comment "Draft for Comment to post" ; nil leaves the draft
+  :note "Open-link rule, announced 2026-09-28."))
 #+end_src
 
 The file is taken as the comment export takes it (the grading buffer at hand, an assignment id, or a grading file's path or name).  For each listed student it writes the Rubric rows' scores and comments, =SCORE=, and the draft under =** Comment to post= (adding that heading when the student has none), and appends a Notes item recording what it replaced, so the ruling can be undone by hand:
@@ -4768,7 +4769,7 @@ The file is taken as the comment export takes it (the grading buffer at hand, an
   Before: SCORE 8; Rubric _1 3 (Thesis unclear.), _2 5; draft (Good start.)
 #+end_src
 
-A =:score= function is called with the rows' total after the ruling and the column's points (=POINTS_POSSIBLE=, else the rows' =Max= summed); a result below 0 is 0.  Some students are kept back rather than half-ruled: one who left the course, one without a Rubric table when =:rows= or =:row-comment= is given, and one whose new =SCORE= is not the new rows' total on a column whose grade comes from its rubric, since the push would refuse the whole file for it.  An id no student heading carries is named, not guessed at.  Whether emptied Score cells clear an assessment on Canvas is the push's rule, not the ruling's.
+A =score= function is called with the rows' total after the ruling and the column's points (=POINTS_POSSIBLE=, else the rows' =Max= summed); a result below 0 is 0.  Some students are kept back rather than half-ruled: one who left the course, one without a Rubric table when =rows= or =row-comment= is given, and one whose new =SCORE= is not the new rows' total on a column whose grade comes from its rubric, since the push would refuse the whole file for it.  An id no student heading carries is named, not guessed at.  Whether emptied Score cells clear an assessment on Canvas is the push's rule, not the ruling's.
 
 It returns a plist for the caller to check against the list it passed: =:changed= (one plist per student, with =:user-id=, =:name=, =:old-score=, =:score=, =:old-rows= and =:rows= as =(ID SCORE COMMENT)= lists, =:old-draft= and =:draft=), =:unmatched= (the ids), =:skipped= (=(USER-ID . WHY)=) and =:dry-run=.  Under a dry run nothing is written and the result is the same.  The file is saved when anything changed; review it and push with =S=.
 

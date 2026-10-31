@@ -21,6 +21,27 @@
 (require 'org-canvas-core-sync)
 (require 'org-canvas-core-push)
 
+;;;; 0. Option Bundles
+;;
+;; Finding one heading by name is the whole of the by-heading verbs, and
+;; every one of them knows the same seven things: the file, its query,
+;; the target, how to read the target, where the id lives, which module
+;; to name in an error and what the caller is doing.  They were seven
+;; keywords at every call site; they are one bundle now (issue #592).
+
+(cl-defstruct (org-canvas--heading-query
+               (:constructor org-canvas--heading-query))
+  "Which heading of which file a by-heading command means.
+FILE is the Org file to search and QUERY the `org-map-entries' match
+that selects the headings it manages.  TARGET is the heading's title,
+or with BY `canvas-id' the value of its ID-PROPERTY.  FEATURE names the
+module in an error, and VERB what the caller does, named in the advice
+to run the command at point instead."
+  file query target by
+  (id-property "CANVAS_ID")
+  feature
+  (verb "sync"))
+
 ;;;; 9. Push-at-Point Infrastructure
 
 (defun org-canvas--push-at-point-finalize
@@ -300,20 +321,25 @@ point at each heading.  FILE is visited through
                        query 'file))
     (nreverse found)))
 
-(cl-defun org-canvas--sync-find-heading (&key file query target by
-                                              id-property feature verb)
-  "Return a marker at the one heading of FILE that TARGET names.
-QUERY, BY and ID-PROPERTY are as in `org-canvas--sync-heading-matches-p';
-FEATURE names the module in the error, and VERB (default \"sync\") what
-to do at point instead.  Every argument is a keyword.  No match and
+(defun org-canvas--sync-find-heading (heading)
+  "Return a marker at the one heading HEADING names.
+HEADING is an `org-canvas--heading-query'; its :target and :by mean
+what `org-canvas--sync-heading-matches-p' gives them.  No match and
 more than one match are both a `user-error': a script must never push
 the wrong heading, and two headings with one title or one stamp are a
 file to fix (or a job for the at-point command) rather than a guess."
-  (let ((markers (org-canvas--sync-heading-markers
-                  file query
-                  (lambda () (org-canvas--sync-heading-matches-p target by id-property))))
-        (what (if (eq by 'canvas-id) (format "%s %s" id-property target)
-                (format "titled %S" target))))
+  (let* ((file (org-canvas--heading-query-file heading))
+         (target (org-canvas--heading-query-target heading))
+         (by (org-canvas--heading-query-by heading))
+         (id-property (org-canvas--heading-query-id-property heading))
+         (feature (org-canvas--heading-query-feature heading))
+         (verb (org-canvas--heading-query-verb heading))
+         (markers (org-canvas--sync-heading-markers
+                   file (org-canvas--heading-query-query heading)
+                   (lambda () (org-canvas--sync-heading-matches-p
+                               target by id-property))))
+         (what (if (eq by 'canvas-id) (format "%s %s" id-property target)
+                 (format "titled %S" target))))
     (pcase (length markers)
       (0 (user-error "No %s heading %s in %s" feature what (file-name-nondirectory file)))
       (1 (car markers))
@@ -353,9 +379,10 @@ and saves; the context's :outcome says how it ended."
          (query (plist-get spec :query))
          (target (or target (org-canvas--sync-heading-ask feature file query)))
          (marker (org-canvas--sync-find-heading
-                  :file file :query query :target target :by by
-                  :id-property (or (plist-get spec :id-property) "CANVAS_ID")
-                  :feature feature)))
+                  (org-canvas--heading-query
+                   :file file :query query :target target :by by
+                   :id-property (or (plist-get spec :id-property) "CANVAS_ID")
+                   :feature feature))))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)
@@ -580,24 +607,27 @@ and the heading was marked instead (issue #399)."
         (list :outcome (if (eq outcome 'gone) 'deleted 'pulled)
               :title title :id id)))))
 
-(defun org-canvas--pull-heading-runtime (singular file query id-property
-                                                  target &optional by)
-  "Pull the SINGULAR heading of FILE that TARGET names from Canvas.
-QUERY and ID-PROPERTY are the module's, as its sync by heading uses
-them; TARGET and BY mean what they mean there
-\(`org-canvas--sync-find-heading'), and TARGET nil asks for a title.
-Return the plist `org-canvas--pull-heading-here' builds, with
-:feature and :target."
-  (let* ((target (or target
-                     (org-canvas--sync-heading-ask singular file query "pull")))
-         (marker (org-canvas--sync-find-heading
-                  :file file :query query :target target :by by
-                  :id-property id-property :feature singular :verb "pull")))
-    (with-current-buffer (marker-buffer marker)
-      (save-excursion
-        (goto-char marker)
-        (append (list :feature singular :target target)
-                (org-canvas--pull-heading-here singular))))))
+(defun org-canvas--pull-heading-runtime (heading)
+  "Pull the one heading HEADING names from Canvas.
+HEADING is an `org-canvas--heading-query' whose :feature is the
+module's singular name and whose :target nil asks for a title.  Return
+the plist `org-canvas--pull-heading-here' builds, with :feature and
+:target."
+  (let* ((heading (copy-org-canvas--heading-query heading))
+         (singular (org-canvas--heading-query-feature heading))
+         (target (or (org-canvas--heading-query-target heading)
+                     (org-canvas--sync-heading-ask
+                      singular
+                      (org-canvas--heading-query-file heading)
+                      (org-canvas--heading-query-query heading)
+                      "pull"))))
+    (setf (org-canvas--heading-query-target heading) target)
+    (let ((marker (org-canvas--sync-find-heading heading)))
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (goto-char marker)
+          (append (list :feature singular :target target)
+                  (org-canvas--pull-heading-here singular)))))))
 
 (defun org-canvas--pull-headings-report (results)
   "Say how RESULTS, the list `org-canvas-pull-headings' built, came out.
@@ -669,22 +699,27 @@ its property registration's query, as the drift report finds it."
          (entry (or (org-canvas--delete-heading-feature singular) (error "No feature %s" singular)))
          (query (or (plist-get entry :query) "LEVEL=1")))
     (lambda (target by)
-      (org-canvas--delete-heading-runtime deleter entry singular query target by))))
+      (org-canvas--delete-heading-runtime
+       deleter
+       (org-canvas--heading-query
+        :file (expand-file-name
+               (symbol-value (plist-get entry :file-var)))
+        :query query
+        :target target
+        :by by
+        :id-property (or (plist-get entry :id-property) "CANVAS_ID")
+        :feature singular
+        :verb "delete")))))
 
-(defun org-canvas--delete-heading-runtime (deleter feature singular query
-                                                   target by)
-  "Run DELETER at the heading of FEATURE that TARGET names; return a context.
-FEATURE is the feature registry entry, SINGULAR its name and QUERY
-the heading match; TARGET and BY are as in
-`org-canvas--sync-find-heading'.  The heading's file is saved.  The
+(defun org-canvas--delete-heading-runtime (deleter heading)
+  "Run DELETER at the one heading HEADING names; return a context.
+HEADING is an `org-canvas--heading-query' built from the feature
+registry entry's file, query and id property, and DELETER is the
+feature's own delete at point.  The heading's file is saved.  The
 context's :outcome is DELETER's answer, `failed' for nil, and its
 :heading-report names the id property and the id deleted."
-  (let* ((id-property (or (plist-get feature :id-property) "CANVAS_ID"))
-         (marker (org-canvas--sync-find-heading
-                  :file (expand-file-name
-                         (symbol-value (plist-get feature :file-var)))
-                  :query query :target target :by by
-                  :id-property id-property :feature singular :verb "delete")))
+  (let* ((id-property (org-canvas--heading-query-id-property heading))
+         (marker (org-canvas--sync-find-heading heading)))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)

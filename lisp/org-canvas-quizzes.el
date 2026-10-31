@@ -539,9 +539,10 @@ Returns \"\" for a quiz with none."
   "Send quiz PAYLOAD (from DATA) to Canvas API in run context CTX.
 Return response with quiz ID.  The search function serves the
 duplicate guard of a push outside a sync's snapshot, and recovery."
-  (org-canvas--push-to-api data payload :ctx ctx :endpoint "quizzes"
-                           :find-fn (lambda (title)
-                                      (org-canvas--search-item "quizzes" title))))
+  (org-canvas--push-to-api data payload
+                           (org-canvas--push-options :ctx ctx :endpoint "quizzes"
+                                                     :find-fn (lambda (title)
+                                                                (org-canvas--search-item "quizzes" title)))))
 
 (defun org-canvas--quiz-verify-response (data response)
   "Verify quiz properties in RESPONSE match DATA.
@@ -675,11 +676,12 @@ already published and may now be carrying stale totals."
   "Save quiz pointed to in DATA with CANVAS_ID from RESPONSE to org heading.
 CTX is the run context."
   (org-canvas--finalize-item data response
-    :ctx ctx
-    :post-fn (lambda (data response &optional _ctx)
-               (org-canvas--quiz-verify-response data response)
-               (let ((written (org-canvas--quiz-sync-children data response)))
-                 (org-canvas--quiz-settle-publish-state data response written)))))
+                             (org-canvas--finalize-options
+                              :ctx ctx
+                              :post-fn (lambda (data response &optional _ctx)
+                                         (org-canvas--quiz-verify-response data response)
+                                         (let ((written (org-canvas--quiz-sync-children data response)))
+                                           (org-canvas--quiz-settle-publish-state data response written))))))
 
 ;;;; Question Parsing (Level 2)
 
@@ -874,7 +876,8 @@ right sides."
 
 (defun org-canvas--question-finalize (data response)
   "Save question from DATA with CANVAS_ID from RESPONSE."
-  (org-canvas--finalize-item data response :title-key :name))
+  (org-canvas--finalize-item data response
+                             (org-canvas--finalize-options :title-key :name)))
 
 ;;;; Question Groups (Question Banks)
 
@@ -943,7 +946,8 @@ Unwraps the `quiz_groups' response wrapper."
 
 (defun org-canvas--question-group-finalize (data response)
   "Save question group from DATA with CANVAS_ID from RESPONSE."
-  (org-canvas--finalize-item data response :title-key :name))
+  (org-canvas--finalize-item data response
+                             (org-canvas--finalize-options :title-key :name)))
 
 (defun org-canvas--quiz-group-heading-p ()
   "Return non-nil when the heading at point is a question group.
@@ -1630,7 +1634,9 @@ heading, stamps CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
          "quizzes" file "CANVAS_ID" idless-before count))
       ;; A quiz Canvas deleted is marked, never its questions (#399).
       (setq unlisted (org-canvas--pull-mark-unlisted
-                      file "quizzes" remote 'id "CANVAS_ID"))
+                      (org-canvas--pull-gone-request
+                       :file file :feature "quizzes" :remote remote
+                       :id-field 'id :id-property "CANVAS_ID")))
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)

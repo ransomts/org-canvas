@@ -935,7 +935,7 @@ Content.
                               ((string-match "subgroups" url)
                                [((id . 1) (title . "Group 1"))]))))
                           ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                           (lambda (items _options)
                              (setq deleted-count (length items))
                              (cons (length items) nil))))
                   (org-canvas-delete-all-outcomes)
@@ -949,8 +949,7 @@ Content.
         (with-sync-test-env
           (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
                     ((symbol-function 'org-canvas--delete-items-queued)
-                     (lambda (_items _endpoint-fn _id-field _title-field
-                               &optional _skip-fn _delete-data)
+                     (lambda (_items _options)
                        (cons 1 nil)))
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (_method url &rest _args)
@@ -989,7 +988,7 @@ Content.
                               ((string-match "subgroups" url)
                                [((id . 1) (title . "G1")) ((id . 2) (title . "G2"))]))))
                           ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                           (lambda (items _options)
                              (setq delete-attempts (length items))
                              (cons (length items) nil))))
                   (org-canvas-delete-all-outcomes)

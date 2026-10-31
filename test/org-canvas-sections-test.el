@@ -1592,9 +1592,10 @@ the assignment as AFTER, with the unlock date of `test-ovr478-unlock'."
       (with-temp-org-buffer text
         (goto-char (point-min))
         (org-canvas--conflict-check
-         "assignments" "456" (point) "Assignment 1" nil nil nil
-         (org-canvas--feature-scheduled-dates-fn
-          (org-canvas--registry-find-feature "Assignments")))))))
+         (org-canvas--conflict-request-from
+          "assignments" "456" (point) "Assignment 1" nil nil nil
+          (org-canvas--feature-scheduled-dates-fn
+           (org-canvas--registry-find-feature "Assignments"))))))))
 
 (describe "org-canvas-sync-overrides allows a scheduled bump (issue #478)"
   (it "restamps a heading whose newer stamp the passed unlock date explains"

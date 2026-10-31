@@ -504,7 +504,8 @@ Old body.
            (org-back-to-heading)
            (let ((data1 (list :title "Item 1" :canvas-id "1" :pom (point-marker)))
                  (payload1 '((title . "Item 1"))))
-             (org-canvas--push-to-api data1 payload1 :endpoint "items" :ctx ctx)
+             (org-canvas--push-to-api data1 payload1
+                                      (org-canvas--push-options :endpoint "items" :ctx ctx))
              ;; User was prompted once
              (expect prompt-count :to-equal 1)
              ;; PUT was called (force push)
@@ -516,7 +517,8 @@ Old body.
            (org-back-to-heading)
            (let ((data2 (list :title "Item 2" :canvas-id "2" :pom (point-marker)))
                  (payload2 '((title . "Item 2"))))
-             (org-canvas--push-to-api data2 payload2 :endpoint "items" :ctx ctx)
+             (org-canvas--push-to-api data2 payload2
+                                      (org-canvas--push-options :endpoint "items" :ctx ctx))
              ;; No additional prompt (apply-all active)
              (expect prompt-count :to-equal 1)
              ;; PUT was called again
@@ -550,7 +552,8 @@ Old body.
            (org-back-to-heading)
            (let ((data (list :title "Item A" :canvas-id "10" :pom (point-marker)))
                  (payload '((title . "Item A"))))
-             (let ((result (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)))
+             (let ((result (org-canvas--push-to-api data payload
+                                                    (org-canvas--push-options :endpoint "items" :ctx ctx))))
                (expect result :to-equal 'conflict))))
           ;; Second push: auto-skipped without prompt
           (with-temp-org-buffer
@@ -559,7 +562,8 @@ Old body.
            (org-back-to-heading)
            (let ((data (list :title "Item B" :canvas-id "20" :pom (point-marker)))
                  (payload '((title . "Item B"))))
-             (let ((result (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)))
+             (let ((result (org-canvas--push-to-api data payload
+                                                    (org-canvas--push-options :endpoint "items" :ctx ctx))))
                (expect result :to-equal 'conflict))))
           ;; Prompt was only shown once
           (expect prompt-count :to-equal 1)
@@ -590,8 +594,9 @@ Old body.
              (org-back-to-heading)
              (org-canvas--push-to-api
               (list :title "Item" :canvas-id id :pom (point-marker))
-              '((title . "Item")) :endpoint "items"
-              :ctx (org-canvas--sync-make-ctx))))
+              '((title . "Item"))
+              (org-canvas--push-options :endpoint "items"
+                                        :ctx (org-canvas--sync-make-ctx)))))
           (expect prompt-count :to-equal 2))))))
 
 (describe "org-canvas--resolve-conflict unexpected choice"

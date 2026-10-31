@@ -281,6 +281,19 @@ name that the id fold does not cover is matched by name as before
 
 ;;;; Per-Feature Comparison
 
+(cl-defstruct (org-canvas--diff-options (:copier nil)
+               (:constructor org-canvas--diff-options))
+  "What one feature's diff compares an entry against Canvas by.
+SPECS are the feature's property registry specs and PROPS its registry
+entry, which enables the body comparison when it names a
+`:body-api-key' (issue #83) and the title comparison when it declares
+`:compare-title' (issue #498).  MODIFIED-FIELD names the remote
+timestamp \"modified remotely\" is decided from, default `updated_at';
+files pass `modified_at' (issue #94), and TITLE-FIELD the Canvas field
+a `:compare-title' entry compares.  They come from one registry entry
+and one heading, so they are one thing to pass."
+  specs props modified-field title-field)
+
 (defun org-canvas--diff-display-title (heading)
   "Return the visible title of HEADING, the name of its Canvas item.
 A heading that is a link — a module item's
@@ -369,18 +382,16 @@ is left out: its title is the target's, read by its own module."
         (when (and local remote (not (string= local remote)))
           (list org-canvas--diff-title-label local remote))))))
 
-(defun org-canvas--diff-entry (entry index specs &optional props modified-field
-                                     title-field)
-  "Compare local ENTRY against the remote INDEX using property SPECS.
-PROPS, the feature's registry entry, enables the body
-comparison when it names a `:body-api-key' (issue #83), and the title
-comparison when it declares `:compare-title' with TITLE-FIELD the
-Canvas field (issue #498).
-MODIFIED-FIELD names the remote timestamp \"modified remotely\" is
-decided from, default `updated_at'; files pass `modified_at' (issue
-#94).  Returns a plist describing the divergence, or nil when they
-agree.  A CHANGED row keeps the Canvas item as :item, which the
-row's verbs read rather than asking Canvas again (issues #498, #500)."
+(defun org-canvas--diff-entry (entry index compare)
+  "Compare local ENTRY against the remote INDEX using COMPARE.
+COMPARE is an `org-canvas--diff-options': the feature's property specs,
+its registry entry -- which enables the body comparison when it names a
+`:body-api-key' (issue #83) and the title comparison when it declares
+`:compare-title' (issue #498) -- and the timestamp and title field a
+module compares differently.  Returns a plist describing the
+divergence, or nil when they agree.  A CHANGED row keeps the Canvas
+item as :item, which the row's verbs read rather than asking Canvas
+again (issues #498, #500)."
   (let* ((id (plist-get entry :id))
          (pom (plist-get entry :pom))
          (item (and id (gethash id index))))
@@ -390,11 +401,17 @@ row's verbs read rather than asking Canvas again (issues #498, #500)."
       (list :kind 'missing :title (plist-get entry :title) :id id
             :deleted (plist-get entry :deleted)))
      (t
-      (let* ((body (org-canvas--diff-compare-body props pom item))
-             (title (org-canvas--diff-compare-title props entry item title-field))
-             (fields (append (and title (list title))
-                             (org-canvas--diff-compare-fields specs pom item)
-                             (and (cdr body) (list (cdr body)))))
+      (let* ((props (org-canvas--diff-options-props compare))
+             (modified-field (org-canvas--diff-options-modified-field compare))
+             (body (org-canvas--diff-compare-body props pom item))
+             (title (org-canvas--diff-compare-title
+                     props entry item
+                     (org-canvas--diff-options-title-field compare)))
+             (fields (append
+                      (and title (list title))
+                      (org-canvas--diff-compare-fields
+                       (org-canvas--diff-options-specs compare) pom item)
+                      (and (cdr body) (list (cdr body)))))
              (drifted (org-canvas--diff-modified-p pom item modified-field)))
         (when (or fields drifted)
           (list :kind 'modified :title (plist-get entry :title) :id id
@@ -566,7 +583,11 @@ after this one (issue #177)."
          (title-field (plist-get feature :title-field))
          (props (org-canvas--diff-find-properties name))
          (specs (plist-get props :properties))
-         (modified-field (org-canvas--feature-modified-field feature))
+         (compare (org-canvas--diff-options
+                   :specs specs
+                   :props props
+                   :modified-field (org-canvas--feature-modified-field feature)
+                   :title-field (plist-get feature :title-field)))
          (skip-fn (plist-get feature :skip-fn)))
     (condition-case err
         (let* ((items (append (org-canvas-api-request-all-pages
@@ -582,8 +603,7 @@ after this one (issue #177)."
                (claimed (delq nil (mapcar (lambda (e) (plist-get e :id)) local)))
                divergences notes)
           (dolist (entry local)
-            (let ((d (org-canvas--diff-entry entry index specs props
-                                             modified-field title-field)))
+            (let ((d (org-canvas--diff-entry entry index compare)))
               (when d (push d divergences)))
             (setq notes (nconc notes (org-canvas--diff-entry-notes
                                       entry index specs)))

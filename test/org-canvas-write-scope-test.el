@@ -165,10 +165,12 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
                                  :build #'org-canvas--announcement-build-payload
                                  :push (lambda (data payload &optional ctx)
                                          (org-canvas--push-to-api
-                                          data payload :endpoint "test" :ctx ctx))
+                                          data payload
+                                          (org-canvas--push-options :endpoint "test" :ctx ctx)))
                                  :finalize (lambda (data response &optional ctx)
                                              (org-canvas--finalize-item
-                                              data response :ctx ctx))))
+                                              data response
+                                              (org-canvas--finalize-options :ctx ctx)))))
                           :to-throw 'org-canvas-write-scope-error)
                   (expect requests :to-equal 0)))))
         (delete-directory temp-dir t))))
@@ -196,10 +198,12 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
                            :build #'org-canvas--announcement-build-payload
                            :push (lambda (data payload &optional ctx)
                                    (org-canvas--push-to-api
-                                    data payload :endpoint "test" :ctx ctx))
+                                    data payload
+                                    (org-canvas--push-options :endpoint "test" :ctx ctx)))
                            :finalize (lambda (data response &optional ctx)
                                        (org-canvas--finalize-item
-                                        data response :ctx ctx))))
+                                        data response
+                                        (org-canvas--finalize-options :ctx ctx)))))
                     (expect requests :to-be-truthy)))))
           (delete-directory temp-dir t))))))
 
@@ -291,7 +295,8 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
     (test-write-scope--with-course-file
         "pages.org" "* A Page\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"
       (let ((org-canvas-write-allowlist '("assignments.org")))
-        (expect (org-canvas--delete-item-at-point "page" :endpoint "pages/%s")
+        (expect (org-canvas--delete-item-at-point "page"
+                                                  (org-canvas--delete-at-point-options :endpoint "pages/%s"))
                 :to-throw 'org-canvas-write-scope-error))))
 
   (it "deletes at point when the allowlist names the file"
@@ -302,7 +307,8 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
               (org-canvas-delete-confirmed t))
           (with-sync-test-env
             (with-mock-api
-              (expect (org-canvas--delete-item-at-point "page" :endpoint "pages/%s")
+              (expect (org-canvas--delete-item-at-point "page"
+                                                        (org-canvas--delete-at-point-options :endpoint "pages/%s"))
                       :to-be 'deleted)
               (expect (test-org-canvas-api-called-p 'DELETE "pages/7")
                       :to-be-truthy))))))))

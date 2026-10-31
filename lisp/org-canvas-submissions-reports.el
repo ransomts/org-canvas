@@ -181,9 +181,10 @@ failed read is one warning; the other columns are still read."
   (condition-case err
       (let ((cells nil))
         (org-canvas--graphql-walk-pages
-         org-canvas--processor-reports-query
-         (list (cons 'assignmentId (plist-get column :id)))
-         '(assignment submissionsConnection)
+         (org-canvas--graphql-request
+          :query org-canvas--processor-reports-query
+          :variables (list (cons 'assignmentId (plist-get column :id)))
+          :connection-path '(assignment submissionsConnection))
          (lambda (node _map)
            (when-let* (((org-canvas--alist-get-non-null 'userId node))
                        (cell (org-canvas--processor-reports-cell node))

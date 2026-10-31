@@ -206,10 +206,12 @@ nil; an empty bank is `empty', so the two are never confused."
   (condition-case err
       (let* ((user-id (org-canvas--submissions-self-id))
              (bank (org-canvas--graphql-walk-pages
-                    org-canvas--submissions-bank-query
-                    (list (cons 'userId user-id)
-                          (cons 'courseId (format "%s" org-canvas-course-id)))
-                    '(user commentBankItemsConnection)
+                    (org-canvas--graphql-request
+                     :query org-canvas--submissions-bank-query
+                     :variables (list (cons 'userId user-id)
+                                      (cons 'courseId
+                                            (format "%s" org-canvas-course-id)))
+                     :connection-path '(user commentBankItemsConnection))
                     (lambda (node map)
                       (let ((id (org-canvas--alist-get-non-null '_id node))
                             (text (org-canvas--submissions-comment-text

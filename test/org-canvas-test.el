@@ -2221,8 +2221,15 @@ and a heading with no stamp.")
       (cl-letf (((symbol-function 'org-canvas--pull-heading-runtime)
                  (lambda (&rest args) (setq seen args) (list :outcome 'pulled))))
         (org-canvas-pull-new-quiz "Quiz 1"))
-      (expect seen :to-equal (list "new-quiz" "/tmp/nq-346.org" "LEVEL=1"
-                                   "CANVAS_ASSIGNMENT_ID" "Quiz 1" nil)))))
+      (expect (length seen) :to-equal 1)
+      (expect (org-canvas--heading-query-feature (car seen)) :to-equal "new-quiz")
+      (expect (org-canvas--heading-query-file (car seen))
+              :to-equal "/tmp/nq-346.org")
+      (expect (org-canvas--heading-query-query (car seen)) :to-equal "LEVEL=1")
+      (expect (org-canvas--heading-query-id-property (car seen))
+              :to-equal "CANVAS_ASSIGNMENT_ID")
+      (expect (org-canvas--heading-query-target (car seen)) :to-equal "Quiz 1")
+      (expect (org-canvas--heading-query-by (car seen)) :to-be nil))))
 
 (describe "org-canvas-pull-headings (issue #346)"
   (before-each

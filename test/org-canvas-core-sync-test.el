@@ -683,9 +683,11 @@ Hello world.
 							 :parse #'org-canvas--announcement-parse-entry
 							 :build #'org-canvas--announcement-build-payload
 							 :push (lambda (data payload &optional ctx)
-								 (org-canvas--push-to-api data payload :endpoint "test" :ctx ctx))
+								 (org-canvas--push-to-api data payload
+											  (org-canvas--push-options :endpoint "test" :ctx ctx)))
 							 :finalize (lambda (data response &optional ctx)
-								     (org-canvas--finalize-item data response :ctx ctx))))
+								     (org-canvas--finalize-item data response
+												(org-canvas--finalize-options :ctx ctx)))))
                   (expect parse-count :to-be-truthy)))))
         (delete-directory temp-dir t))))
 

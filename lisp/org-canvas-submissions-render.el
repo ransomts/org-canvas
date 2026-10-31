@@ -278,9 +278,10 @@ processor: the pull goes on without the reports."
       (org-canvas--submissions-settle-unreported
        assignment-id processor
        (org-canvas--graphql-walk-pages
-        org-canvas--submissions-reports-query
-        (list (cons 'assignmentId (format "%s" assignment-id)))
-        '(assignment submissionsConnection)
+        (org-canvas--graphql-request
+         :query org-canvas--submissions-reports-query
+         :variables (list (cons 'assignmentId (format "%s" assignment-id)))
+         :connection-path '(assignment submissionsConnection))
         #'org-canvas--submissions-reports-node))
     (error
      (org-canvas--log-warning org-canvas--logger

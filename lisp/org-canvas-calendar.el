@@ -159,11 +159,12 @@ the same state at validation time."
   "Send PAYLOAD derived from DATA to Canvas API in run context CTX.
 Calendar events use global endpoints (not course-scoped)."
   (org-canvas--push-to-api data payload
-    :ctx ctx
-    :endpoint "calendar_events"
-    :find-fn #'org-canvas--calendar-event-search
-    :post-url-fn #'org-canvas--calendar-event-list-url
-    :put-url-fn #'org-canvas--calendar-event-item-url))
+                           (org-canvas--push-options
+                            :ctx ctx
+                            :endpoint "calendar_events"
+                            :find-fn #'org-canvas--calendar-event-search
+                            :post-url-fn #'org-canvas--calendar-event-list-url
+                            :put-url-fn #'org-canvas--calendar-event-item-url)))
 
 (defun org-canvas--calendar-event-search (title)
   "Search Canvas for a calendar event matching TITLE.
@@ -239,7 +240,9 @@ code — all of them, not only today's (issue #87)."
                 (org-canvas-org-save-sync-state pos id "CANVAS_ID")
                 (org-canvas--calendar-event-pull-item item pos)))))
         (setq unlisted (org-canvas--pull-mark-unlisted
-                        file "calendar-events" items 'id "CANVAS_ID"))
+                        (org-canvas--pull-gone-request
+                         :file file :feature "calendar-events" :remote items
+                         :id-field 'id :id-property "CANVAS_ID")))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)

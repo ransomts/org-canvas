@@ -828,16 +828,18 @@ express — a body, a child table — through `:after-pull'."
     (dolist (spec (plist-get entry :properties))
       (org-canvas--pull-apply-spec spec item pos))))
 
-(defun org-canvas--pull-item-set-property (pos api-field property
-                                               type item
-                                               &optional registry-key)
-  "Set PROPERTY on heading at POS from ITEM's API-FIELD.
-TYPE controls conversion: string, boolean, timestamp, number.  The
+(defun org-canvas--pull-item-set-property (pos item spec &optional registry-key)
+  "Set the property SPEC names on the heading at POS from ITEM's field.
+SPEC is a property spec spelled as the registry spells its own:
+\(:data-key API-FIELD :org-prop PROPERTY :type TYPE).  TYPE controls
+conversion: string, boolean, timestamp, number.  This is the
 explicit-spec path of `org-canvas-define-pull-item', for a property a
 module keeps outside the registry.  REGISTRY-KEY names the feature
 being pulled, for a boolean's default."
-  (let ((value (alist-get api-field item)))
-    (pcase type
+  (let* ((api-field (plist-get spec :data-key))
+         (property (plist-get spec :org-prop))
+         (value (alist-get api-field item)))
+    (pcase (plist-get spec :type)
       ('boolean
        (org-canvas--pull-set-boolean-property
         pos property value registry-key))
@@ -897,7 +899,9 @@ ITEM is the API response alist, POS is the heading position."
                   (type (or (plist-get (nthcdr 2 spec) :type)
                             'string)))
               `(org-canvas--pull-item-set-property
-                pos ',api-field ,org-prop ',type item ,registry-key)))
+                pos item
+                '(:data-key ,api-field :org-prop ,org-prop :type ,type)
+                ,registry-key)))
           properties)
        ,@(when body-field
            `((org-with-point-at pos
@@ -1163,6 +1167,16 @@ writing %d %s: a body heading split an entry?  Check the file before pushing"
 ;; that came back short never marks a heading on its own say.  The
 ;; People roster did this first, with its own reads (issue #290).
 
+(cl-defstruct (org-canvas--pull-gone-request (:copier nil)
+               (:constructor org-canvas--pull-gone-request))
+  "One pull's answer to what Canvas no longer lists.
+FILE is the file the headings live in, named in the summary.  FEATURE
+is the registry entry whose item URL answers for each heading, or its
+name.  REMOTE is the list the pull read, ID-FIELD and ID-PROPERTY the
+pull's, and QUERY, when non-nil, the match for the headings REMOTE
+answers for."
+  file feature remote id-field id-property query)
+
 (defun org-canvas--pull-gone-query (feature-name)
   "Return the Org match for FEATURE-NAME's top-level entries.
 LEVEL=1, where a pull writes, joined with the property registry's
@@ -1256,25 +1270,28 @@ closing line names by the file's name."
     (goto-char marker)
     (org-link-display-format (org-get-heading t t t t))))
 
-(defun org-canvas--pull-mark-unlisted (file feature-name remote id-field
-                                            id-property &optional query)
-  "Mark the headings of FILE that REMOTE lacks and Canvas has deleted.
-FEATURE-NAME finds the feature registry entry whose item URL answers
-for each one; it may instead be the entry itself, as New Quizzes'
-pull-only entry is (issue #399).  ID-FIELD and ID-PROPERTY are the
-pull's.  QUERY matches the headings REMOTE answers for; by default
-`org-canvas--pull-gone-query' of FEATURE-NAME.  A pull whose file
-holds more than one kind of heading names the one its list reads:
-outcomes' groups, never the outcomes under them.  Runs in the buffer
-visiting FILE.  Returns (:gone ENTRIES :kept TITLES): ENTRIES as
-`org-canvas--pull-mark-gone' returns them, TITLES the headings left as
-they were because Canvas still has them or could not say.  Each gone
-heading is recorded in the pull summary."
-  (let ((feature (if (stringp feature-name)
-                     (org-canvas--registry-find-feature feature-name)
-                   feature-name))
-        (gone nil)
-        (kept nil))
+(defun org-canvas--pull-mark-unlisted (request)
+  "Mark the headings of REQUEST's file that its list lacks and Canvas deleted.
+REQUEST is an `org-canvas--pull-gone-request': the pull's file, its
+feature, the list it read, its id field and id property, and the query
+its headings answer to.  A pull whose file holds more than one kind of
+heading names the one its list reads: outcomes' groups, never the
+outcomes under them.  Runs in the buffer visiting the file.  Returns
+\(:gone ENTRIES :kept TITLES): ENTRIES as `org-canvas--pull-mark-gone'
+returns them, TITLES the headings left as they were because Canvas
+still has them or could not say.  Each gone heading is recorded in the
+pull summary."
+  (let* ((file (org-canvas--pull-gone-request-file request))
+         (feature-name (org-canvas--pull-gone-request-feature request))
+         (remote (org-canvas--pull-gone-request-remote request))
+         (id-field (org-canvas--pull-gone-request-id-field request))
+         (id-property (org-canvas--pull-gone-request-id-property request))
+         (query (org-canvas--pull-gone-request-query request))
+         (feature (if (stringp feature-name)
+                      (org-canvas--registry-find-feature feature-name)
+                    feature-name))
+         (gone nil)
+         (kept nil))
     (dolist (entry (and feature
                         (org-canvas--pull-unlisted-headings
                          remote id-field id-property
@@ -1468,7 +1485,10 @@ headings Canvas no longer lists and writes the file header."
              (org-canvas--pull-check-entry-count
               ,feature-name file ,id-property idless-before count))
            (setq unlisted (org-canvas--pull-mark-unlisted
-                           file ,feature-name remote ,id-field ,id-property))
+                           (org-canvas--pull-gone-request
+                            :file file :feature ,feature-name :remote remote
+                            :id-field ,id-field
+                            :id-property ,id-property)))
            (org-canvas--pull-write-file-header)
            (org-canvas--save-buffer)))
        (org-canvas--pull-kill-fresh-buffer file was-fresh)

@@ -47,13 +47,23 @@
   "Return non-nil when VALUE asks for an emptied place: `empty' or \"empty\"."
   (member value '(empty "empty")))
 
+(cl-defstruct (org-canvas-submissions-ruling (:copier nil)
+               (:constructor org-canvas-submissions-ruling))
+  "An instructor's ruling after grading, applied to a set of students.
+ROWS is every Rubric row's Score: a number, `empty' to empty the
+cells, or nil to leave them.  ROW-COMMENT is every row's comment,
+SCORE the SCORE, COMMENT the draft under Comment to post, and NOTE the
+reason written in the Notes item.  All five are one decision taken at
+one time, so they are one argument."
+  rows row-comment score comment note)
+
 (defun org-canvas--submissions-ruling-check (ruling)
   "Signal a `user-error' unless RULING's values are ones it can apply.
-RULING is the plist `org-canvas-submissions-apply-ruling' takes."
-  (let ((rows (plist-get ruling :rows))
-        (row-comment (plist-get ruling :row-comment))
-        (score (plist-get ruling :score))
-        (comment (plist-get ruling :comment)))
+RULING is an `org-canvas-submissions-ruling'."
+  (let ((rows (org-canvas-submissions-ruling-rows ruling))
+        (row-comment (org-canvas-submissions-ruling-row-comment ruling))
+        (score (org-canvas-submissions-ruling-score ruling))
+        (comment (org-canvas-submissions-ruling-comment ruling)))
     (unless (or (null rows) (and (numberp rows) (>= rows 0))
                 (org-canvas--submissions-ruling-empty-p rows))
       (user-error "Ruling :rows is %S; give a number, `empty' or nil" rows))
@@ -76,8 +86,8 @@ Any spelling SCORE accepts, \"ex\" or \"excused\" too (issue #501)."
 
 (defun org-canvas--submissions-ruling-row (ruling row)
   "Return ROW, a Rubric row, as an (ID SCORE COMMENT) triple after RULING."
-  (let ((rows (plist-get ruling :rows))
-        (row-comment (plist-get ruling :row-comment)))
+  (let ((rows (org-canvas-submissions-ruling-rows ruling))
+        (row-comment (org-canvas-submissions-ruling-row-comment ruling)))
     (list (nth 0 row)
           (cond ((null rows) (nth 3 row))
                 ((numberp rows) (org-canvas--submissions-format-number rows)))
@@ -101,7 +111,7 @@ Any spelling SCORE accepts, \"ex\" or \"excused\" too (issue #501)."
 ROWS are the entry's Rubric rows before the ruling and TRIPLES after
 it.  A function is called with the rows' total after the ruling and
 the column's points; what it returns below 0 is 0."
-  (let ((score (plist-get ruling :score)))
+  (let ((score (org-canvas-submissions-ruling-score ruling)))
     (cond ((null score) nil)
           ((numberp score) (org-canvas--submissions-format-number score))
           ((stringp score) "EX")
@@ -128,7 +138,8 @@ beside any rows, as the push lets it."
 
 (defun org-canvas--submissions-ruling-touches-rows-p (ruling)
   "Return non-nil when RULING is to replace Rubric scores or comments."
-  (or (plist-get ruling :rows) (plist-get ruling :row-comment)))
+  (or (org-canvas-submissions-ruling-rows ruling)
+      (org-canvas-submissions-ruling-row-comment ruling)))
 
 (defun org-canvas--submissions-ruling-plan (ruling user-id)
   "Return what RULING does to USER-ID's entry at point, without writing.
@@ -152,7 +163,7 @@ refusal is (:user-id USER-ID :skipped WHY) instead."
             :old-score (org-canvas--submissions-comments-prop "SCORE") :score score
             :old-rows old :rows new
             :old-draft (org-canvas--submissions-comment-draft)
-            :draft (plist-get ruling :comment)))))
+            :draft (org-canvas-submissions-ruling-comment ruling)))))
 
 ;;;; Writing
 
@@ -206,7 +217,8 @@ An id no student heading carries gives (:user-id USER-ID :unmatched t)."
       (goto-char marker)
       (let ((plan (org-canvas--submissions-ruling-plan ruling user-id)))
         (when (and write (not (plist-get plan :skipped)))
-          (org-canvas--submissions-ruling-write plan (plist-get ruling :note)))
+          (org-canvas--submissions-ruling-write
+           plan (org-canvas-submissions-ruling-note ruling)))
         plan))))
 
 (defun org-canvas--submissions-ruling-result (plans dry-run)
@@ -252,13 +264,13 @@ An id no student heading carries gives (:user-id USER-ID :unmatched t)."
 ;;;; Command
 
 ;;;###autoload
-(cl-defun org-canvas-submissions-apply-ruling (file user-ids &key rows row-comment
-                                                    score comment note)
-  "Apply a grading ruling to the students USER-IDS in grading file FILE.
+(defun org-canvas-submissions-apply-ruling (file user-ids ruling)
+  "Apply RULING to the students USER-IDS in grading file FILE.
 FILE is taken as `org-canvas-submissions-export-comments' takes it:
 nil for the grading buffer at hand, else an assignment id or a
 grading file's path or name.  USER-IDS are USER_IDs, numbers or
-strings.  For each listed student:
+strings.  RULING is an `org-canvas-submissions-ruling', whose fields
+say what to do, applied to each listed student:
 
   ROWS         every Rubric row's Score: a number, `empty' to empty
                the cells, or nil to leave them;
@@ -290,24 +302,22 @@ one plist per student changed (:user-id, :name, :old-score, :score,
 :old-rows and :rows as (ID SCORE COMMENT) lists, :old-draft, :draft);
 :unmatched, the ids no student carries; :skipped, (USER-ID . WHY)
 for each student kept back; :dry-run."
-  (let ((ruling (list :rows rows :row-comment row-comment :score score
-                      :comment comment :note note)))
-    (org-canvas--submissions-ruling-check ruling)
-    (with-current-buffer (org-canvas--submissions-comments-buffer file)
-      (let* ((dry-run org-canvas--dry-run)
-             (markers (org-canvas--submissions-comments-markers))
-             (plans (save-excursion
-                      (mapcar (lambda (id)
-                                (org-canvas--submissions-ruling-student
-                                 ruling id markers (not dry-run)))
-                              (delete-dups (mapcar (lambda (id) (format "%s" id))
-                                                   user-ids)))))
-             (result (org-canvas--submissions-ruling-result plans dry-run)))
-        (dolist (m markers) (set-marker (cdr m) nil))
-        (when (and buffer-file-name (not dry-run) (plist-get result :changed))
-          (org-canvas--save-buffer))
-        (org-canvas--submissions-ruling-report result)
-        result))))
+  (org-canvas--submissions-ruling-check ruling)
+  (with-current-buffer (org-canvas--submissions-comments-buffer file)
+    (let* ((dry-run org-canvas--dry-run)
+           (markers (org-canvas--submissions-comments-markers))
+           (plans (save-excursion
+                    (mapcar (lambda (id)
+                              (org-canvas--submissions-ruling-student
+                               ruling id markers (not dry-run)))
+                            (delete-dups (mapcar (lambda (id) (format "%s" id))
+                                                 user-ids)))))
+           (result (org-canvas--submissions-ruling-result plans dry-run)))
+      (dolist (m markers) (set-marker (cdr m) nil))
+      (when (and buffer-file-name (not dry-run) (plist-get result :changed))
+        (org-canvas--save-buffer))
+      (org-canvas--submissions-ruling-report result)
+      result)))
 
 ;;;; JSON
 
@@ -342,9 +352,13 @@ takes them.  Return the list of results, one per ruling."
   (mapcar (lambda (r)
             (org-canvas-submissions-apply-ruling
              file (plist-get r :user-ids)
-             :rows (plist-get r :rows) :row-comment (plist-get r :row-comment)
-             :score (org-canvas--submissions-ruling-json-score (plist-get r :score))
-             :comment (plist-get r :comment) :note (plist-get r :note)))
+             (org-canvas-submissions-ruling
+              :rows (plist-get r :rows)
+              :row-comment (plist-get r :row-comment)
+              :score (org-canvas--submissions-ruling-json-score
+                      (plist-get r :score))
+              :comment (plist-get r :comment)
+              :note (plist-get r :note))))
           (org-canvas--submissions-ruling-from-json path)))
 
 (provide 'org-canvas-submissions-ruling)

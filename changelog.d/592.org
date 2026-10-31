@@ -1,0 +1,8 @@
+* Changed
+- #592 Functions that took a long tail of keyword arguments take one
+  bundle instead: a runtime its options, a heading lookup its query, a
+  payload builder, a diff comparison and a files pull their own state.
+  No behaviour changes.  One signature a Lisp caller sees follows them:
+  =org-canvas-submissions-apply-ruling= takes the ruling as an
+  =org-canvas-submissions-ruling=, whose =rows=, =row-comment=,
+  =score=, =comment= and =note= are the keywords it took before.

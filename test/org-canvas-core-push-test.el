@@ -61,7 +61,8 @@
       (with-mock-api
         (let ((data '(:title "New Item" :canvas-id nil))
               (payload '((title . "New Item"))))
-          (org-canvas--push-to-api data payload :endpoint "assignments")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "assignments"))
           (expect-api-called 'POST "assignments$")))))
 
   (it "sends PUT when canvas-id present (update)"
@@ -69,7 +70,8 @@
       (with-mock-api
         (let ((data '(:title "Existing" :canvas-id "123"))
               (payload '((title . "Existing"))))
-          (org-canvas--push-to-api data payload :endpoint "assignments")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "assignments"))
           (expect-api-called 'PUT "assignments/123")))))
 
   (it "retries as POST on 404"
@@ -83,7 +85,8 @@
                        '((id . 456))))))
           (let ((data '(:title "Stale" :canvas-id "999"))
                 (payload '((title . "Stale"))))
-            (let ((result (org-canvas--push-to-api data payload :endpoint "pages")))
+            (let ((result (org-canvas--push-to-api data payload
+                                                   (org-canvas--push-options :endpoint "pages"))))
               (expect (alist-get 'id result) :to-equal 456)))))))
 
   (it "recovers from timeout with find-fn"
@@ -98,8 +101,9 @@
                 (payload '((title . "Timeout Test")))
                 (find-fn (lambda (_title) '((id . 789)))))
             (let ((result (org-canvas--push-to-api data payload
-                                                   :endpoint "items"
-                                                   :find-fn find-fn)))
+                                                   (org-canvas--push-options
+                                                    :endpoint "items"
+                                                    :find-fn find-fn))))
               (expect (alist-get 'id result) :to-equal 789)))))))
 
   (it "signals error when timeout recovery fails"
@@ -113,8 +117,9 @@
                 (payload '((title . "Lost Item")))
                 (find-fn (lambda (_title) nil)))
             (expect (org-canvas--push-to-api data payload
-                                             :endpoint "items"
-                                             :find-fn find-fn)
+                                             (org-canvas--push-options
+                                              :endpoint "items"
+                                              :find-fn find-fn))
                     :to-throw 'error))))))
 
   (it "uses custom id-key"
@@ -123,8 +128,9 @@
         (let ((data '(:title "Page" :canvas-url "my-page"))
               (payload '((title . "Page"))))
           (org-canvas--push-to-api data payload
-                                   :endpoint "pages"
-                                   :id-key :canvas-url)
+                                   (org-canvas--push-options
+                                    :endpoint "pages"
+                                    :id-key :canvas-url))
           (expect-api-called 'PUT "pages/my-page"))))))
 
 (describe "org-canvas--finalize-item"
@@ -161,7 +167,8 @@
      (org-back-to-heading)
      (let ((data (list :title "Page" :pom (point-marker)))
            (response '((url . "my-page-url"))))
-       (org-canvas--finalize-item data response :id-field 'url)
+       (org-canvas--finalize-item data response
+                                  (org-canvas--finalize-options :id-field 'url))
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "my-page-url"))))
 
   (it "uses custom id-property"
@@ -174,8 +181,9 @@
      (let ((data (list :title "Page" :pom (point-marker)))
            (response '((url . "custom-url"))))
        (org-canvas--finalize-item data response
-                                  :id-field 'url
-                                  :id-property "CANVAS_URL")
+                                  (org-canvas--finalize-options
+                                   :id-field 'url
+                                   :id-property "CANVAS_URL"))
        (expect (org-entry-get (point) "CANVAS_URL") :to-equal "custom-url"))))
 
   (it "calls post-fn when provided"
@@ -189,7 +197,8 @@
            (data (list :title "Item" :pom (point-marker)))
            (response '((id . 999))))
        (org-canvas--finalize-item data response
-                                  :post-fn (lambda (_d _r &optional _ctx) (setq post-called t)))
+                                  (org-canvas--finalize-options
+                                   :post-fn (lambda (_d _r &optional _ctx) (setq post-called t))))
        (expect post-called :to-be t))))
 
   (it "signals error when no ID in response"
@@ -210,8 +219,9 @@
         (let ((data '(:name "My Item" :canvas-id nil))
               (payload '((name . "My Item"))))
           (org-canvas--push-to-api data payload
-                                   :endpoint "items"
-                                   :title-key :name)
+                                   (org-canvas--push-options
+                                    :endpoint "items"
+                                    :title-key :name))
           (expect-api-called 'POST "items$")))))
 
   (it "handles nested timeout recovery for POST retry after 404"
@@ -240,8 +250,9 @@
                             (setq asked (1+ asked))
                             (when (> asked 1) '((id . 789)))))
             (let ((result (org-canvas--push-to-api data payload
-                                                   :endpoint "items"
-                                                   :find-fn find-fn)))
+                                                   (org-canvas--push-options
+                                                    :endpoint "items"
+                                                    :find-fn find-fn))))
               (expect (alist-get 'id result) :to-equal 789)
               (expect asked :to-equal 2))))))))
 
@@ -275,7 +286,8 @@
      (org-back-to-heading)
      (let ((data (list :name "Custom Name" :pom (point-marker)))
            (response '((id . 12345))))
-       (org-canvas--finalize-item data response :title-key :name)
+       (org-canvas--finalize-item data response
+                                  (org-canvas--finalize-options :title-key :name))
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "12345"))))
 
   (it "calls post-fn with data and response"
@@ -289,8 +301,9 @@
            (data (list :title "Test" :pom (point-marker)))
            (response '((id . 999))))
        (org-canvas--finalize-item data response
-                                  :post-fn (lambda (d r &optional _ctx)
-                                             (setq post-fn-called-with (list d r))))
+                                  (org-canvas--finalize-options
+                                   :post-fn (lambda (d r &optional _ctx)
+                                              (setq post-fn-called-with (list d r)))))
        (expect post-fn-called-with :to-be-truthy)
        (expect (car post-fn-called-with) :to-equal data)
        (expect (cadr post-fn-called-with) :to-equal response)))))
@@ -312,8 +325,9 @@
            (org-canvas--finalize-item
             (list :title "Essay" :pom (point-marker))
             '((id . 2497349) (updated_at . "2026-09-02T14:07:31Z"))
-            :endpoint "assignments"
-            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
+            (org-canvas--finalize-options
+             :endpoint "assignments"
+             :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx)))))
          (expect (length urls) :to-equal 1)
          (expect (car urls) :to-match "assignments/2497349")
          ;; The push response's stamp was three seconds behind what the
@@ -335,8 +349,9 @@
            (org-canvas--finalize-item
             (list :title "Essay" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
-            :endpoint "assignments"
-            :post-fn #'ignore))
+            (org-canvas--finalize-options
+             :endpoint "assignments"
+             :post-fn #'ignore)))
          (expect called :to-be nil)
          (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                  :to-equal "2026-09-02T14:07:31Z")))))
@@ -355,7 +370,8 @@
            (org-canvas--finalize-item
             (list :title "Topic" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
-            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
+            (org-canvas--finalize-options
+             :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx)))))
          (expect called :to-be nil)))))
 
   (it "keeps the stamp it has when the re-read fails"
@@ -375,8 +391,9 @@
            (org-canvas--finalize-item
             (list :title "Essay" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
-            :endpoint "assignments"
-            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
+            (org-canvas--finalize-options
+             :endpoint "assignments"
+             :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx)))))
          (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                  :to-equal "2026-09-02T14:07:31Z")
          (expect (car warned) :to-match "may report this push as a change")))))
@@ -394,8 +411,9 @@
          (org-canvas--finalize-item
           (list :title "Essay" :pom (point-marker))
           '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
-          :endpoint "assignments"
-          :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
+          (org-canvas--finalize-options
+           :endpoint "assignments"
+           :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx)))))
        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-09-02T14:07:31Z"))))
 
@@ -414,9 +432,10 @@
          (org-canvas--finalize-item
           (list :title "Handout" :pom (point-marker))
           '((id . 7) (modified_at . "2026-09-02T13:00:00Z"))
-          :endpoint "files"
-          :updated-field 'modified_at
-          :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
+          (org-canvas--finalize-options
+           :endpoint "files"
+           :updated-field 'modified_at
+           :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx)))))
        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-09-02T14:00:00Z"))))
 
@@ -435,8 +454,9 @@
            (org-canvas--finalize-item
             (list :title "Essay" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
-            :endpoint "assignments"
-            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
+            (org-canvas--finalize-options
+             :endpoint "assignments"
+             :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx)))))
          (expect called :to-be nil))))))
 
 (describe "org-canvas--push-to-api nested recovery"
@@ -458,8 +478,9 @@
                 (payload '((title . "Test")))
                 (find-fn (lambda (_title) nil)))
             (expect (org-canvas--push-to-api data payload
-                                             :endpoint "items"
-                                             :find-fn find-fn)
+                                             (org-canvas--push-options
+                                              :endpoint "items"
+                                              :find-fn find-fn))
                     :to-throw 'error))))))
 
   (it "re-throws non-timeout errors without find-fn"
@@ -469,7 +490,8 @@
                    (signal 'error '("Bad Request" nil nil)))))
         (let ((data '(:title "Bad" :canvas-id nil))
               (payload '((title . "Bad"))))
-          (expect (org-canvas--push-to-api data payload :endpoint "items")
+          (expect (org-canvas--push-to-api data payload
+                                           (org-canvas--push-options :endpoint "items"))
                   :to-throw 'error)))))
 
   (it "does not attempt timeout recovery without find-fn"
@@ -479,7 +501,8 @@
                    (signal 'error '("Request failed" "Timeout")))))
         (let ((data '(:title "Lost" :canvas-id nil))
               (payload '((title . "Lost"))))
-          (expect (org-canvas--push-to-api data payload :endpoint "items")
+          (expect (org-canvas--push-to-api data payload
+                                           (org-canvas--push-options :endpoint "items"))
                   :to-throw 'error))))))
 
 (describe "org-canvas--push-to-api 404→POST non-timeout error"
@@ -502,8 +525,9 @@
             ;; Even with find-fn, non-timeout errors should re-throw.  The
             ;; search finds no twin (issue #179), so the recovery POSTs.
             (expect (org-canvas--push-to-api data payload
-                                             :endpoint "items"
-                                             :find-fn (lambda (_) nil))
+                                             (org-canvas--push-options
+                                              :endpoint "items"
+                                              :find-fn (lambda (_) nil)))
                     :to-throw 'error)))))))
 
 (describe "org-canvas--finalize-item pom nil-guard"
@@ -565,7 +589,8 @@
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     '((id . 123) (updated_at . "2026-02-01T10:00:00Z")))))
-         (let ((result (org-canvas--conflict-check "items" "123" (point-marker))))
+         (let ((result (org-canvas--conflict-check
+                        (org-canvas--conflict-request-from "items" "123" (point-marker)))))
            (expect (car result) :to-equal 'conflict)
            (expect (alist-get 'id (cdr result)) :to-equal 123))))))
 
@@ -583,7 +608,8 @@
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     '((id . 123) (updated_at . "2026-01-01T10:00:00Z")))))
-         (expect (org-canvas--conflict-check "items" "123" (point-marker))
+         (expect (org-canvas--conflict-check
+                  (org-canvas--conflict-request-from "items" "123" (point-marker)))
                  :to-be nil)))))
 
   (it "returns nil when no #+LAST_SYNCED header exists"
@@ -595,7 +621,8 @@
 :END:
 "
        (org-back-to-heading)
-       (expect (org-canvas--conflict-check "items" "123" (point-marker))
+       (expect (org-canvas--conflict-check
+                (org-canvas--conflict-request-from "items" "123" (point-marker)))
                :to-be nil))))
 
   (it "returns nil on GET failure"
@@ -612,7 +639,8 @@
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     (signal 'error '("HTTP 500")))))
-         (expect (org-canvas--conflict-check "items" "123" (point-marker))
+         (expect (org-canvas--conflict-check
+                  (org-canvas--conflict-request-from "items" "123" (point-marker)))
                  :to-be nil)))))
 
   (it "warns (does not silently swallow) on GET failure"
@@ -630,7 +658,8 @@
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     (signal 'error '("HTTP 500")))))
-         (org-canvas--conflict-check "items" "123" (point-marker))
+         (org-canvas--conflict-check
+          (org-canvas--conflict-request-from "items" "123" (point-marker)))
          (let ((warned nil))
            (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
              (when (string-match-p "Remote check.*failed"
@@ -671,8 +700,9 @@
        (re-search-forward "^\\* ")
        (org-back-to-heading)
        (with-mock-api
-         (org-canvas--conflict-check "items" "123" (point-marker) nil nil nil
-                                     "https://global/items/123")
+        (org-canvas--conflict-check
+         (org-canvas--conflict-request-from "items" "123" (point-marker) nil nil nil
+                                            "https://global/items/123"))
          (expect (cadr (car test-org-canvas-api-calls))
                  :to-equal "https://global/items/123"))))))
 
@@ -698,7 +728,8 @@
            (let ((data (list :title "Conflict Item" :canvas-id "456"
                              :pom (point-marker)))
                  (payload '((title . "Conflict Item"))))
-             (expect (org-canvas--push-to-api data payload :endpoint "items")
+             (expect (org-canvas--push-to-api data payload
+                                              (org-canvas--push-options :endpoint "items"))
                      :to-equal 'conflict)))))))
 
   (it "skips conflict check for POST (new items)"
@@ -708,7 +739,8 @@
               (data '(:title "New Item" :canvas-id nil))
               (payload '((title . "New Item"))))
           ;; POST should proceed without conflict check
-          (org-canvas--push-to-api data payload :endpoint "items")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "items"))
           (expect-api-called 'POST "items$")))))
 
   (it "skips conflict check (no GET) when detect-conflicts is nil"
@@ -731,7 +763,8 @@
                (data (list :title "Force Push" :canvas-id "789"
                            :pom (point-marker)))
                (payload '((title . "Force Push"))))
-           (org-canvas--push-to-api data payload :endpoint "items")
+           (org-canvas--push-to-api data payload
+                                    (org-canvas--push-options :endpoint "items"))
            (expect-api-called 'PUT "items/789")
            (expect (test-org-canvas-api-called-p 'GET "items") :to-be nil))))))
 
@@ -745,7 +778,8 @@
                      (setq api-called t))))
           (let ((data '(:title "Dry Run" :canvas-id "123"))
                 (payload '((title . "Dry Run"))))
-            (org-canvas--push-to-api data payload :endpoint "items")
+            (org-canvas--push-to-api data payload
+                                     (org-canvas--push-options :endpoint "items"))
             (expect api-called :to-be nil)))))))
 
 (describe "org-canvas--404-on-put-p"
@@ -817,7 +851,8 @@
            (let ((data (list :title "Push Item" :canvas-id "789"
                              :pom (point-marker)))
                  (payload '((title . "Push Item"))))
-             (org-canvas--push-to-api data payload :endpoint "items")
+             (org-canvas--push-to-api data payload
+                                      (org-canvas--push-options :endpoint "items"))
              (expect put-called :to-be-truthy)))))))
 
   (it "returns pulled when user chooses pull"
@@ -842,7 +877,8 @@
            (let ((data (list :title "Pull Item" :canvas-id "111"
                              :pom (point-marker)))
                  (payload '((title . "Pull Item"))))
-             (expect (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)
+             (expect (org-canvas--push-to-api data payload
+                                              (org-canvas--push-options :endpoint "items" :ctx ctx))
                      :to-equal 'pulled)))))))
 
   (it "falls back to conflict when pull chosen but no pull-fn"
@@ -866,7 +902,8 @@
            (let ((data (list :title "No Pull" :canvas-id "222"
                              :pom (point-marker)))
                  (payload '((title . "No Pull"))))
-             (expect (org-canvas--push-to-api data payload :endpoint "items")
+             (expect (org-canvas--push-to-api data payload
+                                              (org-canvas--push-options :endpoint "items"))
                      :to-equal 'conflict))))))))
 
 ;;; org-canvas-core-test.el ends here
@@ -888,7 +925,8 @@
                        '((id . 42) (title . "New Item"))))))
           (let ((data '(:title "New Item" :canvas-id nil))
                 (payload '((title . "New Item"))))
-            (let ((result (org-canvas--push-to-api data payload :endpoint "assignments")))
+            (let ((result (org-canvas--push-to-api data payload
+                                                   (org-canvas--push-options :endpoint "assignments"))))
               (expect (alist-get 'id result) :to-equal 42)
               (expect call-count :to-equal 2)))))))
 
@@ -908,7 +946,8 @@
                        '((id . 100) (title . "Updated"))))))
           (let ((data '(:title "Updated" :canvas-id "100"))
                 (payload '((title . "Updated"))))
-            (let ((result (org-canvas--push-to-api data payload :endpoint "assignments")))
+            (let ((result (org-canvas--push-to-api data payload
+                                                   (org-canvas--push-options :endpoint "assignments"))))
               (expect (alist-get 'id result) :to-equal 100)
               (expect call-count :to-equal 2))))))))
 
@@ -1375,7 +1414,8 @@ Returns (RESULT . WARNINGS)."
                     (lambda (_logger fmt &rest args)
                       (push (apply #'format fmt args) warnings))))
            ;; A bare position, which used to print nil for the header.
-           (setq result (org-canvas--conflict-check "assignments" "61" (point) title)))
+           (setq result (org-canvas--conflict-check
+                         (org-canvas--conflict-request-from "assignments" "61" (point) title))))
          (cons result warnings)))))
 
   (it "names the entry and the CANVAS_UPDATED_AT it compared, not the file header"
@@ -1622,7 +1662,8 @@ Returns (RESULT . WARNINGS)."
                    (org-canvas-duplicate-title-strategy 'skip)
                    (data (list :title "R11" :canvas-id nil :pom (point-marker)))
                    (result (org-canvas--push-to-api data '((name . "R11"))
-                                                    :endpoint "assignments" :ctx ctx)))
+                                                    (org-canvas--push-options
+                                                     :endpoint "assignments" :ctx ctx))))
               (expect result :to-equal 'duplicate)
               (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be nil)))))))
 
@@ -1639,7 +1680,8 @@ Returns (RESULT . WARNINGS)."
                    (org-canvas-duplicate-title-strategy 'adopt)
                    (data (list :title "R11" :canvas-id nil :pom (point-marker))))
               (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-                (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments" :ctx ctx))
+                (org-canvas--push-to-api data '((name . "R11"))
+                                         (org-canvas--push-options :endpoint "assignments" :ctx ctx)))
               (expect (test-org-canvas-api-called-p 'PUT "assignments/2563810") :to-be-truthy)
               (expect (test-org-canvas-api-called-p 'POST "assignments$") :to-be nil)
               (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810")))))))
@@ -1652,7 +1694,8 @@ Returns (RESULT . WARNINGS)."
           (let* ((ctx (org-canvas--sync-make-ctx :remote-titles (make-hash-table :test 'equal)))
                  (org-canvas-duplicate-title-strategy nil)
                  (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-            (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments" :ctx ctx)
+            (org-canvas--push-to-api data '((name . "R11"))
+                                     (org-canvas--push-options :endpoint "assignments" :ctx ctx))
             (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be-truthy))))))
 
   (it "leaves a dry run alone"
@@ -1666,7 +1709,8 @@ Returns (RESULT . WARNINGS)."
                    (ctx (org-canvas--sync-make-ctx :remote-titles titles))
                    (org-canvas-duplicate-title-strategy 'adopt)
                    (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-              (expect (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments" :ctx ctx)
+              (expect (org-canvas--push-to-api data '((name . "R11"))
+                                               (org-canvas--push-options :endpoint "assignments" :ctx ctx))
                       :to-equal org-canvas--dry-run-response)
               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
               (expect (test-org-canvas-api-call-count) :to-equal 0))))))))
@@ -1717,8 +1761,9 @@ Returns (RESULT . WARNINGS)."
                      '((id . 31495932)
                        (updated_at . "2026-09-01T12:12:24Z")
                        (modified_at . "2026-08-31T18:34:37Z")))))
-          (expect (org-canvas--conflict-check "files" "31495932" (point)
-                                              "syllabus.pdf" 'modified_at)
+          (expect (org-canvas--conflict-check
+                   (org-canvas--conflict-request-from "files" "31495932" (point)
+                                                      "syllabus.pdf" 'modified_at))
                   :to-be nil)))))
 
   (it "still flags a real content change, naming the field it compared"
@@ -1734,8 +1779,9 @@ Returns (RESULT . WARNINGS)."
                     ((symbol-function 'org-canvas--log-warning)
                      (lambda (_l fmt &rest args)
                        (push (apply #'format fmt args) warnings))))
-            (expect (car (org-canvas--conflict-check "files" "31495932" (point)
-                                                     "syllabus.pdf" 'modified_at))
+            (expect (car (org-canvas--conflict-check
+                          (org-canvas--conflict-request-from "files" "31495932" (point)
+                                                             "syllabus.pdf" 'modified_at)))
                     :to-equal 'conflict))
           (expect (car warnings)
                   :to-equal "[Conflict] 'syllabus.pdf': remote modified_at 2026-09-01T09:00:00Z is newer than CANVAS_UPDATED_AT 2026-08-31T18:34:37Z"))))))
@@ -1810,9 +1856,10 @@ Returns (RESULT . WARNINGS)."
                      (lambda (_l fmt &rest args)
                        (push (apply #'format fmt args) infos))))
             (expect (org-canvas--conflict-check
-                     "assignments" "61" (point) "Column" nil nil nil
-                     (lambda (item)
-                       (list (cons "unlock_at" (alist-get 'unlock_at item)))))
+                     (org-canvas--conflict-request-from
+                      "assignments" "61" (point) "Column" nil nil nil
+                      (lambda (item)
+                        (list (cons "unlock_at" (alist-get 'unlock_at item))))))
                     :to-be nil))
           (expect (car infos)
                   :to-equal "[Conflict] 'Column': remote updated_at 2026-10-05T14:10:05Z is newer than CANVAS_UPDATED_AT 2026-10-05T13:04:21Z, but it follows unlock_at 2026-10-05T14:10:00Z, a bump Canvas makes itself; not a conflict")))))
@@ -1823,7 +1870,8 @@ Returns (RESULT . WARNINGS)."
         (org-back-to-heading)
         (cl-letf (((symbol-function 'org-canvas-api-request) #'test-453--reply))
           (expect (car (org-canvas--conflict-check
-                        "assignments" "61" (point) "Column"))
+                        (org-canvas--conflict-request-from
+                         "assignments" "61" (point) "Column")))
                   :to-equal 'conflict)))))
 
   (it "keeps the conflict, with a warning, when the dates cannot be read"
@@ -1836,8 +1884,9 @@ Returns (RESULT . WARNINGS)."
                      (lambda (_l fmt &rest args)
                        (push (apply #'format fmt args) warnings))))
             (expect (car (org-canvas--conflict-check
-                          "assignments" "61" (point) "Column" nil nil nil
-                          (lambda (_item) (error "HTTP 500"))))
+                          (org-canvas--conflict-request-from
+                           "assignments" "61" (point) "Column" nil nil nil
+                           (lambda (_item) (error "HTTP 500")))))
                     :to-equal 'conflict))
           (expect (cl-some (lambda (w)
                              (string-match-p "Could not read the scheduled dates of 'Column' (HTTP 500)" w))
@@ -1880,8 +1929,9 @@ Returns (RESULT . WARNINGS)."
             (org-canvas--push-to-api
              (list :title "Column" :canvas-id "61" :pom (point-marker))
              '((name . "Column"))
-             :endpoint "widgets"
-             :ctx (org-canvas--sync-make-ctx :feature-name "widgets")))
+             (org-canvas--push-options
+              :endpoint "widgets"
+              :ctx (org-canvas--sync-make-ctx :feature-name "widgets"))))
           (expect (mapcar #'car (reverse calls)) :to-equal '(GET PUT)))))))
 
 (describe "org-canvas--finalize-item :updated-field (issue #94)"
@@ -1892,7 +1942,8 @@ Returns (RESULT . WARNINGS)."
        (list :title "syllabus.pdf" :pom (point))
        '((id . 31495932) (updated_at . "2026-09-01T12:12:24Z")
          (modified_at . "2026-08-31T18:34:37Z"))
-       :updated-field 'modified_at)
+       (org-canvas--finalize-options
+        :updated-field 'modified_at))
       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
               :to-equal "2026-08-31T18:34:37Z"))))
 
@@ -2277,7 +2328,8 @@ Returns (RESULT . WARNINGS)."
                     (t '((id . 900) (title . "Stale")))))))
         (let ((result (org-canvas--push-to-api
                        '(:title "Stale" :canvas-id "999") '((title . "Stale"))
-                       :endpoint "pages" :find-fn find-fn :put-url-fn put-url-fn)))
+                       (org-canvas--push-options
+                        :endpoint "pages" :find-fn find-fn :put-url-fn put-url-fn))))
           (cons result requests)))))
 
   (it "updates the item Canvas holds under the title instead of POSTing"

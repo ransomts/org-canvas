@@ -232,8 +232,10 @@
 (describe "an EX score in a ruling (issue #501)"
   (it "excuses the listed students, beside rows a grading rubric totals"
     (with-sgr-file "#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true\n"
-      (let ((result (org-canvas-submissions-apply-ruling nil '(5001 5003) :score "ex"
-                                                         :note "Called off.")))
+      (let ((result (org-canvas-submissions-apply-ruling
+                     nil '(5001 5003)
+                     (org-canvas-submissions-ruling
+                      :score "ex" :note "Called off."))))
         (expect (test-sgr--ids (plist-get result :changed)) :to-equal '("5001" "5003"))
         (expect (plist-get result :skipped) :to-be nil)
         (expect (test-sgr--prop "5001" "SCORE") :to-equal "EX")
@@ -245,7 +247,8 @@
         (with-temp-file in (insert "{\"user_ids\": [5002], \"score\": \"EX\"}"))
         (org-canvas-submissions-apply-ruling-json "HW" in)
         (expect (test-sgr--prop "5002" "SCORE") :to-equal "EX")
-        (expect (org-canvas-submissions-apply-ruling "HW" '(1) :score "zero")
+        (expect (org-canvas-submissions-apply-ruling
+                 "HW" '(1) (org-canvas-submissions-ruling :score "zero"))
                 :to-throw 'user-error)))))
 
 ;;;; Importing grades

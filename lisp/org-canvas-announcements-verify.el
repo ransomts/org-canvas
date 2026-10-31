@@ -204,10 +204,11 @@ A heading that cannot be found or read is a result naming the
 error, so the next heading is still verified."
   (condition-case err
       (let ((marker (org-canvas--sync-find-heading
-                     :file org-canvas-announcements-file :query "LEVEL=1"
-                     :target (nth 1 entry) :by (nth 2 entry)
-                     :id-property "CANVAS_ID"
-                     :feature (plist-get feature :name) :verb "verify")))
+                     (org-canvas--heading-query
+                      :file org-canvas-announcements-file :query "LEVEL=1"
+                      :target (nth 1 entry) :by (nth 2 entry)
+                      :id-property "CANVAS_ID"
+                      :feature (plist-get feature :name) :verb "verify"))))
         (with-current-buffer (marker-buffer marker)
           (save-excursion
             (goto-char marker)

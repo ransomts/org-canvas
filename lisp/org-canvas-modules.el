@@ -482,9 +482,29 @@ when available."
      ;; No link resolved — return nil to signal wrapper should classify
      (t nil))))
 
-(cl-defun org-canvas--module-classify-unlinked-heading
-    (&key heading-with-links raw-heading canvas-id indent published pom
-          published-specified)
+(cl-defstruct (org-canvas--module-heading-context (:copier nil)
+               (:constructor org-canvas--module-heading-context))
+  "The authoring state a module item heading carries into its parse result.
+CANVAS-ID is the item's existing Canvas id, INDENT the module nesting
+the heading sits at, PUBLISHED its published state, and
+PUBLISHED-SPECIFIED whether the heading said so at all; POM marks where
+the heading sits.  Every slot but POM is read from the heading's
+properties, so they arrive together and leave together."
+  canvas-id indent published published-specified pom)
+
+(defun org-canvas--module-heading-context-from-raw (raw pom)
+  "Return the `org-canvas--module-heading-context' that RAW and POM describe.
+RAW is the heading's raw property plist, as
+`org-canvas--module-item-read-props' reads it."
+  (org-canvas--module-heading-context
+   :canvas-id (plist-get raw :canvas-id)
+   :indent (org-canvas--interpret-number (plist-get raw :indent-raw) 0)
+   :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+   :published-specified (and (plist-get raw :published-raw) t)
+   :pom pom))
+
+(defun org-canvas--module-classify-unlinked-heading
+    (heading-with-links raw-heading context)
   "Classify a module item heading whose link could not be fully resolved.
 Distinguishes two cases:
   1. Heading contains a [[file:...]] link but the target has no CANVAS_ID
@@ -492,9 +512,9 @@ Distinguishes two cases:
      and nil :content-id so `sync-items' skips it.
   2. Heading is genuinely plain text — returns a SubHeader plist.
 HEADING-WITH-LINKS is the raw buffer text (from `org-complex-heading-regexp'
-group 4), RAW-HEADING is from `org-get-heading'.  CANVAS-ID, INDENT,
-PUBLISHED, POM, and PUBLISHED-SPECIFIED are passed through to the
-returned plist.  Every argument is a keyword."
+group 4), RAW-HEADING is from `org-get-heading', and CONTEXT is the
+heading's `org-canvas--module-heading-context', whose fields are passed
+through to the returned plist."
   (let* ((link-src (or heading-with-links raw-heading))
          (link-file (when (and link-src
                                (string-match "\\[\\[file:\\([^]:]+\\)" link-src))
@@ -503,29 +523,22 @@ returned plist.  Every argument is a keyword."
                       (org-canvas--module-item-type-from-file link-file)))
          (link-title (when (and link-file
                                 (string-match "\\]\\[\\([^]]+\\)\\]\\]$" link-src))
-                       (match-string 1 link-src)))
-         (result (if link-file
-                     (list :type link-type
-                           :title (or link-title raw-heading)
-                           :canvas-id canvas-id
-                           :indent indent
-                           :published published
-                           :published-specified published-specified
-                           :pom pom)
-                   (list :type "SubHeader"
-                         :title raw-heading
-                         :canvas-id canvas-id
-                         :indent indent
-                         :published published
-                         :published-specified published-specified
-                         :pom pom))))
+                       (match-string 1 link-src))))
     (if link-file
         (org-canvas--log-warning org-canvas--logger
           "[Stage 1: Parse] Unresolved link: '%s' (type: %s)"
           (or link-title raw-heading) link-type)
       (org-canvas--log-info org-canvas--logger
         "[Stage 1: Parse] Processing SubHeader: '%s'" raw-heading))
-    result))
+    (append
+     (list :type (if link-file link-type "SubHeader")
+           :title (or link-title raw-heading))
+     (list :canvas-id (org-canvas--module-heading-context-canvas-id context)
+           :indent (org-canvas--module-heading-context-indent context)
+           :published (org-canvas--module-heading-context-published context)
+           :published-specified
+           (org-canvas--module-heading-context-published-specified context)
+           :pom (org-canvas--module-heading-context-pom context)))))
 
 (defun org-canvas--module-item-parse-entry (modules-file-dir)
   "Extract module item data from the Org heading at point (level 2).
@@ -552,19 +565,10 @@ MODULES-FILE-DIR is used to resolve relative file links."
       data)
      ;; No link resolved — classify as SubHeader or unresolved link
      (t
-      (let ((result (org-canvas--module-classify-unlinked-heading
-                     :heading-with-links (plist-get raw :heading-with-links)
-                     :raw-heading (org-canvas--strip-statistics-cookie
-                                   (plist-get raw :title-raw))
-                     :canvas-id (plist-get raw :canvas-id)
-                     :indent (org-canvas--interpret-number
-                              (plist-get raw :indent-raw) 0)
-                     :published (org-canvas--interpret-boolean
-                                 (plist-get raw :published-raw) t)
-                     :pom pom
-                     :published-specified
-                     (and (plist-get raw :published-raw) t))))
-        result)))))
+      (org-canvas--module-classify-unlinked-heading
+       (plist-get raw :heading-with-links)
+       (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+       (org-canvas--module-heading-context-from-raw raw pom))))))
 
 ;;;; 2. Stage: Transformation - Module
 
@@ -707,9 +711,10 @@ minimum score; nil when DATA has no :completion-requirement."
 (defun org-canvas--module-push-to-api (data payload &optional ctx)
   "Send module PAYLOAD to Canvas API based on DATA in run context CTX."
   (org-canvas--push-to-api data payload
-    :ctx ctx
-    :endpoint "modules"
-    :find-fn #'org-canvas--module-search-by-name))
+                           (org-canvas--push-options
+                            :ctx ctx
+                            :endpoint "modules"
+                            :find-fn #'org-canvas--module-search-by-name)))
 
 ;;;; 3. Stage: Execution - Module Item
 
@@ -811,7 +816,11 @@ the flag PUT after the create (`org-canvas--module-item-ensure-published')."
 
            ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
            ((org-canvas--404-on-put-p err method)
-            (org-canvas--handle-404-retry base-endpoint payload find-fn title err))
+            (org-canvas--handle-404-retry
+             payload
+             (org-canvas--push-options :endpoint base-endpoint
+                                       :find-fn find-fn)
+             title))
 
            ;; Default: Re-throw
            (t (signal (car err) (cdr err))))))))))
@@ -831,8 +840,9 @@ CTX is the run context the items record their moves and skips in."
 (defun org-canvas--module-finalize (data response &optional ctx)
   "Finalize module sync for DATA/RESPONSE in run context CTX; sync child items."
   (org-canvas--finalize-item data response
-    :ctx ctx
-    :post-fn #'org-canvas--module-sync-children))
+                             (org-canvas--finalize-options
+                              :ctx ctx
+                              :post-fn #'org-canvas--module-sync-children)))
 
 (defun org-canvas--module-item-finalize (data response)
   "Save the id RESPONSE returned for the module item DATA.
@@ -2350,7 +2360,9 @@ ITEM lacks an `items' key."
                                 (org-canvas--module-pull-insert-items items))))))
       ;; A module Canvas deleted is marked, never an item (#399).
       (setq unlisted (org-canvas--pull-mark-unlisted
-                      file "modules" remote 'id "CANVAS_ID"))
+                      (org-canvas--pull-gone-request
+                       :file file :feature "modules" :remote remote
+                       :id-field 'id :id-property "CANVAS_ID")))
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)

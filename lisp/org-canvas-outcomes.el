@@ -420,12 +420,14 @@ its id is gone and no twin carries the title."
 (defun org-canvas--outcome-group-finalize (data response &optional ctx)
   "Update local Org file with group CANVAS_ID using DATA and RESPONSE.
 CTX is the run context."
-  (org-canvas--finalize-item data response :ctx ctx))
+  (org-canvas--finalize-item data response
+                             (org-canvas--finalize-options :ctx ctx)))
 
 (defun org-canvas--outcome-finalize (data response &optional ctx)
   "Update local Org file with outcome CANVAS_ID using DATA and RESPONSE.
 CTX is the run context."
-  (org-canvas--finalize-item data response :ctx ctx))
+  (org-canvas--finalize-item data response
+                             (org-canvas--finalize-options :ctx ctx)))
 
 ;;;; Sync Commands
 
@@ -498,9 +500,10 @@ Warning: This will remove all learning outcomes from the course."
                    (org-canvas--log-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
                    (org-canvas--delete-items-queued
                     subgroups
-                    (lambda (item-id)
-                      (org-canvas-api-course-endpoint "outcome_groups/%s" item-id))
-                    'id 'title)))
+                    (org-canvas--delete-all-options
+                     :url-fn (lambda (item-id)
+                               (org-canvas-api-course-endpoint
+                                "outcome_groups/%s" item-id))))))
          (deleted-groups (car result)))
 
     ;; Keep the stamps of a group still on Canvas and its outcomes (#324)
@@ -609,7 +612,10 @@ Point must be at the parent group heading."
         ;; outcome missing from its group's list may be unlinked, not
         ;; deleted (#399).
         (setq unlisted (org-canvas--pull-mark-unlisted
-                        file "outcomes" remote-groups 'id "CANVAS_ID" "LEVEL=1"))
+                        (org-canvas--pull-gone-request
+                         :file file :feature "outcomes" :remote remote-groups
+                         :id-field 'id :id-property "CANVAS_ID"
+                         :query "LEVEL=1")))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)

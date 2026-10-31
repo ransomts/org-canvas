@@ -75,7 +75,7 @@
      (org-back-to-heading)
      (let ((result (org-canvas--diff-entry
                     (list :id "61" :title "Lab 1" :pom (point))
-                    (make-hash-table :test 'equal) nil)))
+                    (make-hash-table :test 'equal) (org-canvas--diff-options))))
        (expect (plist-get result :kind) :to-equal 'missing))))
 
   (it "ignores a heading that has never been synced"
@@ -84,7 +84,7 @@
      (org-back-to-heading)
      (expect (org-canvas--diff-entry
               (list :id nil :title "Lab 1" :pom (point))
-              (make-hash-table :test 'equal) nil)
+              (make-hash-table :test 'equal) (org-canvas--diff-options))
              :to-be nil)))
 
   (it "reports a field difference"
@@ -101,8 +101,9 @@
        (let ((result (org-canvas--diff-entry
                       (list :id "61" :title "Lab 1" :pom (point))
                       index
-                      '((:org-prop "POINTS" :data-key :points_possible
-                         :type number)))))
+                      (org-canvas--diff-options
+                       :specs '((:org-prop "POINTS" :data-key :points_possible
+                                 :type number))))))
          (expect (plist-get result :kind) :to-equal 'modified)
          (expect (plist-get result :fields) :to-equal '(("POINTS" "10" "25")))))))
 
@@ -120,7 +121,9 @@
        (expect (org-canvas--diff-entry
                 (list :id "61" :title "Lab 1" :pom (point))
                 index
-                '((:org-prop "POINTS" :data-key :points_possible :type number)))
+                (org-canvas--diff-options
+                 :specs '((:org-prop "POINTS" :data-key :points_possible
+                           :type number))))
                :to-be nil)))))
 
 (describe "org-canvas--diff-feature"
@@ -258,8 +261,10 @@
       (let ((index (make-hash-table :test 'equal)))
         (puthash "61" '((id . 61) (description . "<p>New prompt typed in the web UI.</p>"))
                  index)
-        (let ((d (org-canvas--diff-entry (list :id "61" :title "Lab 1" :pom (point-marker))
-                                         index nil '(:body-api-key "description"))))
+        (let ((d (org-canvas--diff-entry
+                  (list :id "61" :title "Lab 1" :pom (point-marker))
+                  index (org-canvas--diff-options
+                         :props '(:body-api-key "description")))))
           (expect (plist-get d :kind) :to-equal 'modified)
           (expect (plist-get d :body-compared) :to-be t)
           (expect (car (car (plist-get d :fields))) :to-equal "DESCRIPTION")))))
@@ -269,8 +274,10 @@
       (org-back-to-heading)
       (let ((index (make-hash-table :test 'equal)))
         (puthash "61" '((id . 61) (description . "<div><p>Same.</p></div>")) index)
-        (expect (org-canvas--diff-entry (list :id "61" :title "Lab 1" :pom (point-marker))
-                                        index nil '(:body-api-key "description"))
+        (expect (org-canvas--diff-entry
+                 (list :id "61" :title "Lab 1" :pom (point-marker))
+                 index (org-canvas--diff-options
+                        :props '(:body-api-key "description")))
                 :to-be nil)))))
 
 (describe "org-canvas--diff-pair-unclaimed (issue #85)"
@@ -519,7 +526,8 @@ The remote updated_at is always newer than the baseline."
                         (html_url . "https://canvas.test/courses/42/assignments/61")))
                      'id))
              (entry (org-canvas--diff-entry
-                     (list :id "61" :title "Essay" :pom (point-marker)) index nil)))
+                     (list :id "61" :title "Essay" :pom (point-marker))
+                     index (org-canvas--diff-options))))
         (expect (plist-get entry :kind) :to-be 'modified)
         (expect (plist-get entry :html-url)
                 :to-equal "https://canvas.test/courses/42/assignments/61")))))
@@ -940,7 +948,9 @@ Returns the result and whether the file's buffer was left modified."
      (org-back-to-heading)
      (let* ((entry (append (org-canvas--diff-local-entry "CANVAS_ID")
                            (list :pom (point-marker))))
-            (row (org-canvas--diff-entry entry (make-hash-table :test 'equal) nil)))
+            (row (org-canvas--diff-entry
+                  entry (make-hash-table :test 'equal)
+                  (org-canvas--diff-options))))
        (with-temp-buffer
          (org-canvas--diff-insert-entry row)
          (expect (buffer-string) :to-match

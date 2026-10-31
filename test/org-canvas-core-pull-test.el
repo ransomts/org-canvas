@@ -1573,13 +1573,20 @@ text
       (let ((pos (point))
             (item '((flag . t) (when . "2026-03-01T12:00:00Z") (count . 4)
                     (zero . 0) (label . "x") (missing . :null))))
-        (org-canvas--pull-item-set-property pos 'flag "COV_FLAG" 'boolean item)
-        (org-canvas--pull-item-set-property pos 'when "COV_WHEN" 'timestamp item)
-        (org-canvas--pull-item-set-property pos 'count "COV_COUNT" 'number item)
-        (org-canvas--pull-item-set-property pos 'zero "COV_ZERO" 'number item)
-        (org-canvas--pull-item-set-property pos 'label "COV_LABEL" 'non-null item)
-        (org-canvas--pull-item-set-property pos 'missing "COV_MISSING" 'non-null item)
-        (org-canvas--pull-item-set-property pos 'label "COV_STRING" 'string item)
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key flag :org-prop "COV_FLAG" :type boolean))
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key when :org-prop "COV_WHEN" :type timestamp))
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key count :org-prop "COV_COUNT" :type number))
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key zero :org-prop "COV_ZERO" :type number))
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key label :org-prop "COV_LABEL" :type non-null))
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key missing :org-prop "COV_MISSING" :type non-null))
+        (org-canvas--pull-item-set-property
+         pos item '(:data-key label :org-prop "COV_STRING" :type string))
         (expect (org-entry-get pos "COV_FLAG") :to-equal "true")
         (expect (org-entry-get pos "COV_WHEN") :to-match "2026-03-0[12]")
         (expect (org-entry-get pos "COV_COUNT") :to-equal "4")
@@ -2290,7 +2297,9 @@ line as `closing' and the single-item URLs read as `reads'."
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) (error "Must not read"))))
         (expect (org-canvas--pull-mark-unlisted
-                 "x.org" "no-such-feature" nil 'id "CANVAS_ID")
+                 (org-canvas--pull-gone-request
+                  :file "x.org" :feature "no-such-feature"
+                  :remote nil :id-field 'id :id-property "CANVAS_ID"))
                 :to-equal '(:gone nil :kept nil)))))
 
   (it "marks a level-2 assignment group and never a container or a child"
@@ -2300,8 +2309,10 @@ line as `closing' and the single-item URLs read as `reads'."
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    #'test-org-canvas-gone--request))
           (let ((result (org-canvas--pull-mark-unlisted
-                         "assignment-groups.org" "assignment-groups" nil
-                         'id "CANVAS_ID")))
+                         (org-canvas--pull-gone-request
+                          :file "assignment-groups.org"
+                          :feature "assignment-groups"
+                          :remote nil :id-field 'id :id-property "CANVAS_ID"))))
             (expect (mapcar #'car (plist-get result :gone)) :to-equal '("Labs"))
             (expect (org-entry-get (point-min) "CANVAS_DELETED") :to-be nil)
             (goto-char (point-min))
@@ -2317,8 +2328,10 @@ line as `closing' and the single-item URLs read as `reads'."
                        (push url urls)
                        (signal 'org-canvas-api-error (list "Gone (HTTP 404)")))))
             (org-canvas--pull-mark-unlisted
-             "pages.org" "pages" '(((url . "front") (front_page . t)))
-             'url "CANVAS_URL")
+             (org-canvas--pull-gone-request
+              :file "pages.org" :feature "pages"
+              :remote '(((url . "front") (front_page . t)))
+              :id-field 'url :id-property "CANVAS_URL"))
             (expect (car urls) :to-match "/pages/old-page\\'")
             (expect (org-entry-get (point-min) "CANVAS_DELETED") :to-be-truthy)))))))
 

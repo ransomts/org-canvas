@@ -976,8 +976,12 @@ Drop by.
                                                  (updated_at
                                                   . "2026-09-02T14:07:34Z")))))
           (org-canvas--finalize-restamp-updated
-           (point-marker) "calendar_events" "1477911" nil "Break"
-           (org-canvas--sync-make-ctx :feature-name "Calendar Events"))
+           (org-canvas--restamp-options
+            :pom (point-marker)
+            :endpoint "calendar_events"
+            :id "1477911"
+            :title "Break"
+            :ctx (org-canvas--sync-make-ctx :feature-name "Calendar Events")))
           (expect (cadr (car test-org-canvas-api-calls)) :to-equal
                   (concat org-canvas-base-url
                           "/api/v1/calendar_events/1477911"))
