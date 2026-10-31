@@ -15,6 +15,8 @@ gha-creds-*.json
 /lisp/org-canvas.log
 */org-canvas.log
 /test/contract/instance-schema.graphql
+# The mutation harness imports mutate.py with Python's bytecode cache on
+__pycache__/
 
 # Claude Code: per-user settings and agent worktrees stay local
 .claude/settings.local.json
