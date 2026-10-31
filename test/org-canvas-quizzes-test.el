@@ -4012,7 +4012,10 @@ What is 2+2?
                                           &rest _args)
   "Stand in for pandoc on the region START to END.
 Renders <hN> as an Org headline with the drawer pandoc writes under
-it, and <p> as a paragraph; the rest is left as it is."
+it, and <p> as a paragraph; the rest is left as it is.
+The arguments are `call-process-region`'s, not ours to bundle: the
+stand-in is called wherever pandoc would be, so it takes that list as
+it comes (issue #599)."
   (let ((html (buffer-substring-no-properties start end)))
     (delete-region start end)
     (insert html)

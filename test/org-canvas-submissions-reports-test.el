@@ -33,7 +33,10 @@ The symbol `refused' makes that column's read fail.")
 
 (defun test-preports--report (type progress &optional result attachment code resubmit)
   "Return a report node of TYPE at PROGRESS with RESULT on ATTACHMENT.
-CODE is its error code, RESUBMIT non-nil its resubmitAvailable."
+CODE is its error code, RESUBMIT non-nil its resubmitAvailable.
+Positional is right: the six are the node's own fields and no other
+reply is built from the same parts, so a bundle would be a second
+spelling of the list it is (issue #599)."
   `((reportType . ,type) (processingProgress . ,progress)
     (result . ,(or result :null)) (errorCode . ,(or code :null))
     (resubmitAvailable . ,(if resubmit t :json-false))
@@ -44,7 +47,10 @@ CODE is its error code, RESUBMIT non-nil its resubmitAvailable."
 (defun test-preports--submission (uid name sections files reports &optional attempt)
   "Return a submission node for UID NAME in SECTIONS with FILES and REPORTS.
 FILES are (ID . DISPLAY-NAME) pairs; nil FILES and nil REPORTS with a
-nil ATTEMPT is a row nothing was handed in on."
+nil ATTEMPT is a row nothing was handed in on.
+Positional is right: the five are the node's own fields, and the calls
+that vary ATTEMPT alone read as the row with one more word on the end
+(issue #599)."
   `((userId . ,uid) (attempt . ,(or attempt 1))
     (submittedAt . ,(if (or files reports) "2026-09-20T16:00:00Z" :null))
     (attachments . ,(vconcat (mapcar (lambda (f) `((_id . ,(car f))

@@ -896,6 +896,11 @@ checked when the allowlist is empty or absent (issue #550)."
 
 (cl-defun org-canvas-api-request (method url &key params data timeout as)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
+The four options stay keywords rather than becoming a bundle struct:
+`&key' is the language's own bundle, a caller names only the options it
+sends, and the four are independent — where the item lives, what it
+carries, how long to wait and what to return are not one thing.  #592
+bundled positional tails; this tail was never positional (issue #599).
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
 URL is the full endpoint.
 PARAMS is an alist of query parameters.

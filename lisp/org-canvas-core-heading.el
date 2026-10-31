@@ -44,16 +44,18 @@ to run the command at point instead."
 
 ;;;; 9. Push-at-Point Infrastructure
 
-(defun org-canvas--push-at-point-finalize
-    (finalize-fn data response ctx payload-hash title)
+(defun org-canvas--push-at-point-finalize (data response ctx payload-hash title)
   "Finalize the push at point of TITLE and stamp its heading.
-FINALIZE-FN is called with DATA, RESPONSE and CTX; PAYLOAD-HASH, when
+CTX's :finalize-fn, the spec's finalize stage, is called with DATA,
+RESPONSE and CTX: the full run reads that stage from the run context
+too, so the two runtimes carry their pipeline in the same place rather
+than one passing it beside the context (issue #599).  PAYLOAD-HASH, when
 non-nil, is stored on the heading and the buffer saved.  An error in
 stamping is logged as a push that landed, then re-signalled."
   (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
   (condition-case err
       (progn
-        (funcall finalize-fn data response ctx)
+        (funcall (org-canvas--ctx-get ctx :finalize-fn) data response ctx)
         (when payload-hash
           (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
         (org-canvas--sync-advance-header-from-entry)
@@ -105,6 +107,7 @@ to every later push at point (issue #141)."
                 (org-canvas--log-info org-canvas--logger
                                       ">>> SYNC-AT-POINT: %s" feature-name)
                 (org-canvas--sync-make-ctx :feature-name feature-name
+                                           :finalize-fn finalize-fn
                                            :pull-item-fn pull-item-fn
                                            :hash-extra-fn hash-extra-fn
                                            :hash-fn (plist-get spec :hash))))
@@ -150,7 +153,7 @@ to every later push at point (issue #141)."
           (message "%s '%s' would be pushed (dry run)." (capitalize feature-name) title))
          (t
           (org-canvas--push-at-point-finalize
-           finalize-fn data response ctx payload-hash title)
+           data response ctx payload-hash title)
           (plist-put ctx :outcome 'synced)
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
           (message "%s '%s' synced." (capitalize feature-name) title)))))
