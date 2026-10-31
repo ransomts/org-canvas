@@ -142,12 +142,21 @@ documents it (issue #589)."
     (point)))
 
 (defun org-canvas--complexity-count-params (arglist)
-  "Count the number of required + optional parameters in ARGLIST.
-Excludes &rest, &optional, &key keywords themselves but counts their arguments."
-  (let ((count 0))
+  "Count ARGLIST's required and optional parameters.
+`&key' is the language's own bundle, not a positional tail: the names
+after it are keywords a caller names one at a time, so a `cl-defun'
+taking two arguments and four keywords has arity two (issue #606).
+The same goes for `&aux', which binds in the body rather than at the
+call, and for the tail name after `&rest' or `&body'."
+  (let ((count 0) (tail nil) (bundled nil))
     (dolist (arg (if (listp arglist) arglist nil))
-      (unless (memq arg '(&optional &rest &key &allow-other-keys &body))
-        (setq count (1+ count))))
+      (cond
+       (bundled)
+       (tail (setq tail nil))
+       ((memq arg '(&key &aux &allow-other-keys)) (setq bundled t))
+       ((memq arg '(&rest &body)) (setq tail t))
+       ((eq arg '&optional))
+       (t (setq count (1+ count)))))
     count))
 
 (defun org-canvas--complexity-analyze-file (file)

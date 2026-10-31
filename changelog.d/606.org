@@ -1,0 +1,6 @@
+* Fixed
+- #606 The complexity report's arity column counts a function's required
+  and optional parameters and stops at `&key' and `&aux', instead of
+  counting a keyword bundle as a positional tail.  `org-canvas-api-request',
+  which takes two arguments and four keywords, is no longer reported as
+  taking six.  No user-visible change.
