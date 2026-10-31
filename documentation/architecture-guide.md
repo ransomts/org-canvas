@@ -79,6 +79,7 @@ lisp/
 ├── org-canvas-grading-schemes.el   # Letter-grade schemes (custom push: compared and skipped, never PUT)
 ├── org-canvas-group-categories.el  # Group sets for group assignments/discussions
 ├── org-canvas-groups.el            # Pull-only groups and members within categories
+├── org-canvas-module-items.el      # A module's items: link resolution, item stages, cross-module moves, prune, pull insertion (sub-module of modules)
 ├── org-canvas-modules.el           # Course structure/navigation (child reconciler)
 ├── org-canvas-new-quizzes.el       # New Quizzes (pull-only registry entry, #297, #313)
 ├── org-canvas-outcomes.el          # Learning outcomes (two levels, :first and :prepare)
@@ -108,7 +109,7 @@ lisp/
 - The submissions module is split by concern (#570) into five halves that sit above it and are required by `org-canvas.el` after it: submissions-render, submissions-entry, submissions-comment-items, submissions-conflict and submissions-push. Each requires `org-canvas-submissions` (entry also submissions-uploads, push also submissions-verify) and none requires another half: a call across halves is a `declare-function`, and `org-canvas-submissions.el` never requires any of them
 - The files module is split the same way (#593) into two halves required by `org-canvas.el` after it: files-upload (the four-stage upload) and files-pull (rebuild files.org from Canvas). Each requires `org-canvas-files` back, never the other way, and neither requires the other: the sync in files.el declares the eight upload and pull functions it calls, so a file that downloads a conflict's winner and a file that uploads it stay one direction apart
 - batch.el sits above everything: it requires `org-canvas` itself (after putting the dependencies on `load-path`) and nothing requires it; a batch Emacs loads it with `-l` (#416)
-- diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
+- diff.el declares, never requires, the two module-items.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
 - `org-canvas-validate` and its check-family files are one command: `-content` and `-grading` require `-issue` for the shared finding vocabulary, and the engine requires all three; no feature module requires any of them
 
@@ -331,7 +332,7 @@ The topics, one per line:
 - the accommodations table sits below a quiz's own text and never reaches the description from any layout (#298)
 - the comment bank is a `* Comment Bank` section of the grading file, read before any create so an item Canvas holds is labelled rather than created twice, edits sided by a `CANVAS_COMMENT_BANK` baseline, never pruned, deleted only by `x` (#352)
 - the drift report compares each assignment's overrides table with the overrides its list carries (`include[]=overrides`, no extra request) in an Assignment Overrides section of `override` rows: EXTRA is what the next push of that heading deletes, `p` pulls the heading's table (#411)
-- the drift report pairs module items by content as the sync adopts them, declaring the modules.el parser rather than requiring it (#299)
+- the drift report pairs module items by content as the sync adopts them, declaring the module-items.el parser rather than requiring it (#299)
 - the grading queue counts rows, never columns (#283), and shows Canvas's mean and median beside the counts, one read for the course (#352)
 - the GraphQL documents are checked against the schema (#269)
 - the roster marks who left on Canvas's word and never on a misread list (#290)

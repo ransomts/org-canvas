@@ -27,10 +27,10 @@
 ;; readers; a New Quiz's items through New Quizzes' own sub-module.
 ;; Declared, never required: those are feature modules, and `org-canvas'
 ;; loads them.
-(declare-function org-canvas--module-item-parse-entry "org-canvas-modules"
-                  (modules-file-dir))
-(declare-function org-canvas--module-item-same-content-p "org-canvas-modules"
-                  (data item))
+(declare-function org-canvas--module-item-parse-entry
+                  "org-canvas-module-items" (modules-file-dir))
+(declare-function org-canvas--module-item-same-content-p
+                  "org-canvas-module-items" (data item))
 (declare-function org-canvas--new-quiz-api-endpoint "org-canvas-new-quiz-items"
                   (suffix &rest args))
 (declare-function org-canvas--new-quiz-item-twin-p "org-canvas-new-quiz-items"
