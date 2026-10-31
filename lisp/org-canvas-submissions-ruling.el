@@ -34,6 +34,13 @@
 (require 'org-canvas-submissions)
 (require 'org-canvas-submissions-comments)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-entry)
+(require 'org-canvas-submissions-comment-items)
+(require 'org-canvas-submissions-push)
+(require 'org-canvas-submissions-conflict)
+
 ;;;; The Ruling
 
 (defun org-canvas--submissions-ruling-empty-p (value)

@@ -874,5 +874,364 @@ Handles both Emacs 29 (transient 0.4) and Emacs 30 (transient 0.7+) layout forma
 ;; policy itself bind `org-canvas-time-zone' to nil.
 (setq org-canvas-time-zone "UTC")
 
+;;;; Submissions Fixtures
+;;
+;; Shared by the submissions test files, which were split along the
+;; module lines in issue #570.  A fixture used by more than one of
+;; them lives here.
+
+(defun test-org-canvas-make-user (&optional overrides)
+  "Build a mock Canvas user alist."
+  (test-org-canvas-make-response
+   '((id . 5001)
+     (name . "Alice Adams")
+     (sortable_name . "Adams, Alice"))
+   overrides))
+
+(defun test-org-canvas-make-submission (&optional overrides)
+  "Build a mock Canvas submission alist."
+  (test-org-canvas-make-response
+   `((id . 50001)
+     (user_id . 5001)
+     (assignment_id . 1001)
+     (workflow_state . "submitted")
+     (submitted_at . "2026-02-15T23:45:00Z")
+     (late . :json-false)
+     (missing . :json-false)
+     (score . 92)
+     (body . "Here is my solution.")
+     (user . ,(test-org-canvas-make-user))
+     (assignment . ((points_possible . 100)))
+     (submission_comments . [])
+     (rubric_assessment . nil)
+     (attachments . []))
+   overrides))
+
+(defun test-org-canvas-make-submission-with-comment (&optional overrides)
+  "Build a mock submission with a comment."
+  (test-org-canvas-make-submission
+   (append
+    `((submission_comments
+       . [((author_name . "Prof. Smith")
+           (comment . "Good work!")
+           (created_at . "2026-02-16T10:00:00Z"))]))
+    overrides)))
+
+(defun test-org-canvas-make-submission-with-attachment (&optional overrides)
+  "Build a mock submission with an attachment."
+  (test-org-canvas-make-submission
+   (append
+    `((attachments
+       . [((display_name . "homework1.pdf")
+           (url . "https://canvas.example.com/files/999/download"))]))
+    overrides)))
+
+(defun test-org-canvas-make-submission-with-rubric (&optional overrides)
+  "Build a mock submission with rubric assessment."
+  (test-org-canvas-make-submission
+   (append
+    `((rubric_assessment
+       . ((crit_1 . ((points . 18)
+                     (rating_description . "Excellent")))
+          (crit_2 . ((points . 15)
+                     (rating_description . "Good"))))))
+    overrides)))
+
+;;;; Status Normalization
+
+(defconst test-rubric-criteria
+  '(((id . "_7104") (description . "Thesis") (points . 2.0)
+     (ratings . [((id . "r1") (description . "Excellent") (points . 2.0))
+                 ((id . "r2") (description . "Weak") (points . 1.0))]))
+    ((id . "_7105") (description . "Evidence | support") (points . 3))
+    ((id . "_7106") (description . "Style") (points . 1)))
+  "Three rubric criteria as the assignment object lists them.")
+
+(defmacro with-grading-file (content &rest body)
+  "Visit a scratch grading file holding CONTENT, in submissions mode, run BODY."
+  (declare (indent 1))
+  `(let* ((dir (make-temp-file "org-canvas-subs-" t))
+          (org-canvas-submissions-directory dir)
+          (file (expand-file-name "HW.org" dir))
+          (buf nil))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (setq buf (find-file-noselect file))
+           (with-current-buffer buf
+             (org-mode)
+             (org-canvas-submissions-mode 1)
+             ;; A refresh reads the column's reports over GraphQL
+             ;; (#351); here the column has none.
+             (cl-letf (((symbol-function 'org-canvas--graphql-query) #'ignore))
+               ,@body)))
+       (when (buffer-live-p buf)
+         (with-current-buffer buf (set-buffer-modified-p nil))
+         (kill-buffer buf))
+       (delete-directory dir t))))
+
+(defconst test-grading-file-header
+  "#+TITLE: Submissions: HW\n#+PROPERTY: CANVAS_ASSIGNMENT_ID 1001\n#+PROPERTY: CANVAS_ASSIGNMENT_NAME HW\n\n")
+
+(defun test-refresh--from-canvas (overrides)
+  "Refresh the current grading file as if Canvas held one submission.
+OVERRIDES adjust `test-org-canvas-make-submission'; a prompt fails."
+  (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+             (lambda (_id) (list (test-org-canvas-make-submission overrides))))
+            ((symbol-function 'org-canvas--submissions-fetch-assignment)
+             (lambda (_id) '((id . 1001))))
+            ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+            ((symbol-function 'switch-to-buffer) (lambda (b) b))
+            ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask"))))
+    (org-canvas-submissions-refresh)))
+
+(defvar test-refresh--messages nil "What the last `test-refresh--run' said.")
+
+(defvar test-refresh--log nil "What the last `test-refresh--run' logged at INFO.")
+
+(defun test-refresh--run (subs)
+  "Refresh the current grading file as if Canvas held SUBS.
+Messages and INFO log lines are collected in `test-refresh--messages'
+and `test-refresh--log'; a prompt fails."
+  (setq test-refresh--messages nil
+        test-refresh--log nil)
+  (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment) (lambda (_id) subs))
+            ((symbol-function 'org-canvas--submissions-fetch-assignment) (lambda (_id) '((id . 1001))))
+            ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+            ((symbol-function 'switch-to-buffer) (lambda (b) b))
+            ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask")))
+            ((symbol-function 'message)
+             (lambda (fmt &rest args) (push (apply #'format fmt args) test-refresh--messages)))
+            ((symbol-function 'org-canvas--log-info)
+             (lambda (_logger fmt &rest args) (push (apply #'format fmt args) test-refresh--log))))
+    (org-canvas-submissions-refresh)))
+
+(defun test-refresh--summary ()
+  "Return the Refreshed line of the last `test-refresh--run'."
+  (cl-find-if (lambda (m) (string-prefix-p "Refreshed " m)) test-refresh--messages))
+
+(defun test-refresh--student (name id &rest props)
+  "Return a grading-file heading for NAME with USER_ID ID and PROPS."
+  (concat (format "* %s\n:PROPERTIES:\n:USER_ID: %s\n" name id)
+          (apply #'concat props)
+          ":END:\n"))
+
+(defun test-refresh--bob (&optional overrides)
+  "Return a submission for Beta, Bob (5002), adjusted by OVERRIDES."
+  (test-org-canvas-make-submission
+   (append overrides
+           '((id . 50002) (user_id . 5002)
+             (user . ((id . 5002) (name . "Bob Beta") (sortable_name . "Beta, Bob")))))))
+
+(defmacro with-submissions-dir (&rest body)
+  "Run BODY with `org-canvas-submissions-directory' bound to a fresh DIR.
+Every buffer visiting a file under it is killed afterwards, and no
+prompt may be reached: `completing-read' and `y-or-n-p' both signal."
+  (declare (indent 0))
+  `(let* ((dir (make-temp-file "org-canvas-subs-" t))
+          (org-canvas-submissions-directory dir)
+          (noninteractive t))
+     (unwind-protect
+         (cl-letf (((symbol-function 'completing-read)
+                    (lambda (&rest _) (error "must not prompt")))
+                   ((symbol-function 'y-or-n-p)
+                    (lambda (&rest _) (error "must not ask")))
+                   ((symbol-function 'switch-to-buffer) (lambda (b) b))
+                   ((symbol-function 'org-canvas--submissions-heading-for-assignment)
+                    (lambda (_id) nil))
+                   ((symbol-function 'org-canvas--graphql-query) #'ignore))
+           ,@body)
+       (dolist (b (buffer-list))
+         (when (and (buffer-file-name b)
+                    (string-prefix-p (file-truename dir) (file-truename (buffer-file-name b))))
+           (with-current-buffer b (set-buffer-modified-p nil))
+           (kill-buffer b)))
+       (delete-directory dir t))))
+
+(defun test-entry--canvas (assignment-object &optional listed)
+  "Return an `org-canvas-api-request' stub answering for ASSIGNMENT-OBJECT.
+A single-assignment read answers ASSIGNMENT-OBJECT, or signals when it
+is nil; the list read answers LISTED; a submissions read answers one
+submission.  Every call is pushed onto `test-entry--calls'."
+  (lambda (method url &rest _)
+    (push (cons method url) test-entry--calls)
+    (cond ((string-match-p "/submissions$" url)
+           (vector (test-org-canvas-make-submission)))
+          ((string-match-p "/assignments/[0-9]+$" url)
+           (or assignment-object (signal 'org-canvas-api-error (list "404"))))
+          ((string-match-p "/assignments$" url)
+           (vconcat listed))
+          (t (error "Unexpected request %s" url)))))
+
+(defvar test-entry--calls nil "The requests a stub of `test-entry--canvas' saw.")
+
+(defconst test-rubric-assignment
+  '((id . 1001)
+    (name . "Global Challenge Essay")
+    (use_rubric_for_grading . t)
+    (rubric_settings . ((id . 133477) (title . "Essay Rubric") (points_possible . 100)
+                        (free_form_criterion_comments . :json-false)
+                        (hide_score_total . :json-false) (hide_points . :json-false)))
+    (rubric . [((id . "_1") (description . "Thesis") (points . 20.0)
+                (ratings . [((description . "Excellent") (points . 20.0))
+                            ((description . "Weak | vague") (points . 5.0))]))
+               ((id . "_2") (description . "Evidence") (points . 30)
+                (ratings . [((description . "Strong") (points . 30))]))])))
+
+(defconst test-rubric-assignment-described
+  '((id . 1001)
+    (name . "Closer")
+    (use_rubric_for_grading . t)
+    (rubric_settings . ((id . 138462) (title . "Closer Rubric") (points_possible . 6)))
+    (rubric . [((id . "_1") (description . "The Day&#39;s Idea Does the Work") (points . 2)
+                (long_description . "<p>The answer is built from the session&#39;s material.</p><p>Feed-forward: journal row 2.</p>")
+                (ratings . [((description . "Working") (points . 2)
+                             (long_description . "The day&#39;s idea carries the answer"))
+                            ((description . "Named") (points . 1)
+                             (long_description . "Named, but the answer reads the same without it"))
+                            ((description . "Absent") (points . 0) (long_description . :null))]))
+               ((id . "_2") (description . "Stakes | Named") (points . 4) (long_description . :null)
+                (ratings . [((description . "Yes") (points . 4))]))]))
+  "An assignment whose rubric carries the descriptions Canvas escapes (issue #265).")
+
+(defconst test-rubric-file-header
+  (concat test-grading-file-header
+          "#+PROPERTY: POINTS_POSSIBLE 6\n"
+          "#+PROPERTY: CANVAS_RUBRIC_ID 133477\n"
+          "#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true\n\n")
+  "Grading-file header of an assignment whose rubric sets the grade.")
+
+(defun test-rubric-entry (name user-id props rows)
+  "Return a student entry for NAME and USER-ID with PROPS and rubric ROWS.
+PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX
+SCORE COMMENT), written as the table and the comment items under it."
+  (concat (format "* %s\n:PROPERTIES:\n:USER_ID: %s\n%s:END:\n\n** Rubric\n" name user-id props)
+          "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+          (mapconcat (lambda (r) (apply #'format "| %s | %s | %s | %s |\n"
+                                        (mapcar (lambda (c) (or c "")) (cl-subseq r 0 4))))
+                     rows "")
+          (mapconcat (lambda (r)
+                       (format "- %s ::%s\n" (nth 0 r)
+                               (if (nth 4 r)
+                                   (concat " " (replace-regexp-in-string "\n" "\n  " (nth 4 r)))
+                                 "")))
+                     rows "")
+          "\n"))
+
+(defmacro with-rubric-file (content &rest body)
+  "Visit CONTENT as a grading file with its context recovered, then run BODY."
+  (declare (indent 1))
+  `(with-grading-file ,content
+     (org-canvas--submissions-ensure-context)
+     ,@body))
+
+(defconst test-rubric-blank-rows
+  '(("_7104" "Thesis" 2 nil nil) ("_7105" "Evidence" 3 nil nil) ("_7106" "Style" 1 nil nil))
+  "An unassessed rubric table's rows.")
+
+(defconst test-grade-after--rows
+  '(("_7104" "Thesis" 2 nil "Read it again.") ("_7105" "Evidence" 3 nil nil)
+    ("_7106" "Style" 1 nil "Tidy."))
+  "Comment-only rubric rows: feedback on two criteria and no points anywhere.")
+
+(defun test-rubric--display (subs shown-cell)
+  "Render SUBS as HW's grading file, storing the buffer in SHOWN-CELL's car."
+  (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) (setcar shown-cell b) b))
+            ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+            ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
+    (org-canvas--submissions-display
+     "HW" "1001" subs 'detail
+     `((id . 1001) (use_rubric_for_grading . t) (rubric_settings . ((id . 7) (title . "R")))
+       (rubric . ,(vconcat test-rubric-criteria))))))
+
+(defmacro test-progress--with-replies (replies &rest body)
+  "Run BODY with the API answering REPLIES in turn, waits recorded, not slept.
+Each call is pushed onto `calls' as (METHOD URL); each wait onto
+`waits'.  A reply that is the symbol `error' signals instead."
+  (declare (indent 1))
+  `(let ((queue ,replies) (calls nil) (waits nil))
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (method url &rest _)
+                  (push (list method url) calls)
+                  (let ((reply (pop queue)))
+                    (if (eq reply 'error)
+                        (signal 'org-canvas-api-error '("Connection failed"))
+                      reply))))
+               ((symbol-function 'org-canvas--wait)
+                (lambda (seconds &rest _) (push seconds waits)))
+               ((symbol-function 'org-canvas--log-warning) #'ignore))
+       ,@body)))
+
+(defmacro test-batch-push--with-dir (content &rest body)
+  "Run BODY with a submissions directory holding HW.org, CONTENT, unvisited.
+`file' is bound to its path; any buffer visiting it is killed after."
+  (declare (indent 1))
+  `(let* ((dir (make-temp-file "org-canvas-batch-" t))
+          (org-canvas-submissions-directory dir)
+          (file (expand-file-name "HW.org" dir)))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           ;; The grading file reads the column's reports over GraphQL
+           ;; on a refresh only; a push asks nothing of it.
+           ,@body)
+       (let ((buf (find-buffer-visiting file)))
+         (when (buffer-live-p buf)
+           (with-current-buffer buf (set-buffer-modified-p nil))
+           (kill-buffer buf)))
+       (delete-directory dir t))))
+
+(defun test-sent--file (baseline items &optional more)
+  "Return a grading file whose student carries BASELINE and ITEMS under Comments.
+BASELINE is a list of (ID . TEXT), written as CANVAS_COMMENTS digests;
+ITEMS is the text of the Comments section.  MORE follows the student."
+  (concat test-grading-file-header
+          "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n"
+          (if baseline
+              (format ":CANVAS_COMMENTS: %s\n"
+                      (mapconcat (lambda (p)
+                                   (format "%s=%s" (car p)
+                                           (org-canvas--submissions-comment-digest (cdr p))))
+                                 baseline " "))
+            "")
+          ":END:\n\n** Comments\n" items "\n** Notes\nMine.\n" (or more "")))
+
+(defun test-sent--comment (id author text)
+  "Return a Canvas submission comment ID by the user AUTHOR holding TEXT."
+  `((id . ,id) (author_id . ,author) (author_name . "Prof") (comment . ,text)
+    (created_at . "2026-09-28T14:02:00Z")))
+
+(defmacro test-sent--with-canvas (comments &rest body)
+  "Run BODY with Canvas holding COMMENTS on Alice's submission, the grader 77."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'org-canvas--submissions-self-id) (lambda () "77"))
+             ((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+              (lambda (_id)
+                (list (test-org-canvas-make-submission
+                       (list (cons 'submission_comments (vconcat ,comments)))))))
+             ((symbol-function 'org-canvas--submissions-fetch-assignment) #'ignore)
+             ((symbol-function 'switch-to-buffer) #'identity))
+     (with-html-to-org-identity ,@body)))
+
+(defmacro test-sent--collecting-warnings (&rest body)
+  "Run BODY and return the warnings it logged, in order."
+  `(let ((warnings nil))
+     (cl-letf (((symbol-function 'org-canvas--log-warning)
+                (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+       ,@body)
+     (nreverse warnings)))
+
+(defun test-sent-only--everything-file ()
+  "Return a grading file where a sent comment, scores, rows, drafts and the bank differ."
+  (concat test-rubric-file-header
+          "* Comment Bank\n- Show your units.\n\n"
+          (test-rubric-entry "Adams, Alice" 5001
+                             (format ":SCORE: 4\n:CANVAS_SCORE: 3\n:SUBMISSION_ID: 9001\n:LATE_STATUS: late\n:CANVAS_COMMENTS: 22=%s\n"
+                                     (org-canvas--submissions-comment-digest "Mine."))
+                             '(("_7104" "Thesis" 2 2 "Sharp") ("_7105" "Evidence" 3 2 nil)
+                               ("_7106" "Style" 1 nil nil)))
+          "** Comments\n- *Prof* [22] :: Mine, rewritten.\n\n"
+          "** Comment to post\nSee me.\n"))
+
 (provide 'test-helper)
 ;;; test-helper.el ends here

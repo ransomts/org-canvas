@@ -38,6 +38,13 @@
 ;; grading files the submissions module writes.
 (require 'org-canvas-submissions)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-comment-items)
+;; Defined in the push half, which reads this file: declared, not required.
+(declare-function org-canvas--submissions-comment-edits-buffer
+                  "org-canvas-submissions-push" (assignment))
+
 (defcustom org-canvas-submissions-comment-flag-regexps nil
   "Regexps a comment must not match, for `org-canvas-submissions-check-comments'.
 Each is matched against every row comment, draft and sent comment of

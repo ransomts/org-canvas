@@ -46,6 +46,10 @@
 ;; files and downloads the submissions module writes.
 (require 'org-canvas-submissions)
 
+;; The pull half of the split submissions module requires this file, so
+;; what this file shares with it is declared, never required (a cycle).
+(declare-function org-canvas--submissions-left-p "org-canvas-submissions-entry" ())
+
 (defcustom org-canvas-submissions-pdftotext-program "pdftotext"
   "Program to turn a downloaded PDF upload into text.
 Poppler's pdftotext, run as PROGRAM -layout FILE -.  When it cannot be

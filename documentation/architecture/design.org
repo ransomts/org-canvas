@@ -746,12 +746,19 @@ cluster in =lisp/=.  Everything in it requires
 =org-canvas-submissions=, because the grading file -- its per-student
 headings, its summary table, its =* Comment Bank= -- is defined there.
 =org-canvas-submissions-comments= is the second hub: sent comments are
-the currency the checking and drafting modules share.  Sending itself
-lives in =org-canvas-submissions= (=S= grades, =P= post, =C= comment
-edits), so no module in the cluster exists for it.  Two seams are
-declared, never required -- the dashed edges, the same policy
-=org-canvas-diff= uses for =org-canvas-modules.el= -- so that nothing
-here requires another feature module outright.
+the currency the checking and drafting modules share.  Since #570 the
+grading file's own module is five halves above it, one per concern,
+each requiring =org-canvas-submissions= and none requiring another
+feature module: =submissions-render= (summary table, detail view,
+statistics, attempt history), =submissions-entry= (pull, refresh,
+download, the completion rule), =submissions-comment-items= (the bank
+and the file's saved comments), =submissions-conflict= (what changed on
+Canvas since the pull, and resolving it) and =submissions-push=
+(sending: =S= grades, =P= post, =C= comment edits).  A half that needs
+another's function declares it; none requires one, so no cycle can
+form.  Two seams are declared, never required -- the dashed edges, the
+same policy =org-canvas-diff= uses for =org-canvas-modules.el= -- so
+that nothing here requires another feature module outright.
 
 #+begin_src mermaid
 graph LR
@@ -773,6 +780,18 @@ graph LR
         COM["submissions-comments<br/>export, import, check"]
         VER["submissions-verify<br/>read the push back"]
     end
+    subgraph "Inside submissions (#570)"
+        REN["submissions-render<br/>summary, detail, attempts"]
+        ENT["submissions-entry<br/>pull, refresh, download"]
+        CIT["submissions-comment-items<br/>the bank, saved comments"]
+        CON["submissions-conflict<br/>what changed on Canvas"]
+        PSH["submissions-push<br/>S grades, P post, C comments"]
+    end
+    REN --> SUB
+    ENT --> SUB
+    CIT --> SUB
+    CON --> SUB
+    PSH --> SUB
     QS --> SUB
     PR --> SUB
     REP --> SUB

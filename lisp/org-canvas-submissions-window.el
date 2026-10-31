@@ -48,6 +48,12 @@
 ;; files the submissions module writes.
 (require 'org-canvas-submissions)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-entry)
+(require 'org-canvas-submissions-comment-items)
+(require 'org-canvas-submissions-push)
+
 ;; sections.el owns MEETS and the overrides table; it is a feature
 ;; module, so it is declared and never required.
 (declare-function org-canvas--section-keys "org-canvas-sections" (text))

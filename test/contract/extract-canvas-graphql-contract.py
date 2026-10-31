@@ -2,10 +2,11 @@
 """Extract the GraphQL contract org-canvas's documents rely on from Canvas.
 
 The GraphQL documents org-canvas sends (the post-policy mutations in
-assignments.el and settings.el, postAssignmentGrades in submissions.el,
-the checkpoints query and updateDiscussionTopic mutation in
-discussions.el, and the document-processor query in assignments.el)
-travel as opaque strings.  This script reads them out of
+assignments.el and settings.el, postAssignmentGrades in
+submissions-push.el, the checkpoints query and updateDiscussionTopic
+mutation in discussions.el, the document-processor queries in
+assignments.el and submissions-render.el, and the comment-bank
+documents in submissions-comment-items.el) travel as opaque strings.  This script reads them out of
 lisp/, validates each against a Canvas GraphQL schema, and emits a compact
 JSON fixture (canvas-graphql-contract.json) holding only the types the
 documents reach: every field of each reached object type with its type
@@ -84,6 +85,9 @@ SOURCES = [
     "lisp/org-canvas-assignments.el",
     "lisp/org-canvas-settings.el",
     "lisp/org-canvas-submissions.el",
+    "lisp/org-canvas-submissions-comment-items.el",
+    "lisp/org-canvas-submissions-push.el",
+    "lisp/org-canvas-submissions-render.el",
     "lisp/org-canvas-submissions-status.el",
     "lisp/org-canvas-submissions-reports.el",
     "lisp/org-canvas-discussions.el",

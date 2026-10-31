@@ -1,0 +1,11 @@
+* Changed
+- #570 =org-canvas-submissions= is split by concern into five modules
+  above it: =org-canvas-submissions-render= (the summary table, detail
+  view, statistics and attempt history), =org-canvas-submissions-entry=
+  (pull, refresh, download and the completion rule),
+  =org-canvas-submissions-comment-items= (the comment bank and a
+  grading file's saved comments), =org-canvas-submissions-conflict=
+  (what changed on Canvas since the pull, and resolving it) and
+  =org-canvas-submissions-push= (grades, late statuses and saved
+  comments sent to Canvas).  Every command, key and file behaves as
+  before.

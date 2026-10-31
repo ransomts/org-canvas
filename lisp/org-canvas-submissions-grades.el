@@ -37,6 +37,12 @@
 (require 'org-canvas-submissions-comments)
 (require 'org-canvas-submissions-ruling)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-entry)
+(require 'org-canvas-submissions-comment-items)
+(require 'org-canvas-submissions-push)
+
 ;;;; Excusing (issue #501)
 
 (defconst org-canvas--submissions-excuse-scopes '(unsubmitted all point)

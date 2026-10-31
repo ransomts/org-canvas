@@ -42,6 +42,10 @@
 (require 'org-canvas-submissions-comments)
 (require 'org-canvas-settings)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-comment-items)
+
 (defcustom org-canvas-submissions-late-note-format
   "This came in %s, after the due time of %d: %l late.  The course's late policy takes %p%% for that, so your %r shows as %f of %m."
   "The late-policy comment `org-canvas-submissions-draft-late-notes' drafts.
