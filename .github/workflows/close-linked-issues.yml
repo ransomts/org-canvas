@@ -1,0 +1,83 @@
+name: close-linked-issues
+
+# auto-merge.yml lands a green pull request with `gh pr merge --auto
+# --rebase`, and a rebase merge replays the branch's own commits while
+# discarding the pull request body.  GitHub reads a closing keyword only
+# from the body (or a squash/merge commit), so the `Closes #N` the
+# template asks for never fires: #605 and #606 merged on 2026-10-31 and
+# stayed open (issue #609).
+#
+# This closes what the body names, from the body, after the merge.  It
+# reads the body rather than the commits so a merge done by hand in the
+# web UI closes too, where no local skill is watching.  Closing an
+# already-closed issue is a no-op, so it keeps working if the repo ever
+# switches to squash or merge commits.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  close:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Close the issues the body names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # Passed through the environment, never interpolated into the
+          # script, so a body quoting `$(...)` runs nothing.
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -uo pipefail
+
+          # GitHub's own keywords, in the forms its parser accepts:
+          # close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved,
+          # an optional colon, then #N.
+          numbers=$(printf '%s\n' "${BODY:-}" \
+            | grep -oiE '(close[sd]?|fix(es|ed)?|resolve[sd]?):?[[:space:]]+#[0-9]+' \
+            | grep -oE '[0-9]+' \
+            | sort -un || true)
+
+          if [ -z "$numbers" ]; then
+            echo "no closing keyword in the body; nothing to close"
+            exit 0
+          fi
+
+          failed=0
+          for n in $numbers; do
+            # A `#N` may be a pull request; those are not ours to close.
+            if [ -n "$(gh api "repos/$REPO/issues/$n" \
+                         --jq 'select(.pull_request) | .number' 2>/dev/null)" ]; then
+              echo "#$n is a pull request, leaving it"
+              continue
+            fi
+
+            state=$(gh issue view "$n" --repo "$REPO" --json state --jq .state 2>/dev/null)
+            case "$state" in
+              OPEN)
+                if gh issue close "$n" --repo "$REPO" --reason completed; then
+                  echo "closed #$n"
+                else
+                  echo "::error::could not close #$n"
+                  failed=1
+                fi
+                ;;
+              "")
+                echo "::warning::#$n could not be read; leaving it"
+                ;;
+              *)
+                echo "#$n is already $state"
+                ;;
+            esac
+          done
+
+          exit "$failed"
