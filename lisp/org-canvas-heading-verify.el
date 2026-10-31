@@ -53,6 +53,7 @@
 (require 'org-canvas-diff-fields)
 (require 'org-canvas-announcements-verify)
 (require 'org-canvas-assignments)
+(require 'org-canvas-module-items)
 (require 'org-canvas-modules)
 (require 'org-canvas-files)
 ;; The rubric a heading links, for the rubric rows (issue #567).
