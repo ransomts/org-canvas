@@ -29,7 +29,7 @@ Thank you for your interest in contributing! This guide covers the development w
 
 ### Module Structure
 
-The annotated tree of `lisp/` is maintained in [documentation/architecture-guide.md](documentation/architecture-guide.md) (section "Module Structure"); the reasoning behind the layout is in [documentation/architecture/design.org](documentation/architecture/design.org). Decisions made in response to specific issues are collected in [documentation/architecture/decisions.org](documentation/architecture/decisions.org).
+The annotated tree of `lisp/` is maintained in [documentation/architecture-guide.md](documentation/architecture-guide.md) (section "Module Structure"); the reasoning behind the layout is in [documentation/architecture/design.org](documentation/architecture/design.org). Decisions made in response to specific issues are indexed in [documentation/architecture/decisions.org](documentation/architecture/decisions.org) and kept, one file per subject, under [documentation/architecture/decisions/](documentation/architecture/decisions/).
 
 ### Dependency Rules
 
@@ -225,7 +225,7 @@ git push --no-verify
 ## Documentation
 
 - **[Reference manual](documentation/manual.org)** — Complete property specs, command reference, file formats
-- **[Architecture notes](documentation/architecture/)** — `design.org`, `api-interaction.org`, `pull-system.org`, `testing.org`, `module-developer-guide.org`, `decisions.org`, `coverage.org`; historical plans and specs under `plans/` and `specs/`
+- **[Architecture notes](documentation/architecture/)** — `design.org`, `api-interaction.org`, `pull-system.org`, `testing.org`, `module-developer-guide.org`, `decisions.org` and its `decisions/` subject files, `coverage.org`; historical plans and specs under `plans/` and `specs/`
 - **[Workflows guide](documentation/workflows.org)** — Semester/weekly/daily/per-assignment workflows
 - **[FAQ & Recipes](documentation/faq.org)** — Quick answers to "how do I..." questions
 

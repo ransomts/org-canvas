@@ -1,0 +1,2 @@
+* Changed
+- #576 The decision log is split by subject into seven files under documentation/architecture/decisions/, with decisions.org as the index that links every section.  No user-visible change.
