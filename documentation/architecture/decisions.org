@@ -25,7 +25,8 @@ appended to a file of its subject's size, not to a file that grows
 forever.  This file is the index: every section title is listed below
 with a link to the file that holds it, so a cross-reference elsewhere in
 the documentation -- =decisions.org, "A Body Never Introduces a
-Headline"= -- still names something you can find here.
+Headline"= -- still names something you can find here.  A section
+with sub-sections lists those under it, indented.
 
 * Index
 
@@ -82,6 +83,7 @@ Headline"= -- still names something you can find here.
 - [[file:decisions/grading-and-submissions.org::*The Grading File Carries the Rubric, Not Just Its Names (issue #265)][The Grading File Carries the Rubric, Not Just Its Names (issue #265)]]
 - [[file:decisions/grading-and-submissions.org::*A Grading File Body Wants the Break, Not the Markup (issue #266)][A Grading File Body Wants the Break, Not the Markup (issue #266)]]
 - [[file:decisions/grading-and-submissions.org::*The Grading Queue Counts Rows, Never Columns (issue #283)][The Grading Queue Counts Rows, Never Columns (issue #283)]]
+  - [[file:decisions/grading-and-submissions.org::*A Mean and a Median Beside the Counts (issue #352)][A Mean and a Median Beside the Counts (issue #352)]]
 - [[file:decisions/grading-and-submissions.org::*A Re-Pull Keeps Typed Scores (issue #281)][A Re-Pull Keeps Typed Scores (issue #281)]]
 - [[file:decisions/grading-and-submissions.org::*Submission Commands Take Their Target as an Argument (issue #280)][Submission Commands Take Their Target as an Argument (issue #280)]]
 - [[file:decisions/grading-and-submissions.org::*A Script Pushes Grades by Name, and Posts Only When It Says So (issue #381)][A Script Pushes Grades by Name, and Posts Only When It Says So (issue #381)]]
@@ -139,6 +141,7 @@ Headline"= -- still names something you can find here.
 - [[file:decisions/pulls-and-batch.org::*A Pull Takes Its Heading by Name Too (issue #346)][A Pull Takes Its Heading by Name Too (issue #346)]]
 - [[file:decisions/pulls-and-batch.org::*The GraphQL Documents Are Checked Against the Schema (issue #269)][The GraphQL Documents Are Checked Against the Schema (issue #269)]]
 - [[file:decisions/pulls-and-batch.org::*Post Policies Are GraphQL (issue #202)][Post Policies Are GraphQL (issue #202)]]
+  - [[file:decisions/pulls-and-batch.org::*A Posting Schedule Rides the Post-Policy Mutation (issue #352)][A Posting Schedule Rides the Post-Policy Mutation (issue #352)]]
 - [[file:decisions/pulls-and-batch.org::*A Report Command Describes Itself in Batch (issues #155, #169)][A Report Command Describes Itself in Batch (issues #155, #169)]]
 - [[file:decisions/pulls-and-batch.org::*A Body Never Introduces a Headline (issue #175)][A Body Never Introduces a Headline (issue #175)]]
 - [[file:decisions/pulls-and-batch.org::*A Stranded Body Fragment Is Flagged and Never Created Unasked (issue #391)][A Stranded Body Fragment Is Flagged and Never Created Unasked (issue #391)]]
@@ -146,11 +149,13 @@ Headline"= -- still names something you can find here.
 - [[file:decisions/pulls-and-batch.org::*Org Files in Batch Mode: Truenames and Fresh Buffers (issues #97, #121, #188, #249)][Org Files in Batch Mode: Truenames and Fresh Buffers (issues #97, #121, #188, #249)]]
 - [[file:decisions/pulls-and-batch.org::*A Live Search Greps What Canvas Holds (issue #406)][A Live Search Greps What Canvas Holds (issue #406)]]
 - [[file:decisions/pulls-and-batch.org::*A Heading Opens Its Canvas Page from Rules Its Module Declares (issue #292)][A Heading Opens Its Canvas Page from Rules Its Module Declares (issue #292)]]
+  - [[file:decisions/pulls-and-batch.org::*Every Address Checked Against Canvas's Routes (issue #300)][Every Address Checked Against Canvas's Routes (issue #300)]]
 
 ** Course Lifecycle
 [[file:decisions/course-lifecycle.org][decisions/course-lifecycle.org]]
 - [[file:decisions/course-lifecycle.org::*The Roster Marks Who Left, and Only on Canvas's Word (issue #290)][The Roster Marks Who Left, and Only on Canvas's Word (issue #290)]]
 - [[file:decisions/course-lifecycle.org::*A List Pull Marks the Headings Canvas Deleted, on Canvas's Word (issues #392, #399)][A List Pull Marks the Headings Canvas Deleted, on Canvas's Word (issues #392, #399)]]
+  - [[file:decisions/course-lifecycle.org::*The pulls with code of their own (issue #399)][The pulls with code of their own (issue #399)]]
 - [[file:decisions/course-lifecycle.org::*The Institution's Ids Come From the User Records (issue #543)][The Institution's Ids Come From the User Records (issue #543)]]
 - [[file:decisions/course-lifecycle.org::*Write Access Is Scoped by the Credentials File, Not the Course (issue #550)][Write Access Is Scoped by the Credentials File, Not the Course (issue #550)]]
 - [[file:decisions/course-lifecycle.org::*A Semester Rollover Strips What the Registries Name (issue #547)][A Semester Rollover Strips What the Registries Name (issue #547)]]
