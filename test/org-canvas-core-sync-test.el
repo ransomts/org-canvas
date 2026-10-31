@@ -1919,6 +1919,15 @@ Returns the :remote-titles of the run context the push received."
       (expect sent :to-be nil)
       (expect (car logged) :to-match "\\[DRY-RUN\\] Would set the course post policy to manual")))
 
+  (it "recognizes the sentinel by value, not by identity"
+    ;; The sentinel is a cons, so `eq' would only ever match the one
+    ;; object in `org-canvas--dry-run-response'; a response that arrived
+    ;; from elsewhere -- or was copied on the way through a caller's
+    ;; `copy-tree' -- must be recognized too (issue #575).
+    (expect (org-canvas--dry-run-response-p
+             (copy-tree org-canvas--dry-run-response))
+            :to-be-truthy))
+
   (it "sends the mutation with its variables otherwise"
     (let ((seen nil))
       (cl-letf (((symbol-function 'org-canvas--graphql-send)

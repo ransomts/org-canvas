@@ -138,3 +138,567 @@ lisp/org-canvas-drift.el :: t->nil :: (let* ((end (save-excursion (org-end-of-su
 # is stripped whichever way the flag reads.  From the 2026-10-19
 # sample (issue #520).
 lisp/org-canvas-quiz-accommodations.el :: t->nil :: (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
+
+
+# ====================================================================
+# Issue #575: extending the ratchet to the five modules it named
+#
+# validate.el, validate-issue.el, validate-content.el,
+# validate-grading.el, core-sync.el, core-push.el and core-heading.el
+# replace the crude `--min-score 40' sample the weekly job used to run.
+# The entries below are the triage of that first full pass -- 636
+# sites, 433 killed, 197 surviving, 119 distinct keys (duplicate lines
+# share a key by design; see `key_of' in mutate.py).
+#
+# Two survivors were looked at closely rather than waved through:
+#
+#   * the `equal'/`eq' comparison of the dry-run sentinel -- killed, by a
+#     one-line spec that hands `org-canvas--dry-run-response-p' a
+#     `copy-tree' of the sentinel;
+#   * the PAREN argument of the raw-HTML `regexp-opt' -- accepted here,
+#     because PAREN only chooses capturing vs shy for the outer group and
+#     the regexp therefore matches the same text either way.
+#
+# Where a reason below says "no fixture ...", that entry is a coverage
+# gap and not an equivalence, and it is the first thing to re-read when
+# a mutant this file accepts turns out to matter.  They cluster in
+# three places: findings whose property/pending-sync column nothing
+# asserts, guards for degenerate input (an empty table cell, a missing
+# file, a twin with no id) that no fixture builds, and boundary
+# comparisons that only differ on a value no fixture uses (a cutoff of
+# exactly 100, two equal cutoffs).
+# ====================================================================
+
+# The `or' supplies :title when a spec leaves :title-key out, and `(and ...)'
+# yields nil instead.  A nil key reads no title, so only the finalize log
+# lines and generated docstrings change -- no fixture asserts those strings.
+lisp/org-canvas-core-heading.el :: or->and :: (title-key (or (plist-get spec :title-key) :title))
+
+# Two `nil' arguments on this line share the key and neither can be told
+# apart here.  The DEFAULT is only returned for a feature name nobody
+# registered, and REMOVE only makes `setf' delete the old pair before
+# consing the new one -- which shows only when one feature is registered
+# twice in a run, and nothing registers twice.
+lisp/org-canvas-core-heading.el :: nil->t :: (setf (alist-get singular org-canvas--sync-heading-fns nil nil #'equal) fn))
+
+# Two `nil' arguments on this line share the key and neither can be told
+# apart here.  The DEFAULT is only returned for a feature name nobody
+# registered, and REMOVE only makes `setf' delete the old pair before
+# consing the new one -- which shows only when one feature is registered
+# twice in a run, and nothing registers twice.
+lisp/org-canvas-core-heading.el :: nil->t :: (setf (alist-get singular org-canvas--sync-entry-specs nil nil #'equal) spec))
+
+# The payload hash is computed by parse and build alone and neither writes;
+# binding `org-canvas-read-only' off changes nothing.
+lisp/org-canvas-core-heading.el :: t->nil :: (let* ((org-canvas-read-only t)
+
+# `match-string' of group 4 always returns a string, and "" is true in Elisp,
+# so both spellings return the trimmed title.
+lisp/org-canvas-core-heading.el :: and->or :: (and text (string-trim text))))))
+
+# A third candidate, consulted only when the first two do not match.  On the
+# Org in CI `org-get-heading' returns the text `org-canvas--sync-heading-text'
+# already does, so it never decides; it is there for Org versions that keep
+# link syntax, which no test can run.
+lisp/org-canvas-core-heading.el :: or->and :: (string-trim (or (org-get-heading t t t t) ""))))))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-core-heading.el :: t->nil :: (string-trim (or (org-get-heading t t t t) ""))))))
+
+# The interactive prompt is unreachable in batch: the `user-error' above it is
+# what the suite tests, so neither completion argument is observed.
+# This is the PREDICATE argument.
+lisp/org-canvas-core-heading.el :: nil->t :: (org-canvas--sync-heading-titles file query) nil t))
+
+# The interactive prompt is unreachable in batch: the `user-error' above it is
+# what the suite tests, so neither completion argument is observed.
+# This is the REQUIRE-MATCH argument.
+lisp/org-canvas-core-heading.el :: t->nil :: (org-canvas--sync-heading-titles file query) nil t))
+
+# The `or' supplies "CANVAS_ID" when a spec leaves :id-property out, and
+# `(and ...)' returns nil instead.  No fixture runs the command this feeds for
+# a feature that leaves the key out, so the inverted default is never
+# consumed.  A coverage gap, not an equivalence: `(org-entry-get (point) nil)'
+# would signal.
+lisp/org-canvas-core-heading.el :: or->and :: :id-property (or (plist-get spec :id-property) "CANVAS_ID")
+
+# Flag flip in `org-back-to-heading': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-core-heading.el :: t->nil :: (org-back-to-heading t)
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-core-heading.el :: t->nil :: (title (org-get-heading t t t t)))
+
+# Two `nil' arguments on this line share the key and neither can be told
+# apart here.  The DEFAULT is only returned for a feature name nobody
+# registered, and REMOVE only makes `setf' delete the old pair before
+# consing the new one -- which shows only when one feature is registered
+# twice in a run, and nothing registers twice.
+lisp/org-canvas-core-heading.el :: nil->t :: (setf (alist-get singular org-canvas--pull-heading-fns nil nil #'equal) fn))
+
+# The delete-by-heading entry's :query default.  Flipped, a feature whose
+# delete entry leaves :query out searches with nil (match everything) instead
+# of LEVEL=1; no fixture deletes by heading through such an entry.
+lisp/org-canvas-core-heading.el :: or->and :: (query (or (plist-get entry :query) "LEVEL=1")))
+
+# `org-canvas--inhibit-log-clear' only stops a nested clear from truncating the
+# run's log, and the delete report is built from the returned results, not the
+# log.  Nothing asserts the log after a delete run.
+lisp/org-canvas-core-heading.el :: t->nil :: (let* ((org-canvas--inhibit-log-clear t)
+
+# A remote item with no id would be indexed under the string "nil"; every
+# fixture list carries one, so the guard's false case is never built.
+lisp/org-canvas-core-push.el :: and->or :: (when (and id (stringp updated))
+
+# No caller passes a bare number to `org-canvas--last-synced-header'; the suite
+# only reaches this with markers, where the two spellings agree.
+lisp/org-canvas-core-push.el :: and->or :: ((and (numberp pom) (buffer-live-p (current-buffer)))
+
+# `header' is computed only when the entry has neither its own timestamp nor a
+# fallback, and is then only the text of a conflict report; no fixture has
+# such an entry.
+lisp/org-canvas-core-push.el :: or->and :: (header (unless (or own-time fallback)
+
+# For the errors the suite raises `(caddr err)' is nil and `(string-match-p
+# "[Tt]imeout" "nil")' is nil, so both spellings answer nil.  The guard
+# matters only for a three-element error value, which nothing here produces.
+lisp/org-canvas-core-push.el :: and->or :: (and error-thrown (string-match-p "[Tt]imeout\\|timed out"
+
+# `(append PARAMS nil)' copies the list; `(append PARAMS t)' makes an improper
+# one.  The mocked request ignores query parameters, so the tail is never read.
+lisp/org-canvas-core-push.el :: nil->t :: (search-params (append (or params `(("search_term" . ,title))) nil))
+
+# Dropping the default `search_term' changes a request the mock ignores: it
+# answers by handing back the fixture list whatever the parameters.
+lisp/org-canvas-core-push.el :: or->and :: (search-params (append (or params `(("search_term" . ,title))) nil))
+
+# This only picks which field the "Found exact match" log line prints, and no
+# fixture carries an item with both an id and a url.
+lisp/org-canvas-core-push.el :: or->and :: (or (alist-get 'id found) (alist-get 'url found)))
+
+# A twin with no id would be returned as the recovery match instead of ignored.
+# Every fixture twin carries an id.
+lisp/org-canvas-core-push.el :: and->or :: (and found (org-canvas--push-item-id found id-key) found))
+
+# No fixture supplies POST-URL (the argument is for a caller that posts to a
+# child endpoint), and the mutated form passes nil where the `or' passes the
+# course endpoint.  The mocked request ignores the endpoint it is given.
+lisp/org-canvas-core-push.el :: or->and :: (let ((new-endpoint (or post-url (org-canvas-api-course-endpoint endpoint))))
+
+# No fixture makes the retrying POST fail with a non-timeout error, which is the
+# case the conjunction exists to separate from a timeout.
+lisp/org-canvas-core-push.el :: and->or :: (if (and find-fn (org-canvas--timeout-error-p post-err))
+
+# `org-canvas--conflict-check' returns nil or `(conflict . response)', so a
+# non-nil CONFLICT-RESULT is always a conflict and the disjunction agrees.
+lisp/org-canvas-core-push.el :: and->or :: (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
+
+# Every remote item this comparison sees carries `position'; the 0 is a guard
+# for a field the suite always supplies, and the mutated nil would signal in
+# `(/= pa pb)'.
+lisp/org-canvas-core-push.el :: or->and :: (let ((pa (or (alist-get 'position a) 0))
+
+# This arm runs only when the positions differ, so `<' and `<=' decide alike.
+lisp/org-canvas-core-push.el :: lt->le :: (cond ((/= pa pb) (< pa pb))
+
+# Both ids are numbers in every comparison the suite makes; the disjunction
+# would take the numeric branch for a non-numeric id, which no fixture has.
+lisp/org-canvas-core-push.el :: and->or :: ((and (numberp ia) (numberp ib)) (< ia ib))
+
+# Equal ids name the same item, and the `string<' fallback answers nil on equal
+# strings either way.
+lisp/org-canvas-core-push.el :: lt->le :: ((and (numberp ia) (numberp ib)) (< ia ib))
+
+# TITLE here only names the adopted item in two log lines; the id lookup and the
+# adoption itself read the twins, not the title.
+lisp/org-canvas-core-push.el :: or->and :: (title (or (plist-get data :title) (plist-get data :name))))
+
+# This is the field name in the "reports no %s to restamp" debug line, not
+# the `alist-get' that reads it: inverted, the message prints nil where it
+# printed `updated_at', and no fixture asserts that string.  The read itself
+# is at the line above and is caught.
+lisp/org-canvas-core-push.el :: or->and :: title (or field 'updated_at))
+
+# The flag is cleared at the top of every call and read nowhere between one
+# entry and the next, so leaving it set on the way out is unobservable.
+lisp/org-canvas-core-push.el :: nil->t :: (plist-put ctx :remote-touched nil))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-core-sync.el :: t->nil :: (let ((title (org-get-heading t t t t)))
+
+# The fallback reads CANVAS_URL when CANVAS_ID is absent; inverted it returns
+# the url whenever CANVAS_ID is present.  This branch runs only when the
+# response carried no id, and no fixture both stamps CANVAS_ID on the heading
+# and comes back without one.
+lisp/org-canvas-core-sync.el :: or->and :: (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
+
+# CANVAS-ID is only tested for presence here, and every fixture response carries
+# an id or a url but not both, so the inverted form reads the same nil.
+lisp/org-canvas-core-sync.el :: or->and :: (canvas-id (or (plist-get data :canvas-id)
+
+# Only the "Synced '...'" message's title changes; no fixture asserts those
+# strings through a feature that leaves :title-key at its default.
+lisp/org-canvas-core-sync.el :: or->and :: (title (plist-get data (or (org-canvas--ctx-get ctx :title-key) :title)))
+
+# The counter is initialised to 0 and 0 is true in Elisp, so `(or 0 0)' and
+# `(and 0 0)' are both 0 -- the same value when absent, and the stored count
+# when present.
+lisp/org-canvas-core-sync.el :: or->and :: (plist-put counters :dry-run (1+ (or (plist-get counters :dry-run) 0))))
+
+# Same as the :dry-run counter above: initialised to 0, and 0 is true.
+lisp/org-canvas-core-sync.el :: or->and :: (plist-put counters :pulled (1+ (or (plist-get counters :pulled) 0)))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-core-sync.el :: t->nil :: (let ((note (org-canvas--sync-deleted-note (org-get-heading t t t t))))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-core-sync.el :: t->nil :: (let ((heading-title (org-get-heading t t t t)))
+
+# `(and X nil)' is nil and `(or X nil)' is X, so the mutated form restarts the
+# failed-titles list instead of consing onto it.  No fixture fails two entries
+# in one run, so the list never has anything to lose.
+lisp/org-canvas-core-sync.el :: or->and :: (or (plist-get counters :failed-titles) nil)))
+
+# The verbose summary line: EXTRA-COUNTS is a sum of non-negative counters, so
+# only the zero case differs, and no test asserts which summary prints.
+lisp/org-canvas-core-sync.el :: gt->ge :: (if (> extra-counts 0)
+
+# The seeded car is written only when a push leaves no id at all; no fixture
+# reaches that, and every other read of SYNCED-IDS goes through `(car ...)'
+# and tolerates it.
+lisp/org-canvas-core-sync.el :: nil->t :: (synced-ids (list nil))
+
+# The disjunction fetches a snapshot when only one of the two holds; the mocked
+# API answers it, and the snapshot is consulted only under
+# `org-canvas-detect-conflicts', so the extra request changes no outcome.
+lisp/org-canvas-core-sync.el :: and->or :: (snapshot (when (and org-canvas-detect-conflicts targets)
+
+# The `or' supplies "CANVAS_ID" when a spec leaves :id-property out, and
+# `(and ...)' returns nil instead.  No fixture runs the command this feeds for
+# a feature that leaves the key out, so the inverted default is never
+# consumed.  A coverage gap, not an equivalence: `(org-entry-get (point) nil)'
+# would signal.
+lisp/org-canvas-core-sync.el :: or->and :: (or id-property "CANVAS_ID")
+
+# The `or' supplies "CANVAS_ID" when a spec leaves :id-property out, and
+# `(and ...)' returns nil instead.  No fixture runs the command this feeds for
+# a feature that leaves the key out, so the inverted default is never
+# consumed.  A coverage gap, not an equivalence: `(org-entry-get (point) nil)'
+# would signal.
+lisp/org-canvas-core-sync.el :: or->and :: ,(or id-property "CANVAS_ID") target by))
+
+# The macro's :query default.  Flipped, a sync spec that leaves :query out
+# walks with nil (match every heading) instead of LEVEL=1.  Every feature the
+# suite syncs through this path either sets :query or has a file whose
+# headings are all level 1.
+lisp/org-canvas-core-sync.el :: or->and :: :query (or (plist-get args :query) "LEVEL=1")
+
+# The `or' supplies :title when a spec leaves :title-key out, and `(and ...)'
+# yields nil instead.  A nil key reads no title, so only the finalize log
+# lines and generated docstrings change -- no fixture asserts those strings.
+lisp/org-canvas-core-sync.el :: or->and :: :title-key ,(or title-key :title)
+
+# `org-canvas--inhibit-log-clear' only stops the nested call from truncating the
+# log, and no fixture asserts the log across a run that has a :first-fn.
+lisp/org-canvas-core-sync.el :: t->nil :: (let ((org-canvas--inhibit-log-clear t))
+
+# Not a default in a command body: this is a `format' argument to the generated
+# docstring, so the mutated nil only changes the sentence the documentation
+# prints.
+lisp/org-canvas-core-sync.el :: or->and :: (or (plist-get spec :id-property) "CANVAS_ID"))))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate.el :: t->nil :: (let* ((title (org-get-heading t t t t))
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate.el :: nil->t :: 'error loc nil
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate.el :: nil->t :: 'warning loc nil
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate.el :: t->nil :: :heading (org-get-heading t t t t))
+
+# `org-map-entries' MATCH: no fixture entry is archived or commented, so nil
+# and t walk the same headings.
+lisp/org-canvas-validate.el :: t->nil :: t 'file)))
+
+# Flag flip in `org-back-to-heading': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate.el :: t->nil :: (save-excursion (org-back-to-heading t)
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate.el :: t->nil :: (org-get-heading t t t t))))
+
+# Flag flip in `org-back-to-heading': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate.el :: t->nil :: (org-back-to-heading t)
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate.el :: t->nil :: (let ((heading (org-get-heading t t t t)))
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate.el :: nil->t :: nil
+
+# Every variable in `org-canvas-validate-module-coverage' is bound and set in
+# the suite, so the disjunction is true wherever the conjunction is.  For a
+# bound-but-unset one the mutated form would visit a nil filename.
+lisp/org-canvas-validate.el :: and->or :: (when (and (boundp var) (symbol-value var)
+
+# Every spec file the suite validates exists; the disjunction differs only for a
+# missing one, which it would then visit and read as empty.
+lisp/org-canvas-validate.el :: and->or :: (when (and file (file-exists-p file))
+
+# The fourth element of a `compilation-error-regexp-alist' entry is the
+# file-submatch index; nil means the whole match.  No fixture navigates a
+# validation report buffer.
+lisp/org-canvas-validate.el :: nil->t :: "^\\(.+\\):\\([0-9]+\\): error: " 1 2 nil 2)
+
+# Same alist element as the error entry above: the file-submatch index, and no
+# fixture navigates a report buffer.
+lisp/org-canvas-validate.el :: nil->t :: "^\\(.+\\):\\([0-9]+\\): warning: " 1 2 nil 1)
+
+# Same alist element again, on the note entry.
+lisp/org-canvas-validate.el :: nil->t :: "^\\(.+\\):\\([0-9]+\\): note: " 1 2 nil 0)))
+
+# `font-lock-defaults'' second element is KEYWORDS-ONLY; no test reads the
+# font-lock state of a validation report.
+lisp/org-canvas-validate.el :: t->nil :: '(org-canvas-validate-mode-font-lock-keywords t)))
+
+# NOTE-COUNT is nil or positive; the mutated form would print ", 0 note(s)"
+# where the original prints nothing, and no fixture reports zero notes
+# explicitly.
+lisp/org-canvas-validate.el :: gt->ge :: (if (and note-count (> note-count 0))
+
+# This `cond' arm is reached only with accepted findings, so COUNT is positive.
+lisp/org-canvas-validate.el :: gt->ge :: ((> count 0)
+
+# SKIPPED is the count of files not found; no fixture has one, and the mutated
+# form would print "(0 file(s) not found, skipped)".
+lisp/org-canvas-validate.el :: gt->ge :: (when (> (plist-get stats :skipped) 0)
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate-content.el :: nil->t :: :property nil
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate-content.el :: t->nil :: (let ((row (list (org-get-heading t t t t) "" "" outcome)))
+
+# Flag flip in `org-end-of-subtree': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate-content.el :: t->nil :: (end (save-excursion (org-end-of-subtree t) (point)))
+
+# When the rubric heading ends at point there is no criterion to find either
+# way, and the same "no criteria" finding results.
+lisp/org-canvas-validate-content.el :: lt->le :: (when (< (point) end)
+
+# The bounded `re-search-forward' cannot match at end, so the loop ends on the
+# next test either way.
+lisp/org-canvas-validate-content.el :: lt->le :: (while (and (< (point) end)
+
+# The count is only tested with `zerop'; one criterion leaves it non-zero
+# whether it counts up or down.
+lisp/org-canvas-validate-content.el :: 1+->1- :: (setq criterion-count (1+ criterion-count))
+
+# Both flags on `org-end-of-subtree' share this key: INVISIBLE-OK, and the
+# TO-HEADING flag that stops at the next heading rather than before it.  No
+# fixture buffer is folded, and the newline TO-HEADING adds is skipped by the
+# loop's next search.
+lisp/org-canvas-validate-content.el :: t->nil :: (let ((subtree-end (save-excursion (org-end-of-subtree t t) (point))))
+
+# `split-string' OMIT-NULLS: no fixture TO value has an empty or trailing field,
+# which is the only input the two spellings disagree on.
+lisp/org-canvas-validate-content.el :: t->nil :: (org-canvas--validate-departed-people (split-string rest ";" t "[ \t]+")))))
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate-content.el :: nil->t :: 'warning loc nil
+
+# The PENDING-SYNC flag only decides whether the report collapses this finding
+# into its "pending first sync" summary; no fixture asserts that for this one.
+lisp/org-canvas-validate-content.el :: t->nil :: t))))))))
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate-content.el :: nil->t :: 'error loc nil
+
+# Flag flip in `org-back-to-heading': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate-content.el :: t->nil :: (org-back-to-heading t)
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate-content.el :: nil->t :: 'warning row-loc nil
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate-content.el :: nil->t :: 'error row-loc nil
+
+# PAREN non-nil only makes the alternation a capturing group: `regexp-opt'
+# keeps it grouped either way, so with nil it is the same regexp with a shy
+# group and it matches exactly the same text.  Nothing reads match group 1 --
+# the one caller, `org-canvas--validate-settings-raw-html', reads only group
+# 0 -- so the mutant is equivalent rather than a gap.
+lisp/org-canvas-validate-content.el :: t->nil :: t)
+
+# No fixture syllabus writes an HTML tag in upper case, which is the only input
+# the case folding changes.
+lisp/org-canvas-validate-content.el :: t->nil :: (case-fold-search t)
+
+# Flag flip in `org-end-of-subtree': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate-content.el :: t->nil :: (let ((end (save-excursion (org-end-of-subtree t) (point)))
+
+# `outline-next-heading' is unbounded, so the disjunction would keep walking
+# headings past END.  The fixture has no heading after the course's subtree.
+lisp/org-canvas-validate-content.el :: and->or :: (while (and (outline-next-heading) (< (point) end))
+
+# END is the last position of the subtree, and no heading can begin there, so
+# the exclusive and inclusive bounds stop at the same place.
+lisp/org-canvas-validate-content.el :: lt->le :: (while (and (outline-next-heading) (< (point) end))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate-content.el :: t->nil :: (let ((heading (org-get-heading t t t t)))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate-content.el :: t->nil :: (push (cons (line-number-at-pos) (org-get-heading t t t t))
+
+# `split-string' OMIT-NULLS: no fixture override row has an empty or trailing
+# name, which is the only input the two spellings disagree on.
+lisp/org-canvas-validate-grading.el :: t->nil :: (let* ((names (split-string text ";" t "[ \t]+"))
+
+# Every override row fixture names a target.  With an empty first cell the
+# disjunction calls `string-empty-p' on nil where the original skips the row.
+lisp/org-canvas-validate-grading.el :: and->or :: (when (and target (not (string-empty-p target)))
+
+# `split-string' OMIT-NULLS on SUBMISSION: an empty field would still not equal
+# "external_tool", so the member test answers the same.
+lisp/org-canvas-validate-grading.el :: t->nil :: (external-p (member "external_tool" (split-string submission "," t "[ \t]+")))
+
+# Every grading-periods file the suite supplies exists, and the mutated form
+# differs only for a missing one.
+lisp/org-canvas-validate-grading.el :: and->or :: (when (and file (file-exists-p file)
+
+# An empty periods file maps no entries, so entering the buffer adds nothing.
+lisp/org-canvas-validate-grading.el :: gt->ge :: (> (file-attribute-size (file-attributes file)) 0))
+
+# Flag flip in `org-end-of-subtree': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate-grading.el :: t->nil :: (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+
+# Only a cutoff of exactly 100 differs, and no fixture has one; 100 is a legal
+# cutoff the original accepts.
+lisp/org-canvas-validate-grading.el :: gt->ge :: ((> (cdr row) 100)
+
+# Only two equal consecutive cutoffs differ, and no fixture has a repeated
+# cutoff.
+lisp/org-canvas-validate-grading.el :: gt->ge :: unless (> (cdr a) (cdr b))
+
+# The loop's value is discarded and `return t' stops it at the same point, so
+# the form of the early exit does not show.
+lisp/org-canvas-validate-grading.el :: nil->t :: and return nil)
+
+# KNOWN is only searched with `member' for string ids, so keeping the nils the
+# original drops changes no answer.
+lisp/org-canvas-validate-grading.el :: nil->t :: (delq nil (org-map-entries
+
+# Every spec file the suite supplies exists; as above, the disjunction differs
+# only for a missing one.
+lisp/org-canvas-validate-grading.el :: and->or :: (when (and file (file-exists-p file))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate-grading.el :: t->nil :: :heading (org-get-heading t t t t))
+
+# Flag flip in `org-end-of-subtree': INVISIBLE-OK, and no fixture buffer is folded.
+lisp/org-canvas-validate-grading.el :: t->nil :: (let ((end (save-excursion (org-end-of-subtree t) (point)))
+
+# Custom type metadata for `org-canvas-validate-lock-after-due-hours'; the
+# `(const :tag "Off" ...)' value is read by Custom, not by the suite.
+lisp/org-canvas-validate-grading.el :: nil->t :: :type '(choice (const :tag "Off" nil)
+
+# `split-string' OMIT-NULLS over the online submission types: extra empty
+# fields would not intersect, so the `cl-intersection' answer is unchanged.
+lisp/org-canvas-validate-grading.el :: t->nil :: "," t "[ \t]+")
+
+# The tolerance is small and no fixture lands exactly on it.
+lisp/org-canvas-validate-grading.el :: gt->ge :: (> (abs (- total 100)) org-canvas--validate-weight-sum-tolerance))
+
+# Reached only when the total is already off by more than the tolerance, so it
+# is never exactly 100.
+lisp/org-canvas-validate-grading.el :: lt->le :: (if (< total 100) "inflated" "deflated")))))))
+
+# `split-string' always returns a list here, so the first conjunct is never nil.
+# An empty first cell would make the disjunction call `string-trim' on nil,
+# and no fixture row has one.
+lisp/org-canvas-validate-grading.el :: and->or :: (when (and fields (car fields))
+
+# `org-canvas--validate-make-issue's PROPERTY is the report's property column
+# and the key a VALIDATE_ACCEPT rule may name; every fixture that asserts it
+# asserts a real string, and none asserts it for this finding.
+lisp/org-canvas-validate-grading.el :: nil->t :: 'warning row-loc nil
+
+# The PENDING-SYNC flag only decides whether the report collapses this finding
+# into its "pending first sync" summary; no fixture asserts that for this one.
+lisp/org-canvas-validate-grading.el :: t->nil :: t)
+
+# `split-string' OMIT-NULLS over a SUBMISSION list: an empty field is not in
+# VALID-VALUES, so it would be reported as bad, and no fixture value produces
+# one.
+lisp/org-canvas-validate-issue.el :: t->nil :: (let ((parts (split-string value "," t "[ \t]+")))
+
+# The `condition-case' variable is written and never read, and Emacs accepts `t'
+# there; the handler's value is unchanged, so the malformed-timestamp test
+# still passes.
+lisp/org-canvas-validate-issue.el :: nil->t :: (condition-case nil
+
+# The universal-time flag is applied to both timestamps; dropping it from one
+# shifts the comparison by the local UTC offset, and every fixture date is far
+# enough in the past that the ordering holds either way.
+lisp/org-canvas-validate-issue.el :: t->nil :: (iso (format-time-string "%Y-%m-%dT%H:%M:%SZ" encoded t))
+
+# Same pair as above, from the `now' side.
+lisp/org-canvas-validate-issue.el :: t->nil :: (now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t)))
+
+# The inner `condition-case' variable, written and never read; the handler
+# still returns nil.
+lisp/org-canvas-validate-issue.el :: nil->t :: (and value (condition-case nil
+
+# `cl-remove-duplicates' on findings that are `equal': either direction keeps one
+# copy, and only a finding reported twice would show which.  No fixture makes
+# one.
+lisp/org-canvas-validate-issue.el :: t->nil :: :test #'equal :from-end t))
+
+# Flag flip in `org-get-heading': no fixture heading carries a tag, a
+# TODO keyword, a priority or a comment, so the title is the same either
+# way.  Same reasoning as the files.el/sections.el section above.
+lisp/org-canvas-validate-issue.el :: t->nil :: (heading (org-get-heading t t t t))
