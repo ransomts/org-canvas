@@ -1104,10 +1104,10 @@ did not carry the field, or when RESPONSE does not report it."
 
 (defun org-canvas--registry-echo-mismatches (feature sent response)
   "Return FEATURE's registered properties Canvas stored otherwise than SENT.
-FEATURE names a property registry entry (\"quizzes\"); SENT is the
+FEATURE names a registry entry (\"quizzes\"); SENT is the
 payload's object, inside any wrapper key; RESPONSE is Canvas's reply
 to the create or update.  Each element is (ORG-PROP SENT STORED)."
-  (let ((props (gethash feature org-canvas--property-registry)))
+  (let ((props (org-canvas--registry-entry feature)))
     (delq nil (mapcar (lambda (spec)
                         (org-canvas--registry-echo-field spec sent response))
                       (plist-get props :properties)))))

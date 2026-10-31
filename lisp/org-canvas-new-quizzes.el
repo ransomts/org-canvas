@@ -917,8 +917,7 @@ re-pull found rather than left standing (issue #320), while a field
 QUIZ does not carry leaves the property alone."
   (let ((assignment-id (or (alist-get 'assignment_id quiz)
                            (alist-get 'id quiz)))
-        (specs (plist-get (gethash "new-quizzes"
-                                   org-canvas--property-registry)
+        (specs (plist-get (org-canvas--registry-entry "new-quizzes")
                           :properties)))
     (org-canvas-org-save-sync-state pos assignment-id "CANVAS_ASSIGNMENT_ID")
     (dolist (spec specs)

@@ -60,7 +60,7 @@ filters out items before the orphan check."
 
 (cl-defun org-canvas--find-orphans-for-feature (feature)
   "Find orphaned Canvas items for FEATURE.
-FEATURE is a plist from `org-canvas--feature-registry'.
+FEATURE is a plist from `org-canvas--feature-entries'.
 Returns a list of orphaned items (alists from the Canvas API),
 or nil if no orphans found."
   (let* ((name (plist-get feature :name))
@@ -203,7 +203,7 @@ none were tried or all succeeded."
   (let ((all-orphans nil)
         (total-orphans 0))
     ;; Scan each feature
-    (dolist (feature org-canvas--feature-registry)
+    (dolist (feature (org-canvas--feature-entries))
       (let ((name (plist-get feature :name)))
         (message "Scanning %s..." name)
         (org-canvas--log-info org-canvas--logger "[Orphan] Scanning %s..." name)

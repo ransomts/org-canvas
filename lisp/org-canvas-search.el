@@ -217,8 +217,8 @@ match alone with WHOLE non-nil)."
         (pull (plist-get surface :pull-feature)))
     (cond
      (feature (org-canvas--registry-find-feature feature))
-     (pull (cl-find pull org-canvas--pull-feature-registry
-                    :key (lambda (f) (plist-get f :name)) :test #'string=)))))
+     (pull (cl-find-if (lambda (f) (org-canvas--feature-is-p f pull))
+                       org-canvas--pull-feature-registry)))))
 
 (defun org-canvas--search-surface-items (surface)
   "Return the objects of SURFACE, each read in full where it asks.

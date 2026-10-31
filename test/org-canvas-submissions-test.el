@@ -373,14 +373,15 @@
 
 (describe "org-canvas--submissions-rubrics-file"
   (it "returns the file the rubrics feature registers"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Rubrics" :endpoint "rubrics"
-                       :file-var 'test-org-canvas-subs--rubrics-file))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Rubrics" :endpoint "rubrics"
+                  :file-var 'test-org-canvas-subs--rubrics-file))))
       (expect (org-canvas--submissions-rubrics-file)
               :to-equal test-org-canvas-subs--rubrics-file)))
 
   (it "is nil when no rubrics feature is registered"
-    (let ((org-canvas--feature-registry nil))
+    (let ((org-canvas--registry (make-hash-table :test 'equal)))
       (expect (org-canvas--submissions-rubrics-file) :to-be nil))))
 
 (describe "org-canvas--submissions-render-rubric-properties"

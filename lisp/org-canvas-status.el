@@ -54,12 +54,12 @@ id property, plus the files no registry provides, sorted by label.
 table, so a module that registers is counted without another list to
 edit.  With nothing registered, the fallback table above: the
 autoloaded-with-core-only case."
-  (if (and (null org-canvas--feature-registry)
+  (if (and (null (org-canvas--feature-entries))
            (null org-canvas--pull-feature-registry))
       org-canvas--status-fallback-content-types
     (let ((rows (copy-sequence org-canvas--status-unregistered-content-types))
           (seen (mapcar #'cadr org-canvas--status-unregistered-content-types)))
-      (dolist (entry (append org-canvas--feature-registry
+      (dolist (entry (append (org-canvas--feature-entries)
                              org-canvas--pull-feature-registry))
         (let ((file-var (plist-get entry :file-var))
               (id-prop (plist-get entry :id-property)))

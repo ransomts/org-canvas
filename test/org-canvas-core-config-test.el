@@ -777,43 +777,49 @@ ran alone (issue #260)."
 (describe "org-canvas-register-pull-item-fn"
   (it "records the function on the feature entry"
     ;; Issue #67: the entry is what at-point dispatch reads.
-    (let ((org-canvas--feature-registry
-           (list (list :name "Pages" :endpoint "pages"
-                       :id-property "CANVAS_URL"))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Pages" :endpoint "pages"
+                  :id-property "CANVAS_URL"))))
       (org-canvas-register-pull-item-fn "pages" #'ignore)
-      (expect (plist-get (car org-canvas--feature-registry) :pull-item-fn)
+      (expect (plist-get (org-canvas--registry-entry "pages") :pull-item-fn)
               :to-be #'ignore)))
 
   (it "matches the way the sync pipeline spells a feature name"
     ;; "assignment-groups" from the macro, "Assignment Groups" in the registry.
-    (let ((org-canvas--feature-registry
-           (list (list :name "Assignment Groups" :endpoint "assignment_groups"))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Assignment Groups" :endpoint "assignment_groups"))))
       (org-canvas-register-pull-item-fn "assignment-groups" #'ignore)
-      (expect (plist-get (car org-canvas--feature-registry) :pull-item-fn)
+      (expect (plist-get (org-canvas--registry-entry "Assignment Groups")
+                         :pull-item-fn)
               :to-be #'ignore)))
 
   (it "is a no-op for a feature that is not registered"
-    (let ((org-canvas--feature-registry (list (list :name "Pages"))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry (list :name "Pages"))))
       (org-canvas-register-pull-item-fn "Nonexistent" #'ignore)
-      (expect (plist-get (car org-canvas--feature-registry) :pull-item-fn)
+      (expect (plist-get (org-canvas--registry-entry "pages") :pull-item-fn)
               :to-be nil))))
 
 (describe "org-canvas--registry-feature-for-file"
   (it "finds the feature whose file-var points at the file"
     (let* ((temp (make-temp-file "feature-for-file-" nil ".org"))
            (org-canvas-pages-file temp)
-           (org-canvas--feature-registry
-            (list (list :name "Pages" :file-var 'org-canvas-pages-file)
-                  (list :name "Assignments"
-                        :file-var 'org-canvas-assignments-file))))
+           (org-canvas--registry
+            (test-org-canvas-make-registry
+             (list :name "Pages" :file-var 'org-canvas-pages-file)
+             (list :name "Assignments"
+                   :file-var 'org-canvas-assignments-file))))
       (unwind-protect
           (expect (plist-get (org-canvas--registry-feature-for-file temp) :name)
                   :to-equal "Pages")
         (delete-file temp))))
 
   (it "returns nil for a file no feature claims"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Pages" :file-var 'org-canvas-pages-file))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Pages" :file-var 'org-canvas-pages-file))))
       (expect (org-canvas--registry-feature-for-file "/tmp/not-a-course-file.org")
               :to-be nil)))
 
@@ -821,9 +827,75 @@ ran alone (issue #260)."
     (expect (org-canvas--registry-feature-for-file nil) :to-be nil))
 
   (it "ignores a feature whose file variable is unbound"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Ghost" :file-var 'org-canvas--no-such-file-var))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Ghost" :file-var 'org-canvas--no-such-file-var))))
       (expect (org-canvas--registry-feature-for-file "/tmp/x.org") :to-be nil))))
+
+(describe "One registry entry per feature (issue #572)"
+  (it "files a feature's two registrations under one id"
+    (let ((org-canvas--registry (make-hash-table :test 'equal)))
+      (org-canvas-register-feature
+       :name "Assignment Groups" :endpoint "assignment_groups"
+       :id-property "CANVAS_ID")
+      (org-canvas-register-properties "assignment-groups"
+        :label "Assignment Groups"
+        :file-var 'org-canvas-assignment-groups-file
+        :query "LEVEL=2+WEIGHT={.}"
+        :properties '((:org-prop "WEIGHT" :data-key :weight :type number)))
+      (expect (hash-table-count org-canvas--registry) :to-equal 1)
+      (expect (plist-get (org-canvas--registry-entry "Assignment Groups")
+                         :endpoint)
+              :to-equal "assignment_groups")
+      (expect (plist-get (org-canvas--registry-entry "assignment-groups")
+                         :properties)
+              :not :to-be nil)
+      (expect (org-canvas--feature-is-p
+               (org-canvas--registry-entry "Assignment Groups")
+               'assignment-groups)
+              :to-be-truthy)
+      (expect (org-canvas--feature-is-p
+               (org-canvas--registry-entry "Assignment Groups")
+               'assignments)
+              :to-be nil)))
+
+  (it "labels a section by its name when the registration gives no label"
+    (let ((org-canvas--registry (make-hash-table :test 'equal)))
+      (org-canvas-register-properties "Assignment Groups"
+        :properties '((:org-prop "A" :type string)))
+      (expect (plist-get (org-canvas--registry-entry "Assignment Groups")
+                         :label)
+              :to-equal "Assignment Groups")
+      (expect (plist-get (car (org-canvas--get-validate-specs-from-registry))
+                         :label)
+              :to-equal "Assignment Groups")))
+
+  (it "makes a minimal entry for a file that registers no feature"
+    (let ((org-canvas--registry (make-hash-table :test 'equal)))
+      (org-canvas-register-properties "settings"
+        :label "Settings" :file-var 'org-canvas-settings-file
+        :query "LEVEL=1" :always-on-canvas t
+        :properties '((:org-prop "NAME" :data-key :name :type string)))
+      (expect (gethash "settings" org-canvas--registry) :not :to-be nil)
+      (expect (org-canvas--feature-entries) :to-be nil)
+      (expect (org-canvas--registry-find-feature "settings") :to-be nil)
+      (expect (length (org-canvas--get-validate-specs-from-registry))
+              :to-equal 1)))
+
+  (it "keeps the first registration of each half"
+    (let ((org-canvas--registry (make-hash-table :test 'equal)))
+      (org-canvas-register-feature :name "Pages" :endpoint "pages")
+      (org-canvas-register-feature :name "pages" :endpoint "other")
+      (org-canvas-register-properties "pages" :label "Pages"
+        :properties '((:org-prop "A" :type string)))
+      (org-canvas-register-properties "Pages" :label "Other"
+        :properties '((:org-prop "B" :type string)))
+      (expect (plist-get (org-canvas--registry-entry "pages") :endpoint)
+              :to-equal "pages")
+      (expect (mapcar (lambda (prop) (plist-get prop :org-prop))
+                      (plist-get (org-canvas--registry-entry "pages")
+                                 :properties))
+              :to-equal '("A")))))
 
 (describe "org-canvas--path truename (issue #97)"
   (it "resolves a symlinked org-canvas-directory to one spelling"

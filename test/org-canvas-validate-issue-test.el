@@ -1755,7 +1755,7 @@
        (org-back-to-heading)
        (let* ((props (mapcar #'org-canvas--property-to-validate-prop
                              (plist-get (gethash "assignments"
-                                                 org-canvas--property-registry)
+                                                 org-canvas--registry)
                                         :properties)))
               (issues (org-canvas--validate-entry-properties props loc)))
          (expect (length issues) :to-equal 1)
@@ -1818,7 +1818,7 @@
        (org-back-to-heading)
        (let* ((props (mapcar #'org-canvas--property-to-validate-prop
                              (plist-get (gethash "assignments"
-                                                 org-canvas--property-registry)
+                                                 org-canvas--registry)
                                         :properties)))
               (issues (org-canvas--validate-entry-properties props loc)))
          (expect (length issues) :to-equal 1)
@@ -1936,7 +1936,7 @@
 (describe "VALIDATE_ACCEPT in the property registry (issue #538)"
   (it "is a local-only string on each type whose findings carry a check"
     (dolist (feature '("assignments" "quizzes" "discussions"))
-      (let* ((props (plist-get (gethash feature org-canvas--property-registry)
+      (let* ((props (plist-get (gethash feature org-canvas--registry)
                                :properties))
              (spec (cl-find "VALIDATE_ACCEPT" props
                             :key (lambda (p) (plist-get p :org-prop))

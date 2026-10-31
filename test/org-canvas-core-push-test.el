@@ -1846,8 +1846,9 @@ Returns (RESULT . WARNINGS)."
 
 (describe "org-canvas--sync-item-scheduled-fn (issue #453)"
   (it "answers the running feature's scheduled-dates function"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Widgets" :scheduled-dates-fn #'ignore))))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Widgets" :scheduled-dates-fn #'ignore))))
       (expect (org-canvas--sync-item-scheduled-fn
                (org-canvas--sync-make-ctx :feature-name "widgets"))
               :to-be #'ignore)))
@@ -1862,12 +1863,13 @@ Returns (RESULT . WARNINGS)."
         (org-back-to-heading)
         (let ((org-canvas-detect-conflicts t)
               (org-canvas-conflict-strategy nil)
-              (org-canvas--feature-registry
-               (list (list :name "Widgets" :endpoint "widgets"
-                           :scheduled-dates-fn
-                           (lambda (item)
-                             (list (cons "unlock_at"
-                                         (alist-get 'unlock_at item)))))))
+              (org-canvas--registry
+               (test-org-canvas-make-registry
+                (list :name "Widgets" :endpoint "widgets"
+                      :scheduled-dates-fn
+                      (lambda (item)
+                        (list (cons "unlock_at"
+                                    (alist-get 'unlock_at item)))))))
               (calls nil))
           (cl-letf (((symbol-function 'org-canvas-api-request)
                      (lambda (method url &rest _)
@@ -2315,9 +2317,9 @@ Returns (RESULT . WARNINGS)."
 ;;;; Push Echo Check (issue #349)
 
 (defmacro test-org-canvas-with-echo-registry (&rest body)
-  "Run BODY with a scratch \"echo\" feature in the property registry."
+  "Run BODY with a scratch \"echo\" feature in the registry."
   (declare (indent 0))
-  `(let ((org-canvas--property-registry (make-hash-table :test 'equal)))
+  `(let ((org-canvas--registry (make-hash-table :test 'equal)))
      (org-canvas-register-properties
       "echo"
       :properties

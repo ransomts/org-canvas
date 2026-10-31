@@ -647,14 +647,14 @@ is pulled.  Nothing asks to confirm.  Return one plist per entry,
 
 (defun org-canvas--delete-heading-feature (singular)
   "Return the feature registry entry whose singular name is SINGULAR, or nil."
-  (cl-find singular org-canvas--feature-registry
+  (cl-find singular (org-canvas--feature-entries)
            :key (lambda (f) (org-canvas--singularize
                              (org-canvas--delete-heading-key f)))
            :test #'equal))
 
 (defun org-canvas--delete-heading-key (feature)
-  "Return FEATURE's registry name as the property registry keys it."
-  (downcase (replace-regexp-in-string " " "-" (plist-get feature :name))))
+  "Return FEATURE's registry id, the key its property specs live under."
+  (symbol-name (org-canvas--feature-id feature)))
 
 (defun org-canvas--delete-heading-fn-for (feature)
   "Return the delete by heading of FEATURE, a function of TARGET and BY.
@@ -667,9 +667,7 @@ its property registration's query, as the drift report finds it."
                    name org-canvas--delete-heading-fns "delete"))
          (singular (org-canvas--singularize name))
          (entry (or (org-canvas--delete-heading-feature singular) (error "No feature %s" singular)))
-         (props (gethash (org-canvas--delete-heading-key entry)
-                         org-canvas--property-registry))
-         (query (or (plist-get props :query) "LEVEL=1")))
+         (query (or (plist-get entry :query) "LEVEL=1")))
     (lambda (target by)
       (org-canvas--delete-heading-runtime deleter entry singular query target by))))
 

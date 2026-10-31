@@ -177,7 +177,7 @@ needs.  OVERRIDES is an alist of (ORG-PROP . PLIST) with optional
 returning the item fields that carry it) and `:parsed' (a function of
 the parsed plist returning the value).  Returns (CHECKED . MISMATCHES)
 where each mismatch is (ORG-PROP EXPECTED PARSED)."
-  (let ((entry (gethash registry-key org-canvas--property-registry))
+  (let ((entry (gethash registry-key org-canvas--registry))
         (mismatches nil)
         (checked 0))
     (dolist (spec (plist-get entry :properties))

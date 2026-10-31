@@ -4860,7 +4860,7 @@ Unpushed wording.
 :END:
 "
      (org-back-to-heading t)
-     (let ((specs (plist-get (gethash "quizzes" org-canvas--property-registry)
+     (let ((specs (plist-get (gethash "quizzes" org-canvas--registry)
                              :properties)))
        (expect (org-canvas--diff-compare-fields
                 specs (point) '((id . 1) (anonymous_submissions . :json-false)))

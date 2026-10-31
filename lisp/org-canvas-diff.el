@@ -218,24 +218,22 @@ an id, so comparing them would need the same resolution a sync does.")
 ;;;; Registry Lookup
 
 (defun org-canvas--diff-normalize-name (name)
-  "Return NAME lowercased with spaces, underscores and dashes removed.
-The same normalization `org-canvas--registry-find-feature' applies, so
-every spelling of a feature name means the same feature."
-  (downcase (replace-regexp-in-string "[ _-]" "" name)))
+  "Return NAME in the spelling the drift report compares names by.
+`org-canvas--feature-id-string' folds spaces, underscores and dashes to
+one lower-case spelling, the registry's id; the report drops the dashes
+too, the way it matched names before the id existed, so
+\"assignmentgroups\" still means \"Assignment Groups\" (issue #572)."
+  (replace-regexp-in-string "-" "" (org-canvas--feature-id-string name)))
 
 (defun org-canvas--diff-find-properties (feature-name)
-  "Return the property registry entry for FEATURE-NAME, or nil.
-Matches the way `org-canvas--registry-find-feature' does, so the
-feature registry's \"Assignment Groups\" finds the property registry's
-\"assignment-groups\"."
-  (let ((norm (org-canvas--diff-normalize-name feature-name))
-        found)
-    (maphash (lambda (key plist)
-               (when (and (not found)
-                          (string= (org-canvas--diff-normalize-name key) norm))
-                 (setq found plist)))
-             org-canvas--property-registry)
-    found))
+  "Return FEATURE-NAME's registry entry when property specs are registered.
+The drift report compares a heading's properties, so an entry with no
+`:properties' — a feature whose file the report reads another way — is
+not one.  The lookup is on the id, so the feature registry's
+\"Assignment Groups\" finds the specs its property registration added to
+the same entry (issue #572)."
+  (let ((entry (org-canvas--registry-entry feature-name)))
+    (and (plist-member entry :properties) entry)))
 
 (defun org-canvas--diff-feature-excluded-p (name)
   "Return non-nil when feature NAME is excluded from the drift report.
@@ -263,18 +261,22 @@ Every feature registry entry, then each pull-only entry that declares
 `:drift-report' (`org-canvas-register-pull-feature'): New Quizzes list
 from the quiz service, so they stay out of the registry the orphan
 scan and prune read, and join the report here instead (issue #313)."
-  (append org-canvas--feature-registry
+  (append (org-canvas--feature-entries)
           (cl-remove-if-not (lambda (f) (plist-get f :drift-report))
                             org-canvas--pull-feature-registry)))
 
 (defun org-canvas--diff-find-feature (name)
   "Return the entry of `org-canvas--diff-features' named NAME, or nil.
-Names match the way the registry matches them."
-  (let ((norm (org-canvas--diff-normalize-name name)))
-    (cl-find-if (lambda (f)
-                  (string= norm (org-canvas--diff-normalize-name
-                                 (plist-get f :name))))
-                (org-canvas--diff-features))))
+A registered feature answers on its id, one hash read; a pull-only
+entry has no id in the registry, and any spelling of a registered
+name that the id fold does not cover is matched by name as before
+\(issue #572)."
+  (or (org-canvas--registry-find-feature name)
+      (let ((norm (org-canvas--diff-normalize-name name)))
+        (cl-find-if (lambda (f)
+                      (string= norm (org-canvas--diff-normalize-name
+                                     (plist-get f :name))))
+                    (org-canvas--diff-features)))))
 
 
 ;;;; Per-Feature Comparison
@@ -351,7 +353,7 @@ ID-FIELD may be a list of fields tried in order, as a New Quiz's
 
 (defun org-canvas--diff-compare-title (props entry item title-field)
   "Return (TITLE ORG CANVAS) when ITEM's title is not ENTRY's heading, or nil.
-PROPS is the feature's property registry entry, and only one that
+PROPS is the feature's registry entry, and only one that
 declares `:compare-title' takes part; TITLE-FIELD names the Canvas
 field.  The push sends the heading as the title, so a rename in the
 web UI is undone by the next push, and the report used to say only
@@ -370,7 +372,7 @@ is left out: its title is the target's, read by its own module."
 (defun org-canvas--diff-entry (entry index specs &optional props modified-field
                                      title-field)
   "Compare local ENTRY against the remote INDEX using property SPECS.
-PROPS, the feature's property registry entry, enables the body
+PROPS, the feature's registry entry, enables the body
 comparison when it names a `:body-api-key' (issue #83), and the title
 comparison when it declares `:compare-title' with TITLE-FIELD the
 Canvas field (issue #498).

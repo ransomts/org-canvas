@@ -862,7 +862,7 @@ Drop by.
       (expect (org-canvas--calendar-all-day-comparable-p (point) nil) :to-be-truthy)))
 
   (it "declares the predicate and the validator in the registry"
-    (let* ((props (gethash "calendar-events" org-canvas--property-registry))
+    (let* ((props (gethash "calendar-events" org-canvas--registry))
            (all-day (cl-find "ALL_DAY" (plist-get props :properties)
                              :key (lambda (s) (plist-get s :org-prop))
                              :test #'string=)))

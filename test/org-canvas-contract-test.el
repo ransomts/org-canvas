@@ -388,7 +388,7 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
                          (or (alist-get module org-canvas-contract--read-features
                                         nil nil #'string=)
                              module)))
-               (props (gethash module org-canvas--property-registry)))
+               (props (gethash module org-canvas--registry)))
           ;; A pull-only module has no registered feature; its reads
           ;; are checked by their own spec below.
           (when (and (org-canvas-contract--read-op module 'list)

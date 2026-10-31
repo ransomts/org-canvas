@@ -146,7 +146,7 @@ for an enum or timestamp) is what the transform drops; TYPE is
 boolean, enum, timestamp, number or string, and drives the transform,
 the payload and the pull alike; VALUES is the enum's allowed values,
 enums only.  Adding a setting is one line here plus its registry
-entry — the property registry feeds validate, diff and the manual,
+entry — its property specs feed validate, diff and the manual,
 this list the pipeline.  POST_POLICY and COURSE_IMAGE stay
 hand-written in each pass: a GraphQL mutation, a file upload.  The
 late policy fields live in `org-canvas--late-policy-field-specs' with

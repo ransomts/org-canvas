@@ -782,14 +782,14 @@ Returns the result and whether the file's buffer was left modified."
   (it "adds the New Quizzes pull entry after the feature registry"
     (let ((features (org-canvas--diff-features)))
       (expect (length features)
-              :to-equal (1+ (length org-canvas--feature-registry)))
+              :to-equal (1+ (length (org-canvas--feature-entries))))
       (expect (plist-get (car (last features)) :name) :to-equal "New Quizzes")))
 
   (it "leaves out a pull-only entry that does not ask for the report"
     (let ((org-canvas--pull-feature-registry
            (list (list :name "Side" :file-var 'x))))
       (expect (length (org-canvas--diff-features))
-              :to-equal (length org-canvas--feature-registry))))
+              :to-equal (length (org-canvas--feature-entries)))))
 
   (it "keeps New Quizzes out of the registry the orphan scan and prune read"
     (expect (org-canvas--registry-find-feature "New Quizzes") :to-be nil))

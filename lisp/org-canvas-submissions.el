@@ -612,7 +612,7 @@ The late-note draft names it (issue #484)."
   "Return the Org file registered for the feature whose endpoint is ENDPOINT.
 Read through the feature registry so this module depends on no feature
 module.  Nil when the feature is not loaded."
-  (let* ((feature (cl-find endpoint org-canvas--feature-registry
+  (let* ((feature (cl-find endpoint (org-canvas--feature-entries)
                            :key (lambda (f) (plist-get f :endpoint))
                            :test #'equal))
          (var (and feature (plist-get feature :file-var))))

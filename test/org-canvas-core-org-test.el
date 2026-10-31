@@ -388,8 +388,9 @@
 
 (describe "org-canvas--delete-cleared-property-names"
   (it "derives the set from the feature registry and the registered stamps"
-    (let ((org-canvas--feature-registry
-           '((:name "A" :id-property "CANVAS_SLUG")))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "A" :id-property "CANVAS_SLUG")))
           (org-canvas--id-property-registry '("CANVAS_THING_ID")))
       (expect (org-canvas--delete-id-property-names)
               :to-have-same-items-as

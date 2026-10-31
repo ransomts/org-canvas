@@ -11,7 +11,7 @@ changing it -- most of these were expensive to learn.
 
 Related narratives live where their mechanism is documented:
 
-- =design.org= -- pipeline macros, property registry (=:remote-fn=,
+- =design.org= -- pipeline macros, the registry's property specs (=:remote-fn=,
   =:compare-p=), global sync summary, complexity patterns, key lessons
 - =api-interaction.org= -- HTTP transport and the PATCH fallback, error
   handling rules, conflict baseline rules, duplicate-title guard, dry-run

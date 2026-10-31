@@ -23,7 +23,7 @@ in =documentation/architecture/decisions.org= -- the issue post-mortems
 (rubrics update in place, quiz publish sequencing, module-item
 reconciliation, bulk publish, the drift report's rules) live there, and
 the macro reference blocks (=org-canvas-define-sync= options,
-=org-canvas-define-payload=, the property registry's =:remote-fn= and
+=org-canvas-define-payload=, the registry entry's =:remote-fn= and
 =:compare-p=) are in =design.org=.
 
 * Step 1: Create the Module File
@@ -466,7 +466,7 @@ Each entry needs a unique key binding and a label.
 
 * Step 9: Add Validation Rules
 
-Validation reads the property registry.  The
+Validation reads the registry's property specs.  The
 =org-canvas-register-properties= call from Step 1 is the single source
 for the parser, the offline validator (=org-canvas-validate=), the
 drift report and the manual's generated Property Reference; there is

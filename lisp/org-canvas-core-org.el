@@ -133,7 +133,7 @@ the stamps of `org-canvas--id-property-registry' (issue #331)."
    (append '("CANVAS_ID" "CANVAS_URL")
            (delq nil (mapcar (lambda (feature)
                                (plist-get feature :id-property))
-                             org-canvas--feature-registry))
+                             (org-canvas--feature-entries)))
            org-canvas--id-property-registry)))
 
 (defun org-canvas--delete-cleared-property-names ()
@@ -408,8 +408,7 @@ only safe for a property all its registrations agree on."
   (if registry-key
       (seq-find (lambda (spec)
                   (equal (plist-get spec :org-prop) org-prop))
-                (plist-get (gethash registry-key
-                                    org-canvas--property-registry)
+                (plist-get (org-canvas--registry-entry registry-key)
                            :properties))
     (catch 'found
       (maphash
@@ -417,7 +416,7 @@ only safe for a property all its registrations agree on."
          (dolist (spec (plist-get feature-plist :properties))
            (when (string= (plist-get spec :org-prop) org-prop)
              (throw 'found spec))))
-       org-canvas--property-registry)
+       org-canvas--registry)
       nil)))
 
 (defun org-canvas-org-save-sync-state (pom id &optional id-prop)
@@ -647,7 +646,7 @@ re-sync instead of being skipped as unchanged."
 
 ;; Feature registry for orphan detection is populated dynamically
 ;; by `org-canvas-register-feature' calls in each feature module.
-;; See `org-canvas--feature-registry' in org-canvas-core-config.el.
+;; See `org-canvas--registry' in org-canvas-core-config.el.
 
 (defun org-canvas--strip-statistics-cookie (title)
   "Remove Org statistics cookies like [1/3] or [33%] from TITLE.
