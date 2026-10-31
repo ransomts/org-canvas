@@ -102,6 +102,14 @@
 (require 'org-canvas-submissions-grades)
 (require 'org-canvas-submissions-reports)
 (require 'org-canvas-submissions-uploads)
+;; The submissions module split by concern (issue #570): the grading file
+;; itself above, the detail and summary views, the pull path, conflict
+;; resolution, the comment bank and sent comments, and the push path.
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-entry)
+(require 'org-canvas-submissions-conflict)
+(require 'org-canvas-submissions-comment-items)
+(require 'org-canvas-submissions-push)
 (require 'org-canvas-messages)
 (require 'org-canvas-setup)
 

@@ -41,6 +41,16 @@
 ;; export uses.
 (require 'org-canvas-submissions)
 (require 'org-canvas-submissions-comments)
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-comment-items)
+
+;; The push half of the split submissions module requires this file, so what
+;; this file shares with it is declared, never required (a cycle).
+(declare-function org-canvas--submissions-parse-score
+                  "org-canvas-submissions-push" (score-string))
+(declare-function org-canvas--submissions-clear-score-p
+                  "org-canvas-submissions-push" (text))
 
 (defconst org-canvas--submissions-verify-buffer "*canvas-verify*"
   "Buffer the verification report is rendered into.")

@@ -54,6 +54,9 @@
 ;; reader the submissions module uses for a grading file.
 (require 'org-canvas-submissions)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+
 ;; assignments.el owns the course-wide GraphQL read of #350; it is a
 ;; feature module, so it is declared and never required.
 (declare-function org-canvas--assignment-graphql-read "org-canvas-assignments"

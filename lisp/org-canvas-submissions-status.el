@@ -76,6 +76,11 @@
 ;; files the submissions module writes, by their paths and header.
 (require 'org-canvas-submissions)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-render)
+(require 'org-canvas-submissions-entry)
+(require 'org-canvas-submissions-push)
+
 (defconst org-canvas--submissions-status-buffer-name "*canvas-submissions-status*"
   "Name of the buffer the grading queue is rendered in.")
 

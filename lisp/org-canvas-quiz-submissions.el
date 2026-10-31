@@ -49,6 +49,9 @@
 ;; (as adopt requires diff).
 (require 'org-canvas-submissions)
 
+;; The rest of the submissions library, split by concern (issue #570).
+(require 'org-canvas-submissions-entry)
+
 ;;;; Fetching
 
 (defun org-canvas--quiz-submissions-fetch-quizzes ()
