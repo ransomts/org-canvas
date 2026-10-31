@@ -1,0 +1,42 @@
+name: auto-merge
+
+# `allow_auto_merge` on the repository only permits auto-merge; it does
+# not arm it.  Without this, a green pull request waits until somebody
+# runs `gh pr merge --auto --rebase` or presses the button (issue #602).
+#
+# Arming is not merging: branch protection still decides when it may
+# land, so this changes who presses the button, not what may merge.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  arm:
+    # A draft is not ready to merge on green, and a pull request from a
+    # fork gets a read-only token that cannot arm anything.
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Arm rebase auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # A pull request that is already merged, or whose repository
+          # has stopped allowing auto-merge, needs no red check mark;
+          # say so and leave the merge to a person.
+          gh pr merge "$PR" --repo "$REPO" --auto --rebase \
+            || echo "::warning::could not arm auto-merge; merge by hand once green."

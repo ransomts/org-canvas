@@ -1,0 +1,5 @@
+* Changed
+- #602 A pull request arms rebase auto-merge when it is opened,
+  reopened, un-drafted or pushed to, so a green one merges without
+  anyone pressing the button.  Branch protection still decides what may
+  merge; a draft or a pull request from a fork is left alone.
