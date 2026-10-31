@@ -35,7 +35,9 @@
 5.6 test/org-canvas-dry-run-test.el
 5.7 test/org-canvas-files-test.el
 11.1 test/org-canvas-fuzz-test.el
-2.2 test/org-canvas-gradebook-test.el
+0.7 test/org-canvas-gradebook-report-test.el
+0.7 test/org-canvas-gradebook-scores-test.el
+0.9 test/org-canvas-gradebook-test.el
 2.1 test/org-canvas-grading-periods-test.el
 2.2 test/org-canvas-grading-schemes-test.el
 1.9 test/org-canvas-graphql-contract-test.el
