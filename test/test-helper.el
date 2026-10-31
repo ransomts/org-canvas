@@ -168,6 +168,26 @@ recomputes are bound too, so nothing survives BODY."
        (cl-progv ,vars (mapcar #'symbol-value ,vars)
          ,@body))))
 
+(defun test-org-canvas-make-registry (&rest entries)
+  "Return a fresh registry holding ENTRIES, in the order given.
+Each entry is a plist as `org-canvas-register-feature' would store it:
+it is given its registry id, the `:feature' mark and a registration
+order, unless it names one of those itself.  Pass `:feature nil' for a
+file section that only registered property specs (issue #572)."
+  (let ((registry (make-hash-table :test 'equal))
+        (order (length entries)))
+    (dolist (entry entries)
+      (let ((entry (copy-sequence entry)))
+        (unless (plist-member entry :id)
+          (setq entry (plist-put entry :id (org-canvas--feature-id entry))))
+        (unless (plist-member entry :feature)
+          (setq entry (plist-put entry :feature t)))
+        (setq entry (plist-put entry :order order)
+              order (1- order))
+        (puthash (symbol-name (org-canvas--feature-id entry))
+                 entry registry)))
+    registry))
+
 (defvar test-org-canvas--course-globals-baseline
   (mapcar (lambda (var) (cons var (default-value var)))
           (test-org-canvas-course-global-vars))

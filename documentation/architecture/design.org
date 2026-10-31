@@ -127,7 +127,7 @@ runs (issues #48, #104, #124).
 graph LR
     INSTRUCTOR["instructor in Emacs"]
     ORG[("the course Org files<br/>source of truth, and the database")]
-    REG[("property registry<br/>Org property and Canvas field")]
+    REG[("registry entry<br/>Org property and Canvas field")]
     CTX[("run context<br/>per run: answers, counters")]
     SNAP[("remote snapshot<br/>per run: list state")]
     PARSE(["Parse<br/>parse-entry"])
@@ -643,9 +643,31 @@ errors with =M-g n= / =M-g p= and visit source with =RET=.
 3. Validation sees all files at once (cross-file checks)
 4. Faster feedback loop (no network round-trips)
 
-* The Property Registry
+* One Registry Entry per Feature
 
-*Centralized Property Registry:*
+*One registry, both halves:* a module registers a feature twice — what
+Canvas lists it as (=org-canvas-register-feature=) and what its
+headings carry (=org-canvas-register-properties=) — and both calls
+fill one entry of =org-canvas--registry= (issue #572).  There is no
+separate property registry to resolve a feature out of by name: the
+entry holds =:endpoint=, =:file-var= and the rest beside =:properties=,
+=:query= and =:label=.
+
+*Identity is an id symbol, not a display name.* The entry carries =:id=,
+its name canonicalized once at registration (=org-canvas--feature-id=:
+"Assignment Groups", "assignment_groups" and "assignment-groups" are
+all =assignment-groups=).  The hash is keyed by that id as a string so
+the declarative macros' literal =:registry-key= stays one =gethash=.
+Code that needs to know /which/ feature it holds asks
+=org-canvas--feature-is-p= and compares ids; nothing asks
+=(equal (plist-get feature :name) "Assignments")= any more.  A file
+that registers only property specs — settings.org, people.org, the
+child levels of a file that does have a feature — gets a minimal entry
+with no =:feature= mark, which the orphan scan and the drift report
+skip, as they always did.
+
+A module's property half, as announcements registers it:
+
 #+begin_src elisp
 (org-canvas-register-properties "announcements"
   :label "Announcements"

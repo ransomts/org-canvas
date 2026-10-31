@@ -399,9 +399,113 @@ Populated at module load time.  Used by `org-canvas--recompute-file-paths'.")
   (unless (assq var-symbol org-canvas--file-var-registry)
     (push (cons var-symbol filename) org-canvas--file-var-registry)))
 
-(defvar org-canvas--feature-registry nil
-  "List of feature plists for orphan detection.
-Populated at module load time by `org-canvas-register-feature'.")
+;;; --- The Feature Registry (issue #572)
+;;
+;; One entry per feature, holding both halves of what the package knows
+;; about it: what Canvas lists it as (`:endpoint', `:file-var',
+;; `:id-field', `:skip-fn', `:web-pages' ...) and what its headings
+;; carry (`:properties', `:query', `:body-api-key' ...).  A module fills
+;; the first half with `org-canvas-register-feature' and the second with
+;; `org-canvas-register-properties'; both edit the same entry, which is
+;; also keyed by one identity, so nothing has to resolve one registry
+;; from the other by string.
+;;
+;; The identity is an id symbol, `org-canvas--feature-id': the name
+;; canonicalized once, when the entry is registered.  "Assignment
+;; Groups", "assignment_groups" and "assignment-groups" are all the id
+;; `assignment-groups', and code that needs to know *which* feature it
+;; holds asks `org-canvas--feature-is-p', never `(equal ... "Assignments")'.
+;;
+;; The hash is keyed by the id as a string so that the declarative
+;; macros (`org-canvas-define-payload' and friends, which expand a
+;; literal `:registry-key' into a `gethash') keep reading it by the
+;; spelling their module wrote.  Every other reader goes through
+;; `org-canvas--registry-entry'.
+
+(defvar org-canvas--registry (make-hash-table :test 'equal)
+  "The registry: one entry per feature, keyed by canonical id string.
+Populated at module load time by `org-canvas-register-feature' and
+`org-canvas-register-properties'; see the commentary above.")
+
+(defvaralias 'org-canvas--property-registry 'org-canvas--registry
+  "Superseded by `org-canvas--registry' (issue #572).
+The declarative macros expand their `:registry-key' into a direct
+`gethash' on the registry, so the old name remains as an alias that
+reads the same table.")
+
+(defun org-canvas--feature-id-string (feature)
+  "Return FEATURE's canonical id as a string.
+FEATURE is a feature name (string or symbol) or a registry entry.
+Case, spaces, underscores and runs of dashes all fold to one lower-case,
+hyphen-separated spelling, so every spelling of a name is one id.  This
+is the only place a name is normalized: an entry stores the id its
+registration produced, and lookups canonicalize one name, never a table
+full of them."
+  (let ((name (cond ((consp feature) (or (plist-get feature :name) ""))
+                    ((symbolp feature) (symbol-name feature))
+                    (t (format "%s" feature)))))
+    (downcase (replace-regexp-in-string
+               "-+" "-"
+               (replace-regexp-in-string "[ _]+" "-" (string-trim name))))))
+
+(defun org-canvas--feature-id (feature)
+  "Return FEATURE's registry id, a symbol.
+FEATURE is a registry entry or a feature name, string or symbol.  An
+entry answers the `:id' it was registered with; a name is canonicalized
+through `org-canvas--feature-id-string'.  Compare ids with `eq', as
+`org-canvas--feature-is-p' does, never display names (issue #572)."
+  (if (and (consp feature) (plist-get feature :id))
+      (plist-get feature :id)
+    (intern (org-canvas--feature-id-string feature))))
+
+(defun org-canvas--feature-is-p (feature id)
+  "Return non-nil when FEATURE, a registry entry, is the feature ID names.
+ID is a registry id symbol or any spelling of a feature name.  The
+comparison is on the id, so a caller that branches on what a feature is
+spells no display name (issue #572)."
+  (eq (org-canvas--feature-id feature) (org-canvas--feature-id id)))
+
+(defun org-canvas--registry-entry (feature)
+  "Return the registry entry FEATURE names, or nil.
+FEATURE is a registry entry, an id symbol, or any spelling of a name.
+The lookup is one hash read on the id, so a caller that spells the name
+differently cannot silently miss (issue #572)."
+  (gethash (symbol-name (org-canvas--feature-id feature))
+           org-canvas--registry))
+
+(defun org-canvas--registry-merge (entry plist)
+  "Set ENTRY's keys from PLIST, in order, and return ENTRY.
+ENTRY may be nil, in which case the plist is the entry."
+  (while plist
+    (setq entry (plist-put entry (car plist) (cadr plist))
+          plist (cddr plist)))
+  entry)
+
+(defun org-canvas--registry-store (entry)
+  "Record ENTRY in the registry under its id and return it.
+An entry is stamped with the registration order `:order' the first time
+it is stored, so `org-canvas--feature-entries' can hand the features
+back in the order modules loaded them."
+  (unless (plist-get entry :order)
+    (setq entry (plist-put entry :order
+                           (1+ (hash-table-count org-canvas--registry)))))
+  (puthash (symbol-name (org-canvas--feature-id entry))
+           entry org-canvas--registry)
+  entry)
+
+(defun org-canvas--feature-entries ()
+  "Return the registry's feature entries, newest registration first.
+Only an entry `org-canvas-register-feature' created is a feature.  A
+file section `org-canvas-register-properties' registered on its own —
+settings.org, people.org, the child levels of a file that has a feature
+\(module items, quiz questions) — names headings no sync lists at an
+endpoint, so the orphan scan and the drift report never walk it."
+  (sort (cl-loop for entry being the hash-values of org-canvas--registry
+                 when (plist-get entry :feature)
+                 collect entry)
+        (lambda (a b)
+          (> (or (plist-get a :order) 0)
+             (or (plist-get b :order) 0)))))
 
 (defun org-canvas-register-feature (&rest plist)
   "Register a feature for orphan detection and at-point dispatch.
@@ -453,12 +557,21 @@ from the remote item alone, so a bare stub is enough to pull into.
 `org-canvas-pull-at-point' then works from anywhere in the entry's
 subtree, the drift report's pull verb takes an EXTRA row into a new
 heading, and `org-canvas-adopt-at-point' fills a stub it adopts.
-Classic quizzes declare it (issue #295)."
-  (let ((name (plist-get plist :name)))
-    (unless (cl-find name org-canvas--feature-registry
-                     :key (lambda (f) (plist-get f :name))
-                     :test #'string=)
-      (push plist org-canvas--feature-registry))))
+Classic quizzes declare it (issue #295).
+
+The entry this creates is one per feature: its `:name' yields the id
+`org-canvas--feature-id' answers, and a later
+`org-canvas-register-properties' by any spelling of that name attaches
+the property half to it rather than filing a second entry (issue #572).
+Registering the same feature again does nothing; the first registration
+wins."
+  (let* ((id (org-canvas--feature-id (plist-get plist :name)))
+         (entry (gethash (symbol-name id) org-canvas--registry)))
+    (unless (plist-get entry :feature)
+      (setq entry (org-canvas--registry-merge
+                   (or entry (list :id id)) plist)
+            entry (plist-put entry :feature t))
+      (org-canvas--registry-store entry))))
 
 (defun org-canvas-register-pull-item-fn (feature-name fn)
   "Record FN as FEATURE-NAME's pull-item function in the feature registry.
@@ -469,18 +582,17 @@ heading in any file without a command per module (issue #67).  No-op
 when the feature is not registered, so load order does not matter."
   (let ((entry (org-canvas--registry-find-feature feature-name)))
     (when entry
-      (plist-put entry :pull-item-fn fn))))
+      (org-canvas--registry-store (plist-put entry :pull-item-fn fn)))))
 
 (defun org-canvas--registry-find-feature (feature-name)
-  "Return the feature registry entry whose name matches FEATURE-NAME, or nil.
-Matching ignores case, spaces, underscores and dashes: the sync
-pipeline names features like \"assignment-groups\" while the registry
-labels them \"Assignment Groups\"."
-  (let ((norm (lambda (s) (downcase (replace-regexp-in-string "[ _-]" "" s)))))
-    (cl-find-if (lambda (f)
-                  (string= (funcall norm (plist-get f :name))
-                           (funcall norm feature-name)))
-                org-canvas--feature-registry)))
+  "Return the feature registry entry FEATURE-NAME names, or nil.
+Any spelling of the name answers the same entry: matching is on the id
+canonicalized at registration, so the sync pipeline's
+\"assignment-groups\" and the registry's \"Assignment Groups\" are one
+entry.  Nil for a name no `org-canvas-register-feature' created — a file
+that only registered properties is not a feature."
+  (let ((entry (org-canvas--registry-entry feature-name)))
+    (and (plist-get entry :feature) entry)))
 
 (defun org-canvas--registry-entry-for-file (file entries)
   "Return the first of ENTRIES whose `:file-var' names FILE, or nil.
@@ -501,7 +613,7 @@ Matches on the truename of the feature's `:file-var', so a command run
 in a course buffer can tell which feature it is looking at without
 being told — whichever spelling of a symlinked directory either side
 uses (issue #97)."
-  (org-canvas--registry-entry-for-file file org-canvas--feature-registry))
+  (org-canvas--registry-entry-for-file file (org-canvas--feature-entries)))
 
 (defun org-canvas--feature-file (feature)
   "Return the Org file FEATURE's registry entry writes, or nil.
@@ -595,9 +707,10 @@ feature (issue #313).  The orphan scan and prune still never see it:
 they read only the feature registry."
   (let ((name (plist-get plist :name)))
     (setq org-canvas--pull-feature-registry
-          (cons plist (cl-remove name org-canvas--pull-feature-registry
-                                 :key (lambda (e) (plist-get e :name))
-                                 :test #'equal)))))
+          (cons (append (list :id (org-canvas--feature-id name)) plist)
+                (cl-remove name org-canvas--pull-feature-registry
+                           :key (lambda (e) (plist-get e :name))
+                           :test #'equal)))))
 
 (defun org-canvas--pull-feature-for-file (file)
   "Return the entry a single-item pull or adoption of FILE works from.
@@ -714,13 +827,14 @@ the .gitignore beside it, which is created when missing (issue #549)."
         "[Student data] Added %s to %s" name (expand-file-name ".gitignore" directory))
       'added))))
 
-;;;; 1d. Property Registry
-
-(defvar org-canvas--property-registry (make-hash-table :test 'equal)
-  "Hash-table keyed by feature name (string), values are property spec plists.
-Each plist has keys :file-var, :query, :properties, and optionally
-:date-order and :structural-fn.  Populated at module load time by
-`org-canvas-register-properties'.")
+;;;; 1d. Property Specs
+;;
+;; The property half of a registry entry: what a heading of a feature
+;; carries, how it is read and compared.  There is no separate property
+;; registry (issue #572): `org-canvas-register-properties' completes the
+;; entry `org-canvas-register-feature' created, and only makes an entry
+;; of its own when no feature registered that id (settings.org,
+;; people.org, the child levels of a file that has one).
 
 (defun org-canvas-register-properties (feature-name &rest plist)
   "Register property specs for FEATURE-NAME.
@@ -796,9 +910,27 @@ adds request parameters the drift report's list read needs: pages ask
 for bodies with it (issue #83), assignments for their overrides, which
 the report compares with each heading's table (issue #411).
 
-Does nothing if FEATURE-NAME is already registered (idempotent)."
-  (unless (gethash feature-name org-canvas--property-registry)
-    (puthash feature-name plist org-canvas--property-registry)))
+The specs land on the feature's own registry entry: a module calls
+`org-canvas-register-feature' and `org-canvas-register-properties' with
+the same name, and both halves end up under one id (issue #572).  A file
+that registers properties without a feature — settings.org, people.org,
+the child levels of a file that does have one — gets a minimal entry of
+its own, which is not a feature: the orphan scan and the drift report
+never walk it.
+
+Does nothing if FEATURE-NAME's properties are already registered
+\(idempotent)."
+  (let* ((id (org-canvas--feature-id feature-name))
+         (entry (or (gethash (symbol-name id) org-canvas--registry)
+                    (list :id id :name feature-name))))
+    (unless (plist-member entry :properties)
+      ;; The manual and the validator label a section by :label; the
+      ;; feature's name stands in when a registration gives none
+      ;; (issue #572).
+      (setq entry (org-canvas--registry-merge entry plist)
+            entry (plist-put entry :label
+                             (or (plist-get plist :label) feature-name)))
+      (org-canvas--registry-store entry))))
 
 (defun org-canvas--property-to-validate-prop (prop)
   "Convert a registry property spec PROP to validate.el format.
@@ -840,26 +972,24 @@ declaration is the name a person would type (issue #293)."
          t)))
 
 (defun org-canvas--get-validate-specs-from-registry ()
-  "Build a list of validation specs from the property registry.
+  "Build a list of validation specs from the registry's property half.
 Each spec has :label, :file, :query, :properties, :date-order,
 :structural-fn, :file-fn, :duplicate-titles and :always-on-canvas,
-matching the format of `org-canvas--validate-specs'."
-  (let (specs)
-    (maphash
-     (lambda (feature-name plist)
-       (push (list :label (or (plist-get plist :label) feature-name)
-                   :file (plist-get plist :file-var)
-                   :query (plist-get plist :query)
-                   :properties (mapcar #'org-canvas--property-to-validate-prop
-                                       (plist-get plist :properties))
-                   :date-order (plist-get plist :date-order)
-                   :structural-fn (plist-get plist :structural-fn)
-                   :file-fn (plist-get plist :file-fn)
-                   :duplicate-titles (plist-get plist :duplicate-titles)
-                   :always-on-canvas (plist-get plist :always-on-canvas))
-             specs))
-     org-canvas--property-registry)
-    (nreverse specs)))
+matching the format of `org-canvas--validate-specs'.  Entries without
+`:properties' are features whose file registers no property specs, and
+are skipped (issue #572)."
+  (cl-loop for plist being the hash-values of org-canvas--registry
+           when (plist-member plist :properties)
+           collect (list :label (plist-get plist :label)
+                         :file (plist-get plist :file-var)
+                         :query (plist-get plist :query)
+                         :properties (mapcar #'org-canvas--property-to-validate-prop
+                                             (plist-get plist :properties))
+                         :date-order (plist-get plist :date-order)
+                         :structural-fn (plist-get plist :structural-fn)
+                         :file-fn (plist-get plist :file-fn)
+                         :duplicate-titles (plist-get plist :duplicate-titles)
+                         :always-on-canvas (plist-get plist :always-on-canvas))))
 
 ;;; --- Path Utilities ---
 

@@ -481,11 +481,11 @@
     (dolist (pair '(("assignments" . "description") ("pages" . "body")
                     ("announcements" . "message") ("discussions" . "message")
                     ("quizzes" . "description")))
-      (expect (plist-get (gethash (car pair) org-canvas--property-registry) :body-api-key)
+      (expect (plist-get (gethash (car pair) org-canvas--registry) :body-api-key)
               :to-equal (cdr pair))))
 
   (it "leave modules without a body alone"
-    (expect (plist-get (gethash "modules" org-canvas--property-registry) :body-api-key)
+    (expect (plist-get (gethash "modules" org-canvas--registry) :body-api-key)
             :to-be nil)))
 
 (describe "org-canvas--diff-compare-fields :compare-p (issue #93)"

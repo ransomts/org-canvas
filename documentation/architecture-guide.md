@@ -128,7 +128,9 @@ Option lists, generated names and the reasoning are in `documentation/architectu
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
  :list-params '(("only_announcements" . "true")))
 
-;; Property registry (core-config): one declaration feeds parse, validate, diff and the manual.
+;; The property half of the same entry (core-config): one declaration feeds
+;; parse, validate, diff and the manual.  Any spelling of the name lands on the
+;; entry above, and code asks org-canvas--feature-is-p, never the display name.
 (org-canvas-register-properties "announcements"
   :label "Announcements" :file-var 'org-canvas-announcements-file
   :query "LEVEL=1"                       ; MUST match the sync's heading level
@@ -165,7 +167,7 @@ Option lists, generated names and the reasoning are in `documentation/architectu
 (org-canvas-define-delete-at-point page :endpoint "pages/%s")
 ```
 
-Registry keys that bite: `:remote-fn` when Canvas returns a value nested or renamed (without it every item reports drift), `:compare-p` to exclude a property for an entry, `:query` matching the heading level, `:modified-field` for features whose `updated_at` moves on metadata touches (files use `modified_at`), `:web-pages` naming where a heading lives in the Canvas web interface (`org-canvas-register-web-pages` for a file with no feature entry, #292; `org-canvas-register-pull-feature` likewise gives such a file pull-at-point and adopt-at-point, #297, and with `:drift-report` a section of the drift report, #313), `:list-params` and `:item-params` when a read needs a query parameter to answer what Org holds (assignments read with `override_assignment_dates=false`, or one student's extension comes back as the assignment's own dates, #273) — design.org, "The Property Registry"; api-interaction.org, "Feature Registry URL Resolution"; decisions.org, "Assignment Reads Ask for the Assignment's Own Dates".
+Registry keys that bite: `:remote-fn` when Canvas returns a value nested or renamed (without it every item reports drift), `:compare-p` to exclude a property for an entry, `:query` matching the heading level, `:modified-field` for features whose `updated_at` moves on metadata touches (files use `modified_at`), `:web-pages` naming where a heading lives in the Canvas web interface (`org-canvas-register-web-pages` for a file with no feature entry, #292; `org-canvas-register-pull-feature` likewise gives such a file pull-at-point and adopt-at-point, #297, and with `:drift-report` a section of the drift report, #313), `:list-params` and `:item-params` when a read needs a query parameter to answer what Org holds (assignments read with `override_assignment_dates=false`, or one student's extension comes back as the assignment's own dates, #273) — design.org, "One Registry Entry per Feature"; api-interaction.org, "Feature Registry URL Resolution"; decisions.org, "Assignment Reads Ask for the Assignment's Own Dates".
 
 Modules using `org-canvas-define-parse`: announcements, pages, calendar, group-categories, assignment-groups. Using `org-canvas-define-payload`: group-categories, calendar, pages, announcements, grading-schemes. Custom push (non-standard URLs): group-categories, calendar; custom push because Canvas has no update (grading-schemes: a stamped scheme is compared and skipped, never PUT). Custom sync loops (not macro-based): overrides, quiz accommodations (a table under each quiz reconciled against the quiz's submissions; values are absolute, zeros clear), and the child reconcilers inside quizzes, new-quizzes and modules — see Hard Rule 1. Two levels of one file (outcomes): one `org-canvas-define-sync` per level, the second naming the first with `:first`, and `:prepare` for a value the run fetches once (the root group). A push that owns its change detection (files, whose stored hash is bytes and metadata in two halves): `:hash push` keeps the runner from skipping on or stamping PAYLOAD_HASH, the push answers `skip` when nothing is to send, and `:dry-run push` lets it preview its own tiers under a dry run. Pull-only: sections, grading-periods.
 
@@ -194,7 +196,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - payload builder
 - payload formats, and why they are not converged (#142)
 - Pipeline macros
-- property registry (`:remote-fn` #61/#62, `:compare-p` #93)
+- registry property specs (`:remote-fn` #61/#62, `:compare-p` #93)
 - the grading subsystem map
 - the pipeline as a data flow
 - the run context (#141)

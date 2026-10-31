@@ -339,7 +339,7 @@ fails, so a broken body is reported as unchecked rather than changed."
 
 (defun org-canvas--diff-remote-body (props item)
   "Return (FIELD . HTML), the body of Canvas ITEM, or nil.
-PROPS is the property registry entry: its `:body-remote-fn', when it
+PROPS is the registry entry: its `:body-remote-fn', when it
 names one, reads a body the reply nests (a New Quiz item's, issue
 #322); otherwise the `:body-api-key' field sits at the top level."
   (let ((key (intern (plist-get props :body-api-key)))
@@ -351,7 +351,7 @@ names one, reads a body the reply nests (a New Quiz item's, issue
 
 (defun org-canvas--diff-compare-body (props pom item)
   "Compare the body at POM against Canvas ITEM, as text.
-PROPS is the feature's property registry entry: `:body-api-key' names
+PROPS is the feature's registry entry: `:body-api-key' names
 the Canvas field (description, body, message), the optional
 `:body-fn' the local extractor and `:body-remote-fn' the remote one.
 Returns nil when the feature has no body, ITEM does not carry the

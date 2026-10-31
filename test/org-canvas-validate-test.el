@@ -726,14 +726,14 @@ history and not a finding at all.")
   (it "is declared for the content types that accumulate copies"
     (dolist (key '("pages" "assignments" "quizzes" "new-quizzes"
                    "rubrics" "discussions" "announcements" "modules"))
-      (expect (plist-get (gethash key org-canvas--property-registry)
+      (expect (plist-get (gethash key org-canvas--registry)
                          :duplicate-titles)
               :to-be-truthy)))
 
   (it "is not declared for child levels, whose titles repeat by design"
     ;; Two quizzes may both have a question called "True or false".
     (dolist (key '("quiz-questions" "module-items" "new-quiz-items"))
-      (expect (plist-get (gethash key org-canvas--property-registry)
+      (expect (plist-get (gethash key org-canvas--registry)
                          :duplicate-titles)
               :to-be nil)))
 
@@ -1017,7 +1017,7 @@ history and not a finding at all.")
 
   (it "registers NO_MODULE as a local-only boolean on each checked type"
     (dolist (feature '("assignments" "pages" "quizzes" "discussions" "files"))
-      (let* ((props (plist-get (gethash feature org-canvas--property-registry)
+      (let* ((props (plist-get (gethash feature org-canvas--registry)
                                :properties))
              (spec (cl-find "NO_MODULE" props
                             :key (lambda (p) (plist-get p :org-prop))

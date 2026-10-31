@@ -77,7 +77,7 @@
 ;;;; Fields
 
 (defun org-canvas--drift-props (feature)
-  "Return the property registry entry of FEATURE, a feature entry, or nil."
+  "Return FEATURE's registry entry when property specs are registered, or nil."
   (org-canvas--diff-find-properties (plist-get feature :name)))
 
 (defun org-canvas--drift-body-label (props)
@@ -827,7 +827,7 @@ shows (none); when neither has one there are no lines (issue #567)."
          (remote (org-canvas--rubric-assignment-summary item))
          (shown (or remote
                     (and link
-                         (equal (plist-get feature :name) "Assignments")))))
+                         (org-canvas--feature-is-p feature 'assignments)))))
     (if (not shown)
         ""
       (let ((local (and link (org-canvas--rubric-summary-at-link
@@ -977,7 +977,7 @@ Writes nothing and sends nothing.  Returns the text shown."
 Only an assignment has one: every override Canvas holds for it, read
 from its overrides endpoint, so a date moved in the web UI can be read
 before it is adopted (issue #528).  A failed read says so."
-  (if (not (equal (plist-get feature :name) "Assignments"))
+  (if (not (org-canvas--feature-is-p feature 'assignments))
       ""
     (condition-case err
         (let ((overrides (append (org-canvas-api-request-all-pages

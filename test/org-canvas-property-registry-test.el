@@ -1,9 +1,10 @@
-;;; org-canvas-property-registry-test.el --- Tests for property registry  -*- lexical-binding: t; -*-
+;;; org-canvas-property-registry-test.el --- Tests for registry property specs  -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
-;; Tests for the centralized property registry in org-canvas-core-config.el.
+;; Tests for the property half of `org-canvas--registry' in
+;; org-canvas-core-config.el, the one entry per feature (issue #572).
 
 ;;; Code:
 
@@ -11,13 +12,13 @@
 (require 'test-helper)
 (require 'org-canvas-core)
 
-(describe "Property Registry"
+(describe "The Registry's Property Specs"
   :var (saved-registry)
   (before-each
-    (setq saved-registry org-canvas--property-registry)
-    (setq org-canvas--property-registry (make-hash-table :test 'equal)))
+    (setq saved-registry org-canvas--registry)
+    (setq org-canvas--registry (make-hash-table :test 'equal)))
   (after-each
-    (setq org-canvas--property-registry saved-registry))
+    (setq org-canvas--registry saved-registry))
 
   (describe "org-canvas-register-properties"
     (it "stores a spec in the registry"
@@ -27,7 +28,7 @@
         :properties
         '((:org-prop "PUBLISHED" :data-key :published :type boolean)
           (:org-prop "FRONT_PAGE" :data-key :front_page :type boolean)))
-      (expect (gethash "pages" org-canvas--property-registry) :not :to-be nil))
+      (expect (gethash "pages" org-canvas--registry) :not :to-be nil))
 
     (it "does not overwrite an existing entry"
       (org-canvas-register-properties "pages"
@@ -41,7 +42,7 @@
         :properties
         '((:org-prop "EDITED" :data-key :edited :type boolean)))
       ;; Should still have the original property, not the overwritten one
-      (let* ((spec (gethash "pages" org-canvas--property-registry))
+      (let* ((spec (gethash "pages" org-canvas--registry))
              (props (plist-get spec :properties))
              (first-prop (car props)))
         (expect (plist-get first-prop :org-prop) :to-equal "PUBLISHED")))
@@ -57,9 +58,9 @@
         :query "LEVEL=1"
         :properties
         '((:org-prop "POINTS" :data-key :points :type number)))
-      (expect (hash-table-count org-canvas--property-registry) :to-equal 2)
-      (expect (gethash "pages" org-canvas--property-registry) :not :to-be nil)
-      (expect (gethash "assignments" org-canvas--property-registry) :not :to-be nil)))
+      (expect (hash-table-count org-canvas--registry) :to-equal 2)
+      (expect (gethash "pages" org-canvas--registry) :not :to-be nil)
+      (expect (gethash "assignments" org-canvas--registry) :not :to-be nil)))
 
   (describe "org-canvas--property-to-validate-prop"
     (it "converts a basic property spec"
@@ -478,7 +479,7 @@
     ;; :type is bound before `expect', which shadows it on Emacs 29.
     (let* ((spec (seq-find (lambda (s)
                              (equal (plist-get s :org-prop) "WANT_DOCUMENT_PROCESSOR"))
-                           (plist-get (gethash "assignments" org-canvas--property-registry)
+                           (plist-get (gethash "assignments" org-canvas--registry)
                                       :properties)))
            (spec-type (plist-get spec :type)))
       (expect (plist-get spec :intent-of) :to-equal "DOCUMENT_PROCESSOR")

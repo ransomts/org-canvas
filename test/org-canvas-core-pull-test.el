@@ -1317,14 +1317,14 @@
             :to-throw 'error))
 
   (it "writes every registered property from the item"
-    (let ((org-canvas--property-registry (make-hash-table :test 'equal)))
+    (let ((org-canvas--registry (make-hash-table :test 'equal)))
       (puthash "widgets"
                '(:properties
                  ((:org-prop "PUBLISHED" :data-key :published :type boolean
                    :default t)
                   (:org-prop "POINTS" :data-key :points_possible :type number)
                   (:org-prop "DUE_AT" :data-key :due_at :type timestamp)))
-               org-canvas--property-registry)
+               org-canvas--registry)
       (with-temp-org-buffer
        "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
        (org-back-to-heading)

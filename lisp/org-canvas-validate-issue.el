@@ -411,7 +411,7 @@ Returns a list of warning issues."
 ;; via (require 'org-canvas-core).
 
 (defun org-canvas--validate-specs ()
-  "Return validation specs from the property registry.
+  "Return validation specs from the registry's property half.
 This replaces the former `org-canvas--validate-specs' defconst."
   (org-canvas--get-validate-specs-from-registry))
 

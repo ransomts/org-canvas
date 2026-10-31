@@ -3837,13 +3837,14 @@ Local instructions.
            (test-nq-297--file file)
            (org-canvas--pull-feature-registry
             (list (list :name "Side" :file-var 'test-nq-297--file)))
-           (org-canvas--feature-registry nil))
+           (org-canvas--registry (make-hash-table :test 'equal)))
       (unwind-protect
           (progn
             (expect (plist-get (org-canvas--pull-feature-for-file file) :name)
                     :to-equal "Side")
-            (let ((org-canvas--feature-registry
-                   (list (list :name "Main" :file-var 'test-nq-297--file))))
+            (let ((org-canvas--registry
+                   (test-org-canvas-make-registry
+                    (list :name "Main" :file-var 'test-nq-297--file))))
               (expect (plist-get (org-canvas--pull-feature-for-file file) :name)
                       :to-equal "Main"))
             (expect (org-canvas--pull-feature-for-file nil) :to-be nil))

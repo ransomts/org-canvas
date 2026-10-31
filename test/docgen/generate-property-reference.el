@@ -92,10 +92,14 @@ A boolean's default reads true or false; any other type's, as written."
        "\n"))))
 
 (defun org-canvas-docgen--features-sorted ()
-  "Return registry (feature-name . plist) pairs sorted by label for stability."
+  "Return registry (id . plist) pairs with property specs, sorted by label.
+One registry holds both halves of a feature, so an entry without
+`:properties' has no table to write (issue #572)."
   (let (pairs)
-    (maphash (lambda (name plist) (push (cons name plist) pairs))
-             org-canvas--property-registry)
+    (maphash (lambda (id plist)
+               (when (plist-member plist :properties)
+                 (push (cons id plist) pairs)))
+             org-canvas--registry)
     (sort pairs (lambda (a b)
                   (string< (or (plist-get (cdr a) :label) (car a))
                            (or (plist-get (cdr b) :label) (car b)))))))

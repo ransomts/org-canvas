@@ -999,7 +999,7 @@ Notes.
 :END:
 "
      (org-back-to-heading)
-     (let ((specs (plist-get (gethash "pages" org-canvas--property-registry)
+     (let ((specs (plist-get (gethash "pages" org-canvas--registry)
                              :properties)))
        (expect (org-canvas--diff-compare-fields
                 specs (point)

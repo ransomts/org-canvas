@@ -1,0 +1,2 @@
+* Changed
+- #572 A feature's registry entry carries its property specs too, and code that asks whether a feature is the assignments one no longer compares display names.  No user-visible change.

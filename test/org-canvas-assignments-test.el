@@ -2294,7 +2294,7 @@ An entry whose GRADES-AT is nil maps ID to no schedule."
 (defun test-352-spec (org-prop)
   "Return the assignments registry spec of ORG-PROP."
   (seq-find (lambda (spec) (equal (plist-get spec :org-prop) org-prop))
-            (plist-get (gethash "assignments" org-canvas--property-registry)
+            (plist-get (gethash "assignments" org-canvas--registry)
                        :properties)))
 
 (defun test-352-reply (grades comments)

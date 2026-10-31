@@ -338,13 +338,14 @@
           (kill-buffer "*canvas-status*")))))
 
   (it "derives its content-type table from the registries, sorted by label"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Grading Schemes"
-                       :file-var 'org-canvas-grading-schemes-file
-                       :id-property "CANVAS_ID")
-                 (list :name "Assignments"
-                       :file-var 'org-canvas-assignments-file
-                       :id-property "CANVAS_ID")))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Grading Schemes"
+                  :file-var 'org-canvas-grading-schemes-file
+                  :id-property "CANVAS_ID")
+            (list :name "Assignments"
+                  :file-var 'org-canvas-assignments-file
+                  :id-property "CANVAS_ID")))
           (org-canvas--pull-feature-registry
            (list (list :name "New Quizzes"
                        :file-var 'org-canvas-new-quizzes-file
@@ -357,9 +358,10 @@
                 ("Sections" org-canvas-sections-file "CANVAS_ID")))))
 
   (it "counts each file once, whichever registry holds it"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Pages" :file-var 'org-canvas-pages-file
-                       :id-property "CANVAS_URL")))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Pages" :file-var 'org-canvas-pages-file
+                  :id-property "CANVAS_URL")))
           (org-canvas--pull-feature-registry
            (list (list :name "Wiki Pages" :file-var 'org-canvas-pages-file
                        :id-property "CANVAS_URL"))))
@@ -369,12 +371,13 @@
                 ("Sections" org-canvas-sections-file "CANVAS_ID")))))
 
   (it "skips a registry entry that names no id property"
-    (let ((org-canvas--feature-registry
-           (list (list :name "Assignments"
-                       :file-var 'org-canvas-assignments-file
-                       :id-property "CANVAS_ID")
-                 (list :name "Question Banks"
-                       :file-var 'org-canvas-question-banks-file)))
+    (let ((org-canvas--registry
+           (test-org-canvas-make-registry
+            (list :name "Assignments"
+                  :file-var 'org-canvas-assignments-file
+                  :id-property "CANVAS_ID")
+            (list :name "Question Banks"
+                  :file-var 'org-canvas-question-banks-file)))
           (org-canvas--pull-feature-registry nil))
       (expect (org-canvas--status-content-types)
               :to-equal
@@ -382,7 +385,7 @@
                 ("Sections" org-canvas-sections-file "CANVAS_ID")))))
 
   (it "falls back to the built-in table when nothing has registered"
-    (let ((org-canvas--feature-registry nil)
+    (let ((org-canvas--registry (make-hash-table :test 'equal))
           (org-canvas--pull-feature-registry nil))
       (expect (org-canvas--status-content-types)
               :to-equal org-canvas--status-fallback-content-types))))
@@ -1974,10 +1977,11 @@ while Lab 4 in the same module is still scheduled ahead."
           (progn
             (with-temp-file temp
               (insert "* Outcome 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
-            (let ((org-canvas--feature-registry
-                   (list (list :name "Outcomes" :endpoint "outcome_groups"
-                               :file-var 'org-canvas-outcomes-file
-                               :id-property "CANVAS_ID")))
+            (let ((org-canvas--registry
+                   (test-org-canvas-make-registry
+                    (list :name "Outcomes" :endpoint "outcome_groups"
+                          :file-var 'org-canvas-outcomes-file
+                          :id-property "CANVAS_ID")))
                   (org-canvas-outcomes-file temp))
               (with-current-buffer (find-file-noselect temp)
                 (goto-char (point-min))

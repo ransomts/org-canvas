@@ -285,9 +285,9 @@ to a fresh path under a temp directory, DIR, which BODY may use."
 
 (describe "discussion replies registration"
   (it "registers the file variable and the properties the manual documents"
-    (expect (gethash "discussion-replies" org-canvas--property-registry) :not :to-be nil)
+    (expect (gethash "discussion-replies" org-canvas--registry) :not :to-be nil)
     (expect (mapcar (lambda (p) (plist-get p :org-prop))
-                    (plist-get (gethash "discussion-replies" org-canvas--property-registry) :properties))
+                    (plist-get (gethash "discussion-replies" org-canvas--registry) :properties))
             :to-equal '("CANVAS_ENTRY_ID" "AUTHOR" "AUTHOR_ID" "POSTED_AT" "PARENT_ENTRY_ID")))
 
   (it "is a command, in the pull tiers after discussions"

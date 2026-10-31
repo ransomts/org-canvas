@@ -1017,7 +1017,7 @@ Take a side.
   (it "reports drift on a declared checkpoint property and none on a refused read"
     (let ((specs (cl-remove-if-not
                   (lambda (spec) (string-prefix-p "CHECKPOINT_" (plist-get spec :org-prop)))
-                  (plist-get (gethash "discussions" org-canvas--property-registry) :properties))))
+                  (plist-get (gethash "discussions" org-canvas--registry) :properties))))
       (test-discussions--with-checkpoint-pages
           (list (test-discussions--checkpoint-page
                  (list (test-discussions--checkpoint-node 7 10 nil 4 nil 1))))
@@ -1138,13 +1138,13 @@ Take a side.
     (with-temp-org-buffer "* Debate\n:PROPERTIES:\n:CHECKPOINT_TOPIC_DUE_AT: <2026-10-05 Mon>\n:CHECKPOINT_REPLY_DUE_AT: <2026-10-01 Thu>\n:END:\n"
       (org-back-to-heading)
       (let ((issues (org-canvas--validate-check-date-order
-                     (plist-get (gethash "discussions" org-canvas--property-registry) :date-order)
+                     (plist-get (gethash "discussions" org-canvas--registry) :date-order)
                      '(:file "discussions.org" :line 1 :heading "Debate"))))
         (expect (length issues) :to-equal 1)
         (expect (plist-get (car issues) :property) :to-equal "CHECKPOINT_TOPIC_DUE_AT"))))
 
   (it "is wired as the discussions registry's structural check"
-    (expect (plist-get (gethash "discussions" org-canvas--property-registry) :structural-fn)
+    (expect (plist-get (gethash "discussions" org-canvas--registry) :structural-fn)
             :to-be #'org-canvas--validate-discussion-checkpoints)))
 
 ;;; org-canvas-discussions-test.el ends here

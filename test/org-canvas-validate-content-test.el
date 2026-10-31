@@ -946,7 +946,7 @@ Inline @@html:<b>bold</b>@@ snippet.
         (delete-file file))))
 
   (it "is wired in as the module-items file check"
-    (expect (plist-get (gethash "module-items" org-canvas--property-registry) :file-fn)
+    (expect (plist-get (gethash "module-items" org-canvas--registry) :file-fn)
             :to-be #'org-canvas--validate-module-item-ids)))
 
 (describe "org-canvas--validate-quiz-anonymity (issue #349)"
