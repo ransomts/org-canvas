@@ -223,7 +223,26 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - the token's path and where redaction meets it
 - upload quirks
 
-**`decisions.org`**
+**`decisions.org` and `decisions/`**
+
+`decisions.org` is the index: it lists every section title with a link to the
+file that holds it, so a cross-reference anywhere in the documentation
+(`decisions.org, "A Body Never Introduces a Headline"`) still names something
+you can find. The sections themselves live in seven subject files under
+`decisions/`, and a new decision is appended to the file of its subject while
+the index gains one line:
+
+| file | holds |
+|---|---|
+| `push-and-publish.org` | the push pipeline, publishing, rubrics, module items, duplicates, conflicts, the dry run |
+| `drift-report.org` | what the read-only comparison compares, how rows pair, what each row does |
+| `grading-and-submissions.org` | grading files, the queue, scores, comments, late status, reports, the gradebook |
+| `quizzes.org` | classic and New Quizzes, question formats, accommodations, question banks |
+| `validation-and-verify.org` | the offline validator and the read-back commands |
+| `pulls-and-batch.org` | pulls, bodies, batch mode, live search, pull-at-point |
+| `course-lifecycle.org` | the roster, deletions, credentials, semester rollover, student data |
+
+The topics, one per line:
 
 - a bulk grade push waits for Canvas's `update_grades` job through its Progress, within a timeout, and records baselines and offers posting only once the job completed (#382)
 - a CHANGED row adopts what it names and nothing else (`A`, `org-canvas-diff-adopt-drifts`, `scripts/org-canvas adopt`): each property in its Org spelling, a rename, the body only when asked, the stamp only once every field is written; an EXTRA override row is appended to its table, the other rows untouched; the report compares a title (`:compare-title`) and a silent boolean's declared default (#498)
