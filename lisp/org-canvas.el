@@ -61,6 +61,8 @@
 
 ;; Import Core (Utilities & Globals)
 (require 'org-canvas-core)
+(require 'org-canvas-core-push)
+(require 'org-canvas-core-heading)
 
 ;; Import Feature Modules
 (require 'org-canvas-announcements)
@@ -475,7 +477,7 @@ No properties are modified and no API requests are sent."
 ;; was answering `l' at a conflict prompt during a sync you may not want
 ;; to run yet (issue #67).  The hard part already existed —
 ;; `org-canvas--conflict-pull-local' — and simply had no caller outside
-;; conflict resolution.  The helpers live in org-canvas-core-sync.el,
+;; conflict resolution.  The helpers live in org-canvas-core-heading.el,
 ;; beside the pull by heading that shares them (issue #346).
 
 ;;;###autoload

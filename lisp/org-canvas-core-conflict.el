@@ -18,7 +18,7 @@
 (require 'org-canvas-core-org)
 (require 'org-canvas-core-pull)
 
-(declare-function org-canvas--conflict-baseline-source "org-canvas-core-sync")
+(declare-function org-canvas--conflict-baseline-source "org-canvas-core-push")
 
 (defcustom org-canvas-conflict-strategy nil
   "How to resolve a remote-modified entry without asking.

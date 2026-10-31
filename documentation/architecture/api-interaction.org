@@ -111,7 +111,7 @@ Every consumer of =org-canvas--feature-registry= — the sync snapshot, =org-can
 
 =:scheduled-dates-fn= names the dates at which Canvas moves that timestamp itself, with nothing edited, resolved by =org-canvas--feature-scheduled-dates-fn=: a function of the item as read, answering (LABEL . ISO8601) pairs. Assignments declare =org-canvas--assignment-scheduled-dates= (=unlock_at=, =lock_at=, and each override's, read from the overrides endpoint), since Canvas moves an assignment's =updated_at= a few seconds after its unlock date passes (issue #453). =org-canvas--conflict-check= calls it only once the remote timestamp is newer than the baseline, and a date that passed after the baseline with the timestamp within =org-canvas--scheduled-bump-window= after it is no conflict; decisions.org, "A Bump at a Scheduled Date Is Not a Conflict".
 
-The sync pipeline's own single-item reads follow the same rule through =org-canvas--sync-item-url= (core-sync): the push's =:put-url-fn= when it has one, else the run context's feature and its =:item-url-fn= via =org-canvas--feature-item-url=, and only then =ENDPOINT/ID= under the course. The pre-push conflict check (=org-canvas--conflict-check=, handed the URL by =org-canvas--push-check-and-resolve-conflict=) and the post-fn restamp (=org-canvas--finalize-restamp-updated=) both read through it. Before issue #344 both spelled the course endpoint: every calendar event's check read =/courses/C/calendar_events/ID=, got a 404, logged "proceeding with push without conflict detection" and pushed, so an event edited in the Canvas web UI was overwritten on every sync while the PUT itself, which used =:put-url-fn=, looked healthy. The drift snapshot, the diff, pull-at-point, the orphan scan and the duplicate guard already resolved through the registry or the module's =:find-fn=. A new single-item read in the pipeline takes its URL from =org-canvas--sync-item-url=, never from =org-canvas-api-course-endpoint=.
+The sync pipeline's own single-item reads follow the same rule through =org-canvas--sync-item-url= (core-push): the push's =:put-url-fn= when it has one, else the run context's feature and its =:item-url-fn= via =org-canvas--feature-item-url=, and only then =ENDPOINT/ID= under the course. The pre-push conflict check (=org-canvas--conflict-check=, handed the URL by =org-canvas--push-check-and-resolve-conflict=) and the post-fn restamp (=org-canvas--finalize-restamp-updated=) both read through it. Before issue #344 both spelled the course endpoint: every calendar event's check read =/courses/C/calendar_events/ID=, got a 404, logged "proceeding with push without conflict detection" and pushed, so an event edited in the Canvas web UI was overwritten on every sync while the PUT itself, which used =:put-url-fn=, looked healthy. The drift snapshot, the diff, pull-at-point, the orphan scan and the duplicate guard already resolved through the registry or the module's =:find-fn=. A new single-item read in the pipeline takes its URL from =org-canvas--sync-item-url=, never from =org-canvas-api-course-endpoint=.
 
 ** Query String Building
 
@@ -489,7 +489,7 @@ functions and pull functions that import Canvas items.
 * Error Recovery in Push Operations
 
 The generic push function =org-canvas--push-to-api= (in
-=lisp/org-canvas-core-sync.el=) handles three error scenarios.
+=lisp/org-canvas-core-push.el=) handles three error scenarios.
 
 ** Timeout Recovery
 
@@ -1019,7 +1019,7 @@ the others. Progress messages show =[N/M]= counts.
 
 =org-canvas-define-delete-at-point= also registers the generated command
 in =org-canvas--delete-heading-fns=, which =org-canvas-delete-headings=
-(core-sync, and =scripts/org-canvas delete=) reads to delete headings by
+(core-heading, and =scripts/org-canvas delete=) reads to delete headings by
 title or Canvas id.  The confirmation is its own variable, never
 =org-canvas--confirm= or a stubbed =y-or-n-p=, so a script that answers
 it leaves every other question in the run standing; in batch an

@@ -37,7 +37,9 @@ control integration.
     ├── 15 feature modules (announcements, pages, assignments, ...)
     │     │
     │     └── org-canvas-core (meta-require)
-    │           ├── org-canvas-core-sync   (pipeline, conflict, delete)
+    │           ├── org-canvas-core-heading (at-point and by-heading commands)
+    │           ├── org-canvas-core-push   (drift, conflict, recovery, echo)
+    │           ├── org-canvas-core-sync   (pipeline core, counters, define-sync)
     │           ├── org-canvas-core-pull   (pull helpers, macros, summary)
     │           ├── org-canvas-core-html   (HTML export and conversion)
     │           ├── org-canvas-core-org    (Org property helpers, batch files)
