@@ -53,19 +53,32 @@
             :to-be-truthy)))
 
 ;; A key bound twice in one prefix reaches only one of its commands; the
-;; dispatch menu once bound z and P twice each.
+;; dispatch menu once bound z and P twice each.  The layout is walked
+;; structurally rather than by index — transient has moved its groups
+;; and their plists between versions, and the suite runs on three — so
+;; the walk is split one helper per shape (issue #588): a layout's
+;; columns, a column's suffix specs, a suffix's key.
+(defun test-org-canvas-transient--columns (layout)
+  "Return the columns that one transient prefix LAYOUT holds."
+  (if (vectorp layout) (aref layout 2) layout))
+
+(defun test-org-canvas-transient--column-suffixes (column)
+  "Return the suffix specs that one layout COLUMN holds."
+  (when (vectorp column)
+    (aref column (if (numberp (aref column 0)) 3 2))))
+
+(defun test-org-canvas-transient--suffix-key (suffix)
+  "Return the :key that one list-shaped SUFFIX binds."
+  (plist-get (if (numberp (car suffix)) (nth 2 suffix) (cdr suffix)) :key))
+
 (defun test-org-canvas-transient--keys (prefix-sym)
   "Return every suffix key in PREFIX-SYM's layout, duplicates kept."
-  (let* ((layout (get prefix-sym 'transient--layout))
-         (columns (if (vectorp layout) (aref layout 2) layout))
-         keys)
-    (dolist (col columns)
-      (when (vectorp col)
-        (let ((suffixes (aref col (if (numberp (aref col 0)) 3 2))))
-          (dolist (suffix suffixes)
-            (when (listp suffix)
-              (let ((plist (if (numberp (car suffix)) (nth 2 suffix) (cdr suffix))))
-                (push (plist-get plist :key) keys)))))))
+  (let (keys)
+    (dolist (column (test-org-canvas-transient--columns
+                      (get prefix-sym 'transient--layout)))
+      (dolist (suffix (test-org-canvas-transient--column-suffixes column))
+        (when (listp suffix)
+          (push (test-org-canvas-transient--suffix-key suffix) keys))))
     keys))
 
 (describe "org-canvas transient keys"
