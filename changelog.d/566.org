@@ -1,0 +1,12 @@
+* Added
+- #566 =push --prune-overrides= deletes the overrides a pushed heading's
+  table no longer claims, the consent a batch run cannot give at a
+  prompt.  Without the flag nothing changes: an interactive push still
+  asks, and a batch push still keeps them.
+* Fixed
+- #566 A dry run of a push now reports what the same batch push does:
+  overrides the table lacks are counted as =kept=, not =deleted=.  A
+  dry run asks nothing and sends nothing, as before.
+- #566 The drift report's EXTRA override rows say a push keeps the
+  override and name =push --prune-overrides= beside =p=, instead of
+  claiming the next push deletes it.

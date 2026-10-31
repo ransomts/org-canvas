@@ -200,7 +200,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
 | =pull-all=                    | =org-canvas-pull-all=, the summary on stdout       | a type or an item failed |
-| =push [--conflict STRATEGY] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=) | any heading failed |
+| =push [--conflict STRATEGY] [--prune-overrides] FEATURE:TITLE...= | =org-canvas-sync-headings= (=STRATEGY=: =push=, =pull= or =skip=; =--prune-overrides=: drop overrides the table lacks, #566) | any heading failed |
 | =publish FEATURE:TITLE...=    | =org-canvas-set-published= for each, sending only the flag | any heading was refused or failed |
 | =unpublish FEATURE:TITLE...=  | the same, unpublishing                             | any heading was refused or failed |
 | =delete --yes FEATURE:TITLE...= | =org-canvas-delete-headings= (=-n=: prints what would go, sends nothing) | any heading failed |
@@ -275,7 +275,11 @@ alone: =push= overwrites Canvas, =pull= overwrites the heading, and
 push does without the flag (see [[*Unattended Syncs][Unattended
 Syncs]]).  Any other word is a usage error.  So =scripts/org-canvas
 push --conflict push assignment:R5= overwrites a drift you have
-checked with =diff=, without a scratch script (#470).  =push-comments= takes grading files, by assignment id or
+checked with =diff=, without a scratch script (#470).  =push
+--prune-overrides= binds =org-canvas--override-prune= for that run
+alone: the overrides a pushed heading's table no longer claims are
+deleted rather than kept, the consent a batch run cannot give at a
+prompt (see [[*Assignment Overrides][Assignment Overrides]]; #566).  =push-comments= takes grading files, by assignment id or
 name, and sends only their rewritten and deleted sent comments (see
 [[*Editing Sent Comments][Editing Sent Comments]]).  =push-grades= takes
 one grading file, by assignment id or name, and sends what =S= would,
@@ -2503,9 +2507,13 @@ table in the file.  Before deleting an override Canvas holds that the
 table lacks -- an extension given in the web UI that was never copied
 into the table -- a push of one heading asks, naming who loses what; in
 a batch Emacs it keeps them and its closing line says =N kept that the
-table lacks=.  The drift report names such overrides as EXTRA rows of its
-*Assignment Overrides* section beforehand, and =p= on one pulls the table
-(see [[*Drift Report][Drift Report]]).  The whole-file
+table lacks=.  A =push --prune-overrides= is the consent, deleting them
+without asking (#566).  The drift report names such overrides as EXTRA
+rows of its *Assignment Overrides* section beforehand, saying a push
+keeps each one and naming =--prune-overrides= and =p=; =p= on one pulls
+the table (see [[*Drift Report][Drift Report]]).  A =--dry-run= asks
+nothing and reports what the same batch push would do, the kept
+overrides counted as kept, not deleted (#566).  The whole-file
 =org-canvas-sync-overrides= deletes them without asking, as before.
 
 An extension never reads as the assignment's own date.  Canvas answers

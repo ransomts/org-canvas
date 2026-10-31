@@ -4924,8 +4924,8 @@ RESULT and FILE while the scratch course still exists."
           (expect text :to-match "MISSING   Section C (row of assignment 'R6: The Verdict', due <2026-09-30 Wed 14:15>; Canvas holds no such override, so the next push of that heading creates it)")
           (expect text :to-match "CHANGED   Students: #279871 (override id 11 of assignment 'R6: The Verdict')")
           (expect text :to-match "Lock At            org: <2026-10-01 Thu 14:00>   canvas: (unset)")
-          (expect text :to-match "EXTRA     Section B (override id 12 of assignment 'R6: The Verdict', due <2026-10-02 Fri 14:15>; no row of the heading's overrides table claims it, so the next push of that heading deletes it — p pulls the table)")
-          (expect text :to-match "EXTRA     Students: #300 (override id 14 of assignment 'R6: The Verdict', due <2026-09-28 Mon 14:15>; no row .* deletes it — p pulls the table; its dates are the assignment's own, which a pull writes no row for)")
+          (expect text :to-match "EXTRA     Section B (override id 12 of assignment 'R6: The Verdict', due <2026-10-02 Fri 14:15>; no row of the heading's overrides table claims it, so a push keeps it — push --prune-overrides drops it, or p pulls the table)")
+          (expect text :to-match "EXTRA     Students: #300 (override id 14 of assignment 'R6: The Verdict', due <2026-09-28 Mon 14:15>; no row .* keeps it — push --prune-overrides drops it, or p pulls the table; its dates are the assignment's own, which a pull writes no row for)")
           (expect text :to-match "4 divergence(s) found")))))
 
   (it "visits the assignment heading, browses its page, pulls it, and refuses the rest"

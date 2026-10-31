@@ -216,8 +216,8 @@ copy silently.  Return the credentials file loaded, or nil."
     ("pull" org-canvas-batch--cmd-pull 1 nil "FEATURE or FEATURE:TITLE..."
      "Pull a whole feature, or named headings, from Canvas.")
     ("push" org-canvas-batch--cmd-push 1 nil
-     "[--conflict push|pull|skip] FEATURE:TITLE..."
-     "Push named headings; --conflict resolves conflicts (#470).")
+     "[--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE..."
+     "Push named headings; --conflict resolves conflicts (#470), --prune-overrides prunes overrides (#566).")
     ("publish" org-canvas-batch--cmd-publish 1 nil "FEATURE:TITLE..."
      "Publish named headings, sending only the flag (#466).")
     ("unpublish" org-canvas-batch--cmd-unpublish 1 nil "FEATURE:TITLE..."
@@ -783,11 +783,12 @@ VALUE is \"push\", \"pull\" or \"skip\"; anything else, or nil when
    (t (org-canvas-batch--usage "--conflict needs push, pull or skip"))))
 
 (defun org-canvas-batch--push-args (args)
-  "Read push ARGS into (STRATEGY . HEADINGS).
+  "Read push ARGS into (STRATEGY PRUNE . HEADINGS).
 STRATEGY is the symbol --conflict STRATEGY or --conflict=STRATEGY
-named, anywhere among ARGS, or nil without one; HEADINGS are the
-other arguments, in order.  No heading is a usage error."
-  (let ((strategy nil) (headings nil))
+named, anywhere among ARGS, or nil without one; PRUNE is non-nil for
+--prune-overrides; HEADINGS are the other arguments, in order.  No
+heading is a usage error."
+  (let ((strategy nil) (prune nil) (headings nil))
     (while args
       (let ((arg (pop args)))
         (cond
@@ -796,21 +797,27 @@ other arguments, in order.  No heading is a usage error."
          ((string-prefix-p "--conflict=" arg)
           (setq strategy (org-canvas-batch--conflict-strategy
                           (substring arg (length "--conflict=")))))
+         ((equal arg "--prune-overrides") (setq prune t))
          (t (push arg headings)))))
     (unless headings
       (org-canvas-batch--usage "push takes %s"
                                (nth 4 (assoc "push" org-canvas-batch--commands))))
-    (cons strategy (nreverse headings))))
+    (cons strategy (cons prune (nreverse headings)))))
 
 (defun org-canvas-batch--cmd-push (parsed)
   "Push the headings PARSED names; return 1 if any failed.
 A --conflict among the arguments binds `org-canvas-conflict-strategy'
 for this run: push overwrites Canvas, pull the heading, and skip
-leaves the entry alone, as a batch Emacs does without it (#470)."
+leaves the entry alone, as a batch Emacs does without it (#470).  A
+--prune-overrides binds `org-canvas--override-prune', deleting the
+overrides a heading's table no longer claims, which a batch push
+otherwise keeps (#566)."
   (let* ((args (org-canvas-batch--push-args (plist-get parsed :args)))
-         (entries (mapcar #'org-canvas-batch-heading-entry (cdr args)))
-         (org-canvas-conflict-strategy (or (car args)
+         (entries (mapcar #'org-canvas-batch-heading-entry (cddr args)))
+         (org-canvas-conflict-strategy (or (nth 0 args)
                                            org-canvas-conflict-strategy))
+         (org-canvas--override-prune (or (nth 1 args)
+                                         org-canvas--override-prune))
          (org-canvas--dry-run (or org-canvas--dry-run
                                   (plist-get parsed :dry-run))))
     (if (zerop (org-canvas-batch--failed-count
