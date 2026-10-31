@@ -430,6 +430,179 @@ ids from the file alone and cannot count the associations."
   (cl-remove-if-not (lambda (item) (and (consp item) (consp (car item))))
                     (append items nil)))
 
+;;;; Reading a Rubric Back (issue #567)
+;;
+;; `org-canvas show' and `org-canvas verify' compare the rubric a
+;; heading links with the one Canvas holds.  A summary is the shape both
+;; compare and display: the title, the id, the criterion count and the
+;; total points, plus each criterion's description and points.  An
+;; assignment's read carries its rubric (`rubric_settings' and
+;; `rubric'), so show needs no second request; verify reads a rubric
+;; heading through the registry like any other item.  These are reads
+;; only: nothing here writes, locally or on Canvas.
+
+(defun org-canvas--rubric-id-text (id)
+  "Return ID as a string, or nil when it is nil or empty."
+  (let ((text (and id (format "%s" id))))
+    (and text (not (string-empty-p text)) text)))
+
+(defun org-canvas--rubric-normalize-title (title)
+  "Return TITLE with each run of whitespace squeezed to one space."
+  (string-trim (replace-regexp-in-string "[ \t\n\r]+" " " (or title ""))))
+
+(defun org-canvas--rubric-points-agree-p (a b)
+  "Return non-nil when A and B are the same number of points.
+Canvas sends 10.0 where Org writes 10."
+  (and (numberp a) (numberp b) (= a b)))
+
+(defun org-canvas--rubric-local-criterion-summary (criterion)
+  "Return parsed local CRITERION as a comparable plist.
+The heading marker the parse carries is freed."
+  (unwind-protect
+      (list :description (org-canvas--rubric-normalize-title
+                          (plist-get criterion :description))
+            :points (or (plist-get criterion :points) 0)
+            :long-description (string-trim (or (plist-get criterion :long-description) ""))
+            :id (org-canvas--rubric-id-text
+                 (plist-get criterion :canvas-criterion-id)))
+    (let ((pom (plist-get criterion :pom)))
+      (when (markerp pom) (set-marker pom nil)))))
+
+(defun org-canvas--rubric-heading-summary (pom)
+  "Return the rubric heading at POM as a summary plist.
+The plist is (:title :id :points :criteria-count :criteria); POM is a
+marker or position in the buffer to read.  Its criteria are those the
+parse sees, so a heading never pushed still has a summary (with no id)."
+  (save-excursion
+    (goto-char pom)
+    (org-back-to-heading t)
+    (let* ((point (point))
+           (criteria (mapcar #'org-canvas--rubric-local-criterion-summary
+                             (org-canvas--rubric-collect-criteria point))))
+      (list :title (org-canvas--strip-statistics-cookie (org-get-heading t t t t))
+            :id (org-canvas--rubric-id-text (org-entry-get point "CANVAS_ID"))
+            :criteria-count (length criteria)
+            :points (cl-loop for c in criteria sum (or (plist-get c :points) 0))
+            :criteria criteria))))
+
+(defun org-canvas--rubric-live-alist (value)
+  "Return VALUE as an alist, or nil when it is not one."
+  (and (consp value) (consp (car value)) value))
+
+(defun org-canvas--rubric-live-criterion-summary (criterion)
+  "Return live CRITERION, an alist from Canvas, as a comparable plist."
+  (list :description (org-canvas--rubric-normalize-title
+                      (alist-get 'description criterion))
+        :points (or (alist-get 'points criterion) 0)
+        :long-description (string-trim (or (alist-get 'long_description criterion) ""))
+        :id (org-canvas--rubric-id-text (alist-get 'id criterion))))
+
+(defun org-canvas--rubric-live-criteria (items)
+  "Return ITEMS, a JSON array of criteria, as comparable plists."
+  (mapcar #'org-canvas--rubric-live-criterion-summary
+          (org-canvas--rubric-live-items items)))
+
+(defun org-canvas--rubric-live-summary (item)
+  "Return ITEM, one rubric as Canvas has it, as a summary plist, or nil."
+  (when (org-canvas--rubric-live-alist item)
+    (let ((criteria (org-canvas--rubric-live-criteria (alist-get 'data item))))
+      (list :title (org-canvas--rubric-normalize-title (alist-get 'title item))
+            :id (org-canvas--rubric-id-text (alist-get 'id item))
+            :criteria-count (length criteria)
+            :points (or (alist-get 'points_possible item) 0)
+            :criteria criteria))))
+
+(defun org-canvas--rubric-assignment-summary (item)
+  "Return the rubric ITEM, an assignment read, carries, or nil.
+Canvas answers an assignment's read with its `rubric_settings' and its
+criteria, so no second request is made.  Nil when it carries none."
+  (when (org-canvas--rubric-live-alist item)
+    (let* ((settings (org-canvas--rubric-live-alist (alist-get 'rubric_settings item)))
+           (criteria (org-canvas--rubric-live-criteria (alist-get 'rubric item))))
+      (when (or settings criteria)
+        (list :title (org-canvas--rubric-normalize-title (alist-get 'title settings))
+              :id (org-canvas--rubric-id-text (alist-get 'id settings))
+              :criteria-count (length criteria)
+              :points (or (alist-get 'points_possible settings) 0)
+              :criteria criteria)))))
+
+(defun org-canvas--rubric-link-source ()
+  "Return the file a rubric link in this buffer resolves against.
+That is its visited file, or `default-directory' for a buffer
+visiting none, such as one a command built."
+  (or (buffer-file-name) default-directory))
+
+(defun org-canvas--rubric-file-p (file)
+  "Return non-nil when FILE is the file the rubrics feature writes.
+A link into another feature's file is not a rubric link, however much
+the heading it names looks like one (issue #567)."
+  (let ((feature (org-canvas--registry-feature-for-file file)))
+    (and feature (equal (plist-get feature :endpoint) "rubrics"))))
+
+(defun org-canvas--rubric-summary-at-link (link source-file)
+  "Return the rubric LINK names as a summary plist, or nil.
+SOURCE-FILE resolves the link's relative path.  A link to a heading in
+another file, to a missing file or heading, or to a heading that is not
+a rubric yields nil."
+  (let ((target (org-canvas--link-file-and-heading link source-file)))
+    (when (and target (org-canvas--rubric-file-p (car target)))
+      (when-let* ((marker (org-canvas--link-target-marker
+                          (car target) (cdr target))))
+        (unwind-protect
+            (with-current-buffer (marker-buffer marker)
+              (org-canvas--rubric-heading-summary marker))
+          (set-marker marker nil))))))
+
+(defun org-canvas--rubric-summary-at-property (pom property)
+  "Return the rubric PROPERTY at POM links, or nil when it has none."
+  (when-let* ((link (org-entry-get pom property)))
+    (org-canvas--rubric-summary-at-link link (org-canvas--rubric-link-source))))
+
+(defun org-canvas--rubric-summary-text (summary)
+  "Return SUMMARY as one line, or \"(none)\" for nil.
+The line names what both show and verify compare: the title, the id,
+the criterion count and the total points."
+  (if (null summary)
+      "(none)"
+    (let ((count (or (plist-get summary :criteria-count) 0)))
+      (format "%S (%s), %d %s, %s points"
+              (org-canvas--rubric-normalize-title (plist-get summary :title))
+              (if (plist-get summary :id)
+                  (format "id %s" (plist-get summary :id))
+                "no CANVAS_ID")
+              count
+              (if (= 1 count) "criterion" "criteria")
+              (org-canvas--rubric-format-points (plist-get summary :points))))))
+
+(defun org-canvas--rubric-criterion-text (criterion)
+  "Return CRITERION as one line: its description and its points."
+  (if (null criterion)
+      "(none)"
+    (format "%S (%s points)"
+            (org-canvas--rubric-normalize-title (plist-get criterion :description))
+            (org-canvas--rubric-format-points (plist-get criterion :points)))))
+
+(defun org-canvas--rubric-criteria-agree-p (a b)
+  "Return non-nil when criteria A and B have the same description and points."
+  (and a b
+       (org-canvas--rubric-points-agree-p (plist-get a :points) (plist-get b :points))
+       (equal (org-canvas--rubric-normalize-title (plist-get a :description))
+              (org-canvas--rubric-normalize-title (plist-get b :description)))))
+
+(defun org-canvas--rubric-summary-agrees-p (a b)
+  "Return non-nil when summaries A and B are the same rubric.
+The id, title, criterion count and total points must all agree: this is
+exactly the shape the show block displays, so it stars what it shows.
+Criteria are compared one by one by the verify report, not here."
+  (and a b
+       (equal (plist-get a :id) (plist-get b :id))
+       (equal (org-canvas--rubric-normalize-title (plist-get a :title))
+              (org-canvas--rubric-normalize-title (plist-get b :title)))
+       (= (or (plist-get a :criteria-count) 0)
+          (or (plist-get b :criteria-count) 0))
+       (org-canvas--rubric-points-agree-p (plist-get a :points)
+                                          (plist-get b :points))))
+
 (defun org-canvas--rubric-match-live (description position live claimed
                                                   &optional points)
   "Return the alist in LIVE describing DESCRIPTION, or nil.

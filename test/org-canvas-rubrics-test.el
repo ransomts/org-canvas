@@ -2166,4 +2166,58 @@ Keep this body
     (expect (org-canvas--rubric-format-points 5.0) :to-equal "5")
     (expect (org-canvas--rubric-format-points 2.5) :to-equal "2.5")))
 
+;;;; Reading a Rubric Back (issue #567)
+
+(describe "org-canvas--rubric-link-source (issue #567)"
+  (it "resolves against `default-directory' in a buffer visiting no file"
+    (let ((dir (file-name-as-directory (make-temp-file "rubric-read-" t)))
+          (default-directory default-directory))
+      (unwind-protect
+          (progn
+            (setq default-directory dir)
+            (with-temp-file (expand-file-name "rubrics.org" dir)
+              (insert "* Python Basics\n:PROPERTIES:\n:CANVAS_ID: 900\n:END:\n"
+                      "** Sources :5pt:\n| Rating | Points |\n|--------+--------|\n"
+                      "| Full   | 5 |\n| None   | 0 |\n"))
+            (let ((org-canvas-rubrics-file (expand-file-name "rubrics.org" dir)))
+              (with-temp-buffer
+                (org-mode)
+                (insert "* Lab\n:PROPERTIES:\n"
+                        ":RUBRIC_LINK: [[file:rubrics.org::*Python Basics][Python Basics]]\n"
+                        ":END:\n")
+                (goto-char (point-min))
+                (let ((summary (org-canvas--rubric-summary-at-property
+                                (point) "RUBRIC_LINK")))
+                  (expect (plist-get summary :id) :to-equal "900")
+                  (expect (plist-get summary :title) :to-equal "Python Basics")
+                  (expect (plist-get summary :criteria-count) :to-equal 1)
+                  (expect (plist-get summary :points) :to-equal 5)))))
+        (delete-directory dir t))))
+
+  (it "yields nil for a heading in a file that is not rubrics.org"
+    (let* ((dir (file-name-as-directory (make-temp-file "rubric-read-" t)))
+           (rubrics (expand-file-name "rubrics.org" dir))
+           (default-directory dir))
+      (unwind-protect
+          (progn
+            (with-temp-file rubrics
+              (insert "* Python Basics\n:PROPERTIES:\n:CANVAS_ID: 900\n:END:\n"
+                      "** Sources :5pt:\n| Rating | Points |\n|--------+--------|\n"
+                      "| Full   | 5 |\n| None   | 0 |\n"))
+            (with-temp-file (expand-file-name "assignments.org" dir)
+              (insert "* Lab 4\n:PROPERTIES:\n:CANVAS_ID: 63\n:END:\n"))
+            (let ((org-canvas-rubrics-file rubrics))
+              (with-temp-buffer
+                (org-mode)
+                (insert "* Lab\n:PROPERTIES:\n"
+                        ":RUBRIC_LINK: [[file:assignments.org::*Lab 4][Lab 4]]\n"
+                        ":END:\n")
+                (goto-char (point-min))
+                (expect (org-canvas--rubric-summary-at-property
+                         (point) "RUBRIC_LINK")
+                        :to-be nil))))
+        (dolist (f (list rubrics (expand-file-name "assignments.org" dir)))
+          (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
+        (delete-directory dir t)))))
+
 ;;; org-canvas-rubrics-test.el ends here

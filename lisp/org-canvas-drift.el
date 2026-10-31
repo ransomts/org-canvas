@@ -47,6 +47,8 @@
 (require 'cl-lib)
 (require 'org-canvas-core)
 (require 'org-canvas-diff)
+;; An assignment's rubric, to show what the heading links beside it (#567).
+(require 'org-canvas-rubrics)
 
 ;; Appending an override row reads and writes the table the way the
 ;; sections module does; `org-canvas' loads it.
@@ -807,6 +809,31 @@ compare, or one silent on both sides, is left out."
                                  specs))
                "")))
 
+(defun org-canvas--drift-show-rubric (feature pom item)
+  "Return the rubric lines for FEATURE's heading at POM against Canvas ITEM.
+FEATURE is its registry entry.  Only an assignment's read carries its
+rubric, so only there is the block shown: a discussion's or a New
+Quiz's RUBRIC_LINK is not starred against a read that never returns one.
+The heading's RUBRIC_LINK names the Org rubric; Canvas's copy comes with
+the assignment read, so nothing more is requested.  A side without one
+shows (none); when neither has one there are no lines (issue #567)."
+  (let* ((link (org-entry-get pom "RUBRIC_LINK"))
+         (remote (org-canvas--rubric-assignment-summary item))
+         (shown (or remote
+                    (and link
+                         (equal (plist-get feature :name) "Assignments")))))
+    (if (not shown)
+        ""
+      (let ((local (and link (org-canvas--rubric-summary-at-link
+                              link (org-canvas--rubric-link-source)))))
+        (org-canvas--drift-show-pair
+         "RUBRIC_LINK"
+         (cond ((not link) "(none)")
+               (local (org-canvas--rubric-summary-text local))
+               (t "(unresolved link)"))
+         (org-canvas--rubric-summary-text remote)
+         (not (org-canvas--rubric-summary-agrees-p local remote)))))))
+
 (defun org-canvas--drift-show-title (feature entry item)
   "Return the lines naming the heading ENTRY and FEATURE's title on ITEM."
   (let ((local (org-canvas--diff-squeeze (plist-get entry :match-title)))
@@ -902,6 +929,7 @@ are starred."
         (concat (org-canvas--drift-show-head feature entry item)
                 (org-canvas--drift-show-title feature entry item)
                 (org-canvas--drift-show-properties props pom item)
+                (org-canvas--drift-show-rubric feature pom item)
                 (org-canvas--drift-show-body props pom item))
       (set-marker pom nil))))
 

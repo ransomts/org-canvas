@@ -216,7 +216,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =draft-late-notes [--hold ID,ID] FILE...= | =org-canvas-submissions-draft-late-notes= for each (=-n=: a dry run) | a student was skipped or has a late note with other numbers |
 | =verify [--hidden] ASSIGNMENT...= | =org-canvas-submissions-verify= (=--hidden=: a posted grade is a difference) | Canvas differs from a file |
 | =verify announcements:TITLE...= | =org-canvas-verify-announcements=, writing nothing (may share a line with columns) | an announcement differs from its heading |
-| =verify assignments:TITLE modules:TITLE files:TITLE...= | =org-canvas-verify-headings=, writing nothing (may share a line with columns and announcements) | an assignment, module or file differs from its heading |
+| =verify assignments:TITLE modules:TITLE files:TITLE rubrics:TITLE...= | =org-canvas-verify-headings=, writing nothing (may share a line with columns and announcements) | an assignment, module, file or rubric differs from its heading |
 | =apply-ruling FILE RULING=    | =org-canvas-submissions-apply-ruling= for each ruling in the JSON file (=-n=: a dry run) | an id matched nothing or a student was kept back |
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
@@ -963,7 +963,7 @@ Course assignments with due dates, submission types, and grading options.
 | =ALLOWED_EXTENSIONS= | string    | Comma-separated file extensions (py, txt)     |
 | =MAX_ATTEMPTS=       | number    | Max submission attempts (-1 = unlimited)      |
 | =GROUP=              | link      | Link to assignment-groups.org heading         |
-| =RUBRIC_LINK=        | link      | Link to rubrics.org heading                   |
+| =RUBRIC_LINK=        | link      | Link to rubrics.org heading; =show= and =verify= read it back (#567) |
 | =RUBRIC_USE_FOR_GRADING= | boolean | Rubric total becomes the grade; sent with the rubric association on every push |
 | =RUBRIC_HIDE_SCORE_TOTAL= | boolean | Hide the rubric's score total from students |
 | =OMIT_FROM_GRADES=   | boolean   | Exclude from grade calculations               |
@@ -4290,6 +4290,16 @@ holds for it, who it is for and its dates, read from the overrides
 endpoint, so a date moved in the web UI can be read before it is
 adopted (#528).
 
+For an assignment that links a rubric (=RUBRIC_LINK=), the pair above
+the body names the rubric the heading's link resolves to beside the one
+Canvas attaches to the assignment: its title, =CANVAS_ID=, criterion
+count and total points, starred when they differ (#567).  Canvas's copy
+comes with the assignment read itself, so no second request is made.
+A heading that links none shows =(none)= for the Org side, a link that
+resolves to no rubric heading shows =(unresolved link)=, and a heading
+whose rubric was never pushed names it with =no CANVAS_ID=.  Criteria
+themselves are compared by =verify=, not shown.
+
 None of them writes anything, locally or on Canvas, so they are the
 way to read what an instructor changed in the web UI before choosing
 between =A=, =p=, a push, or copying a paragraph by hand.
@@ -4329,16 +4339,16 @@ Interactively it asks for a title; from Lisp it takes headings as
 =org-canvas-show-headings= does, =(("announcements" . "Exam 2 reminder"))=,
 and returns one plist per heading with =:rows= and =:differences=.
 
-** Verifying Assignments, Modules and Files
+** Verifying Assignments, Rubrics, Modules and Files
 
 =org-canvas-sync-headings= reports each heading =synced= when Canvas
 accepted the request, which is not proof of what students now see: a
 module sync creates, updates and reorders items, a module item can
 publish the file it links, and a re-upload gives a file a new id.
-=M-x org-canvas-verify-headings= reads each named assignment, module or
-file back by the =CANVAS_ID= its heading carries now (after a re-upload,
-the new one), one request per heading plus one for a module's items,
-and compares it with the heading (#524):
+=M-x org-canvas-verify-headings= reads each named assignment, rubric,
+module or file back by the =CANVAS_ID= its heading carries now (after a
+re-upload, the new one), one request per heading plus one for a
+module's items, and compares it with the heading (#524, #567):
 
 | Feature    | Rows                       | Org                                                 | Canvas                           |
 |------------+----------------------------+-----------------------------------------------------+----------------------------------|
@@ -4346,29 +4356,41 @@ and compares it with the heading (#524):
 |            | published                  | =PUBLISHED= (true when absent)                      | =published=                      |
 |            | points                     | =POINTS=, only when written                         | =points_possible=                |
 |            | due_at, unlock_at, lock_at | =DUE_AT=, =UNLOCK_AT=, =LOCK_AT= (none when absent) | the base dates                   |
+|            | rubric                     | =RUBRIC_LINK='s rubric: title, id, criteria, points | the attached =rubric_settings=    |
+|            | criterion N                | that rubric's Nth criterion: description, points    | its Nth criterion                |
 | module     | title, published           | the heading, =PUBLISHED= (true when absent)         | =name=, =published=              |
 |            | item N                     | each child heading, at the place the push sends it  | the item list, in position order |
 |            | extra                      | (no heading)                                        | an item no child heading names   |
 | file       | published                  | =PUBLISHED= (true when absent)                      | =locked=, inverted               |
 |            | hidden                     | =HIDDEN= (false when absent)                        | =hidden=                         |
 |            | unlock_at, lock_at         | =UNLOCK_AT=, =LOCK_AT= (none when absent)           | =unlock_at=, =lock_at=           |
+| rubric     | rubric                     | title, =CANVAS_ID=, criteria, points                | =title=, =id=, =data=, =points_possible= |
+|            | criterion N                | that criterion's description and points             | the criterion at that position   |
 
 An assignment is read with =override_assignment_dates=false=, as every
 assignment read is, so a student's extension never stands in for the
-base due date.  A module item agrees when it sits at the same place
-among the items the push sends (a child whose linked content has no
-=CANVAS_ID= yet is not sent, and is itself a difference), carries the
-same title, and, when the heading or its type says how it is published
-(=PUBLISHED= written, or a SubHeader or external URL), has that state.
-Timestamps are compared to the minute, as the drift report compares
-them.  A file heading is a link, so its title is not compared.  A
-heading with no =CANVAS_ID=, one Canvas no longer holds, and a title
-that names no heading are each a difference, and the next heading is
-still read.  Nothing is written, locally or on Canvas.  From the shell,
-alone or beside grading columns and announcements:
+base due date.  Its rubric, the one =RUBRIC_LINK= names, is compared
+label by label beside the one Canvas attaches: the title, id, criterion
+count and total points must agree, then each criterion's description
+and points by position, since a push may mint fresh criterion ids
+(#256).  A rubric row appears only when one side has a rubric at all,
+and a heading whose link resolves to nothing is a difference.  A module
+item agrees when it sits at the same place among the items the push
+sends (a child whose linked content has no =CANVAS_ID= yet is not sent,
+and is itself a difference), carries the same title, and, when the
+heading or its type says how it is published (=PUBLISHED= written, or a
+SubHeader or external URL), has that state.  A rubric heading is read
+from the rubrics endpoint and compared the same way.  Timestamps are
+compared to the minute, as the drift report compares them.  A file
+heading is a link, so its title is not compared.  A heading with no
+=CANVAS_ID=, one Canvas no longer holds, and a title that names no
+heading are each a difference, and the next heading is still read.
+Nothing is written, locally or on Canvas.  From the shell, alone or
+beside grading columns and announcements:
 
 #+begin_src sh
-scripts/org-canvas verify "assignments:Chapter 3 check" "modules:Week 9" "files:deck-09.pdf"   # exit 1 on a difference
+scripts/org-canvas verify "assignments:Chapter 3 check" "modules:Week 9" \
+  "files:deck-09.pdf" "rubrics:Code Quality Rubric"   # exit 1 on a difference
 #+end_src
 
 Interactively it asks for a feature and a title; from Lisp it takes
@@ -6054,7 +6076,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-show-at-point=        | Show the Canvas version of the heading at point, writing nothing (see [[*Showing the Canvas Version][Showing the Canvas Version]]) |
 | =org-canvas-show-headings=        | The same for headings named by title or Canvas id |
 | =org-canvas-verify-announcements= | Read pushed announcements back and compare them with their headings, writing nothing (see [[*Verifying an Announcement][Verifying an Announcement]]) |
-| =org-canvas-verify-headings= | Read pushed assignments, modules and files back and compare them with their headings, writing nothing (see [[*Verifying Assignments, Modules and Files][Verifying Assignments, Modules and Files]]) |
+| =org-canvas-verify-headings= | Read pushed assignments, rubrics, modules and files back and compare them with their headings, writing nothing (see [[*Verifying Assignments, Rubrics, Modules and Files][Verifying Assignments, Rubrics, Modules and Files]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |

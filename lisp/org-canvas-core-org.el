@@ -658,43 +658,59 @@ leaking into API payloads and log output."
 
 ;;;; Org Link Property Resolution
 
-(defun org-canvas--resolve-link-property (link-string id-property source-file)
-  "Resolve LINK-STRING to a property value by following the Org link.
-ID-PROPERTY is the property to retrieve (e.g., \"CANVAS_ID\").
-SOURCE-FILE is the file containing the link, used to resolve relative paths."
+(defun org-canvas--link-file-and-heading (link-string source-file)
+  "Return (ABSOLUTE-FILE . HEADING) LINK-STRING names, or nil.
+SOURCE-FILE resolves a relative path.  HEADING has its Org bracket
+escapes removed.  Only a file link to a heading is one: a link to a
+plain file, a URL or a headingless file link yields nil."
   (when (and link-string
              (or
               ;; Format with display text: [[file:path::*heading][display]]
               (string-match "\\[\\[file:\\(.+\\)::\\*\\(.+\\)\\]\\[" link-string)
               ;; Format without display text: [[file:path::*heading]]
               (string-match "\\[\\[file:\\([^]]+\\)::\\*\\([^]]+\\)\\]\\]" link-string)))
-    (let* ((file (match-string 1 link-string))
-           (heading (match-string 2 link-string))
-           (abs-file (expand-file-name file (file-name-directory source-file)))
-           ;; Unescape \[ and \] in heading text (Org escapes brackets in links)
-           (clean-heading (replace-regexp-in-string
-                           "\\\\[][]"
-                           (lambda (m) (substring m 1))
-                           heading)))
+    (cons (expand-file-name (match-string 1 link-string)
+                            (file-name-directory (expand-file-name source-file)))
+          ;; Org escapes [ and ] in link text.
+          (org-canvas--unescape-org-brackets (match-string 2 link-string)))))
+
+(defun org-canvas--link-target-marker (abs-file heading)
+  "Return a marker at HEADING in ABS-FILE, or nil when either is missing.
+The caller owns the marker and should set it to nil when done."
+  (when (file-exists-p abs-file)
+    (let ((point (org-canvas--find-heading-in-file abs-file heading)))
+      (when point
+        (with-current-buffer (org-canvas--find-file-noselect abs-file)
+          (copy-marker point))))))
+
+(defun org-canvas--resolve-link-property (link-string id-property source-file)
+  "Resolve LINK-STRING to a property value by following the Org link.
+ID-PROPERTY is the property to retrieve (e.g., \"CANVAS_ID\").
+SOURCE-FILE is the file containing the link, used to resolve relative paths."
+  (when-let* ((target (org-canvas--link-file-and-heading link-string source-file)))
+    (let ((abs-file (car target))
+          (clean-heading (cdr target)))
       (cond
        ((not (file-exists-p abs-file))
         (org-canvas--log-warning org-canvas--logger
           "[Links] File not found: %s (from link %s)" abs-file link-string)
         nil)
        (t
-        (let ((heading-point (org-canvas--find-heading-in-file abs-file clean-heading)))
-          (if (not heading-point)
+        (let ((marker (org-canvas--link-target-marker abs-file clean-heading)))
+          (if (not marker)
               (progn
                 (org-canvas--log-warning org-canvas--logger
                   "[Links] Heading '%s' not found in %s" clean-heading abs-file)
                 nil)
-            (with-current-buffer (org-canvas--find-file-noselect abs-file)
-              (let ((value (org-entry-get heading-point id-property)))
-                (unless value
-                  (org-canvas--log-warning org-canvas--logger
-                    "[Links] Property %s not set on '%s' in %s"
-                    id-property clean-heading abs-file))
-                value)))))))))
+            (unwind-protect
+                (with-current-buffer (marker-buffer marker)
+                  (let ((value (org-entry-get marker id-property)))
+                    (unless value
+                      (org-canvas--log-warning org-canvas--logger
+                        "[Links] Property %s not set on '%s' in %s"
+                        id-property clean-heading abs-file))
+                    value))
+              (set-marker marker nil)))))))))
 
 (defun org-canvas--resolve-link-or-raw (pom property id-property source-file)
   "Get PROPERTY at POM, resolving Org links or returning raw value.
