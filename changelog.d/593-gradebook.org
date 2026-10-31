@@ -1,0 +1,16 @@
+* Changed
+- #593 The gradebook is split by concern into three files.
+  =lisp/org-canvas-gradebook.el= keeps the pull and what it writes: the
+  students, sections and spread tables, My grades, the final grade
+  overrides, the summary and the commands.  The per-group recomputation
+  and the Groups table, with the scores file the what-if reads, move to
+  =lisp/org-canvas-gradebook-scores.el=; one student's standing (#542)
+  and the what-if over assignment-groups.org (#452) move to
+  =lisp/org-canvas-gradebook-report.el=.  Each half requires
+  =org-canvas-gradebook= and never the other way, so the base file
+  declares the four functions it calls back into (fetch-scores,
+  write-scores, insert-groups, median) and the report requires the
+  scores half as well.  The specs move with them, one
+  =test/org-canvas-<half>-test.el= per file, and the fake Canvas the
+  three answer from now lives in =test/test-fixtures.el=.  No behaviour
+  changes.

@@ -86,6 +86,8 @@
 (require 'org-canvas-groups)
 (require 'org-canvas-people)
 (require 'org-canvas-gradebook)
+(require 'org-canvas-gradebook-report)
+(require 'org-canvas-gradebook-scores)
 (require 'org-canvas-rubric-results)
 (require 'org-canvas-quiz-results)
 (require 'org-canvas-question-banks)
