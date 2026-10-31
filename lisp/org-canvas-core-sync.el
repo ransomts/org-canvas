@@ -1060,23 +1060,25 @@ Example usage:
     :build #\\='org-canvas--announcement-build-payload
     :endpoint \"discussion_topics\")"
   (declare (indent 1))
+  (org-canvas--sync-gen-forms feature args))
+
+(defun org-canvas--sync-gen-spec (feature args)
+  "Return the generation spec `org-canvas-define-sync' works from.
+FEATURE and ARGS are the macro's arguments.  The spec is a plist of the
+resolved names, options and stage functions, with the auto-generated push
+and finalize forms already built; the emitters below read it instead of
+ARGS, so the macro itself only destructures and splices."
   (let* ((feature-name (symbol-name feature))
-         (sync-fn-name (intern (format "org-canvas-sync-%s" feature-name)))
-         (file-expr (plist-get args :file))
-         (query (or (plist-get args :query) "LEVEL=1"))
-         (parse-fn (plist-get args :parse))
-         (build-fn (plist-get args :build))
+         (singular (org-canvas--singularize feature-name))
          (endpoint (plist-get args :endpoint))
          (title-key (plist-get args :title-key))
+         (parse-fn (plist-get args :parse))
+         (build-fn (plist-get args :build))
          (pull-item-fn (plist-get args :pull-item-fn))
          (hash-extra-fn (plist-get args :hash-extra))
-         (after-sync-fn (plist-get args :after-sync))
-         (after-heading-fn (plist-get args :after-heading))
          (hash-fn (plist-get args :hash))
-         (dry-run-mode (plist-get args :dry-run))
          (prepare-fn (plist-get args :prepare))
-         (first-fn (plist-get args :first))
-         (no-at-point (plist-get args :no-at-point))
+         (after-heading-fn (plist-get args :after-heading))
          (push-fn (or (plist-get args :push)
                       (when endpoint
                         (org-canvas--make-push-fn-form
@@ -1088,62 +1090,104 @@ Example usage:
                              (plist-get args :id-field)
                              (plist-get args :id-property)
                              title-key (plist-get args :post-fn)
-                             endpoint))))
-         (singular (org-canvas--singularize feature-name))
-         (at-point-fn-name (intern (format "org-canvas-sync-%s-at-point" singular)))
-         (heading-fn-name (intern (format "org-canvas-sync-%s" singular)))
-         (id-property (plist-get args :id-property))
-         ;; The spec a push at point and a push by heading share (issue #287).
-         (entry-spec `(list :feature ,singular
-                            :parse ,parse-fn :build ,build-fn
-                            :push ,push-fn :finalize ,finalize-fn
-                            :title-key ,(or title-key :title)
-                            :pull-item-fn ,pull-item-fn
-                            :hash-extra ,hash-extra-fn :hash ,hash-fn
-                            :prepare ,prepare-fn
-                            :after-heading ,after-heading-fn)))
-    (unless file-expr (error "org-canvas-define-sync: :file is required"))
-    (unless parse-fn (error "org-canvas-define-sync: :parse is required"))
-    (unless build-fn (error "org-canvas-define-sync: :build is required"))
-    (unless push-fn (error "org-canvas-define-sync: :push or :endpoint is required"))
-    (unless finalize-fn (error "org-canvas-define-sync: :finalize or :endpoint is required"))
-    `(progn
-       ;; The module already names its pull-item function for conflict
-       ;; resolution; recording it on the feature entry is what gives
-       ;; `org-canvas-pull-at-point' something to dispatch on (issue #67).
-       ,@(when pull-item-fn
-           `((org-canvas-register-pull-item-fn ,feature-name ,pull-item-fn)))
-       ;;;###autoload
-       (defun ,sync-fn-name ()
-         ,(format "Synchronize %s to Canvas using the 4-stage pipeline.%s" feature-name
-                  (if first-fn (format "\nRuns `%s' first." (cadr first-fn)) ""))
-         (interactive)
-         ,(let ((run `(org-canvas--sync-run-pipeline
-                       (list :feature ,feature-name
-                             :file (expand-file-name ,file-expr)
-                             :query ,query
+                             endpoint)))))
+    (list :feature-name feature-name
+          :singular singular
+          :sync-fn (intern (format "org-canvas-sync-%s" feature-name))
+          :at-point-fn (intern (format "org-canvas-sync-%s-at-point" singular))
+          :heading-fn (intern (format "org-canvas-sync-%s" singular))
+          :file-expr (plist-get args :file)
+          :query (or (plist-get args :query) "LEVEL=1")
+          :parse-fn parse-fn :build-fn build-fn
+          :push-fn push-fn :finalize-fn finalize-fn
+          :pull-item-fn pull-item-fn :pull-heading (plist-get args :pull-heading)
+          :title-key title-key
+          :hash-extra-fn hash-extra-fn :hash-fn hash-fn
+          :dry-run-mode (plist-get args :dry-run)
+          :prepare-fn prepare-fn
+          :after-sync-fn (plist-get args :after-sync)
+          :after-heading-fn after-heading-fn
+          :first-fn (plist-get args :first)
+          :no-at-point (plist-get args :no-at-point)
+          :id-property (plist-get args :id-property)
+          ;; The spec a push at point and a push by heading share (issue #287).
+          :entry-spec `(list :feature ,singular
                              :parse ,parse-fn :build ,build-fn
                              :push ,push-fn :finalize ,finalize-fn
-                             :pull-item-fn ,pull-item-fn :title-key ,title-key
+                             :title-key ,(or title-key :title)
+                             :pull-item-fn ,pull-item-fn
                              :hash-extra ,hash-extra-fn :hash ,hash-fn
-                             :dry-run ,dry-run-mode :prepare ,prepare-fn
-                             :after-sync ,after-sync-fn))))
-            (if first-fn
-                `(progn
-                   (org-canvas-clear-log)
-                   (let ((org-canvas--inhibit-log-clear t))
-                     (funcall ,first-fn)
-                     ,run))
-              run)))
-       ,@(unless no-at-point
-           `(;;;###autoload
-             (defun ,at-point-fn-name ()
-               ,(format "Sync the %s at point to Canvas." singular)
-               (interactive)
-               (org-canvas--push-at-point-runtime ,entry-spec))
-             ;;;###autoload
-             (defun ,heading-fn-name (&optional target by)
-               ,(format "Sync the %s heading TARGET names to Canvas (issue #287).
+                             :prepare ,prepare-fn
+                             :after-heading ,after-heading-fn))))
+
+(defun org-canvas--sync-gen-check (spec)
+  "Check SPEC for an option `org-canvas-define-sync' requires.
+The check runs at expansion, so a module that forgets one hears about it
+when it loads rather than when its command is first typed."
+  (unless (plist-get spec :file-expr)
+    (error "org-canvas-define-sync: :file is required"))
+  (unless (plist-get spec :parse-fn)
+    (error "org-canvas-define-sync: :parse is required"))
+  (unless (plist-get spec :build-fn)
+    (error "org-canvas-define-sync: :build is required"))
+  (unless (plist-get spec :push-fn)
+    (error "org-canvas-define-sync: :push or :endpoint is required"))
+  (unless (plist-get spec :finalize-fn)
+    (error "org-canvas-define-sync: :finalize or :endpoint is required")))
+
+(defun org-canvas--sync-gen-registration-forms (spec)
+  "Return the forms registering SPEC's pull-item function, or nil.
+The module already names that function for conflict resolution;
+recording it on the feature entry is what gives
+`org-canvas-pull-at-point' something to dispatch on (issue #67)."
+  (let ((pull-item-fn (plist-get spec :pull-item-fn)))
+    (when pull-item-fn
+      `((org-canvas-register-pull-item-fn ,(plist-get spec :feature-name)
+                                          ,pull-item-fn)))))
+
+(defun org-canvas--sync-gen-run-form (spec)
+  "Return the whole-file sync form SPEC describes.
+That is the pipeline call, wrapped in the log-keeping prefix when the
+spec declares a :first command to run ahead of it (outcomes)."
+  (let ((run `(org-canvas--sync-run-pipeline
+               (list :feature ,(plist-get spec :feature-name)
+                     :file (expand-file-name ,(plist-get spec :file-expr))
+                     :query ,(plist-get spec :query)
+                     :parse ,(plist-get spec :parse-fn)
+                     :build ,(plist-get spec :build-fn)
+                     :push ,(plist-get spec :push-fn)
+                     :finalize ,(plist-get spec :finalize-fn)
+                     :pull-item-fn ,(plist-get spec :pull-item-fn)
+                     :title-key ,(plist-get spec :title-key)
+                     :hash-extra ,(plist-get spec :hash-extra-fn)
+                     :hash ,(plist-get spec :hash-fn)
+                     :dry-run ,(plist-get spec :dry-run-mode)
+                     :prepare ,(plist-get spec :prepare-fn)
+                     :after-sync ,(plist-get spec :after-sync-fn))))
+        (first-fn (plist-get spec :first-fn)))
+    (if first-fn
+        `(progn
+           (org-canvas-clear-log)
+           (let ((org-canvas--inhibit-log-clear t))
+             (funcall ,first-fn)
+             ,run))
+      run)))
+
+(defun org-canvas--sync-gen-sync-fn (spec)
+  "Return the forms defining SPEC's whole-file sync command."
+  (let ((feature-name (plist-get spec :feature-name))
+        (first-fn (plist-get spec :first-fn)))
+    `(;;;###autoload
+      (defun ,(plist-get spec :sync-fn) ()
+        ,(format "Synchronize %s to Canvas using the 4-stage pipeline.%s" feature-name
+                 (if first-fn (format "\nRuns `%s' first." (cadr first-fn)) ""))
+        (interactive)
+        ,(org-canvas--sync-gen-run-form spec)))))
+
+(defun org-canvas--sync-gen-heading-docstring (spec)
+  "Return the docstring SPEC's push-by-heading command carries."
+  (let ((file-expr (plist-get spec :file-expr)))
+    (format "Sync the %s heading TARGET names to Canvas (issue #287).
 TARGET is the heading's exact title in %s, or, with BY
 `canvas-id', its %s; an error names a target that matches no
 heading or more than one.  Nil asks for a title (never under
@@ -1151,24 +1195,61 @@ heading or more than one.  Nil asks for a title (never under
 `unchanged', `conflict', `pulled', `duplicate', `fragment' or
 `dry-run'.  The at-point command does the same at point; this one finds the heading,
 so a script need not (`org-canvas-sync-headings' takes several)."
-                        singular
-                        (if (symbolp file-expr)
-                            (format "the file `%s' names" file-expr)
-                          "the module's file")
-                        (or id-property "CANVAS_ID"))
-               (interactive)
-               (org-canvas--sync-heading-runtime
-                (append ,entry-spec
-                        (list :file (expand-file-name ,file-expr)
-                              :query ,query
-                              :id-property ,id-property))
-                target by))
-             (org-canvas--sync-register-heading-fn ,singular #',heading-fn-name)
-             (org-canvas--sync-register-entry-spec ,singular ,entry-spec)))
-       ,@(when (and (or pull-item-fn (plist-get args :pull-heading))
-                    (not no-at-point))
-           (org-canvas--pull-heading-fn-forms
-            feature-name singular file-expr query id-property)))))
+            (plist-get spec :singular)
+            (if (symbolp file-expr)
+                (format "the file `%s' names" file-expr)
+              "the module's file")
+            (or (plist-get spec :id-property) "CANVAS_ID"))))
+
+(defun org-canvas--sync-gen-at-point-forms (spec)
+  "Return the forms defining SPEC's at-point and by-heading commands.
+Nil when the module writes those commands itself (:no-at-point)."
+  (unless (plist-get spec :no-at-point)
+    (let ((singular (plist-get spec :singular))
+          (heading-fn (plist-get spec :heading-fn))
+          (entry-spec (plist-get spec :entry-spec))
+          (file-expr (plist-get spec :file-expr)))
+      `(;;;###autoload
+        (defun ,(plist-get spec :at-point-fn) ()
+          ,(format "Sync the %s at point to Canvas." singular)
+          (interactive)
+          (org-canvas--push-at-point-runtime ,entry-spec))
+        ;;;###autoload
+        (defun ,heading-fn (&optional target by)
+          ,(org-canvas--sync-gen-heading-docstring spec)
+          (interactive)
+          (org-canvas--sync-heading-runtime
+           (append ,entry-spec
+                   (list :file (expand-file-name ,file-expr)
+                         :query ,(plist-get spec :query)
+                         :id-property ,(plist-get spec :id-property)))
+           target by))
+        (org-canvas--sync-register-heading-fn ,singular #',heading-fn)
+        (org-canvas--sync-register-entry-spec ,singular ,entry-spec)))))
+
+(defun org-canvas--sync-gen-pull-forms (spec)
+  "Return the pull-by-heading forms SPEC asks for, or nil.
+A feature with a single-item pull (:pull-item-fn or :pull-heading) gets
+one; :no-at-point means the module writes that too."
+  (when (and (or (plist-get spec :pull-item-fn) (plist-get spec :pull-heading))
+             (not (plist-get spec :no-at-point)))
+    (org-canvas--pull-heading-fn-forms
+     (plist-get spec :feature-name) (plist-get spec :singular)
+     (plist-get spec :file-expr) (plist-get spec :query)
+     (plist-get spec :id-property))))
+
+(defun org-canvas--sync-gen-forms (feature args)
+  "Return the forms `org-canvas-define-sync' emits for FEATURE and ARGS.
+This is the sync DSL's expander proper; the macro is a thin expander
+over it, so a module's expansion can be stepped through here in the
+debugger instead of being buried inside one macro body."
+  (let ((spec (org-canvas--sync-gen-spec feature args)))
+    (org-canvas--sync-gen-check spec)
+    `(progn
+       ,@(org-canvas--sync-gen-registration-forms spec)
+       ,@(org-canvas--sync-gen-sync-fn spec)
+       ,@(org-canvas--sync-gen-at-point-forms spec)
+       ,@(org-canvas--sync-gen-pull-forms spec))))
 
 (provide 'org-canvas-core-sync)
 ;;; org-canvas-core-sync.el ends here

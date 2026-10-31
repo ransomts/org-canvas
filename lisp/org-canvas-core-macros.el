@@ -183,6 +183,144 @@ DEFAULT is the default value for booleans.  VALUES is the enum list."
       (_ ; string
        `(plist-get raw ,raw-key)))))
 
+(defun org-canvas--parse-gen-id-raw-key (id-property)
+  "Return the raw plist key ID-PROPERTY is read into.
+CANVAS_ID keeps its :canvas-id key; any other property name is
+downcased with underscores turned into dashes."
+  (if (string= id-property "CANVAS_ID")
+      :canvas-id
+    (intern (format ":%s" (downcase
+                           (replace-regexp-in-string "_" "-" id-property))))))
+
+(defun org-canvas--parse-gen-read-forms (props)
+  "Return the plist forms reading each of PROPS into its raw key.
+PROPS is the :properties list `org-canvas-define-parse' received: one
+raw plist key followed by the `org-entry-get' that fills it, per spec."
+  (apply #'append
+         (mapcar (lambda (spec)
+                   (let ((prop-name (nth 0 spec))
+                         (raw-key (org-canvas--parse-gen-raw-key (nth 0 spec))))
+                     (list raw-key `(org-entry-get pom ,prop-name))))
+                 props)))
+
+(defun org-canvas--parse-gen-transform-forms (props)
+  "Return the plist forms transforming each of PROPS into typed data.
+PROPS is the :properties list `org-canvas-define-parse' received; each
+spec contributes its DATA-KEY and the expression
+`org-canvas--parse-gen-transform-form' makes for its options."
+  (apply #'append
+         (mapcar (lambda (spec)
+                   (let* ((prop-name (nth 0 spec))
+                          (data-key (nth 1 spec))
+                          (opts (cddr spec))
+                          (type (or (plist-get opts :type) 'string))
+                          (default (plist-get opts :default))
+                          (values (plist-get opts :values)))
+                     (list data-key
+                           (org-canvas--parse-gen-transform-form
+                            prop-name data-key type default values))))
+                 props)))
+
+(defun org-canvas--parse-gen-spec (feature args)
+  "Return the generation spec `org-canvas-define-parse' works from.
+FEATURE and ARGS are the macro's arguments; the spec is a plist of the
+generated function names, the resolved options and the read and
+transform forms, so the emitters below never re-read ARGS."
+  (let* ((feature-name (symbol-name feature))
+         (id-property (or (plist-get args :id-property) "CANVAS_ID")))
+    (list :feature-name feature-name
+          :read-fn (intern (format "org-canvas--%s-read-props" feature-name))
+          :transform-fn (intern (format "org-canvas--%s-transform-props"
+                                        feature-name))
+          :parse-fn (intern (format "org-canvas--%s-parse-entry" feature-name))
+          :read-forms (org-canvas--parse-gen-read-forms
+                       (plist-get args :properties))
+          :transform-forms (org-canvas--parse-gen-transform-forms
+                            (plist-get args :properties))
+          :body-key (plist-get args :body)
+          :title-key (or (plist-get args :title-key) :title)
+          :id-key (or (plist-get args :id-key) :canvas-id)
+          :id-property id-property
+          :id-raw-key (org-canvas--parse-gen-id-raw-key id-property)
+          :entity-name (or (plist-get args :entity-name)
+                           (capitalize feature-name))
+          :after-read (plist-get args :after-read)
+          :after-transform (plist-get args :after-transform))))
+
+(defun org-canvas--parse-gen-read-fn (spec)
+  "Return the read-props defun form SPEC describes."
+  (let ((feature-name (plist-get spec :feature-name))
+        (base-form `(list :title-raw (org-get-heading t t t t)
+                          ,(plist-get spec :id-raw-key)
+                          (org-entry-get pom ,(plist-get spec :id-property))
+                          ,@(plist-get spec :read-forms)))
+        (after-read (plist-get spec :after-read)))
+    `(defun ,(plist-get spec :read-fn) (pom)
+       ,(format "Read raw property strings from the %s heading at POM." feature-name)
+       ,(if after-read
+            `(let ((raw ,base-form))
+               (funcall ,after-read raw pom))
+          base-form))))
+
+(defun org-canvas--parse-gen-transform-fn (spec)
+  "Return the transform-props defun form SPEC describes."
+  (let* ((feature-name (plist-get spec :feature-name))
+         (title-key (plist-get spec :title-key))
+         (id-key (plist-get spec :id-key))
+         (base-form `(list ,title-key (org-canvas--strip-statistics-cookie
+                                      (plist-get raw :title-raw))
+                          ,id-key (plist-get raw ,(plist-get spec :id-raw-key))
+                          ,@(plist-get spec :transform-forms)))
+        (after-transform (plist-get spec :after-transform)))
+    `(defun ,(plist-get spec :transform-fn) (raw)
+       ,(format "Transform raw property strings RAW into typed %s data.\nPure function — no buffer access." feature-name)
+       ,(if after-transform
+            `(let ((data ,base-form))
+               (funcall ,after-transform data))
+          base-form))))
+
+(defun org-canvas--parse-gen-entry-fn (spec)
+  "Return the parse-entry defun form SPEC describes.
+The body reads the raw properties, transforms them, refuses a missing
+title and, when the spec names a body key, exports the subtree into it."
+  (let ((feature-name (plist-get spec :feature-name))
+        (title-key (plist-get spec :title-key))
+        (id-key (plist-get spec :id-key))
+        (entity-name (plist-get spec :entity-name))
+        (body-key (plist-get spec :body-key)))
+    `(defun ,(plist-get spec :parse-fn) ()
+       ,(format "Extract %s data from the Org heading at point." feature-name)
+       (org-back-to-heading t)
+       (org-canvas--log-debug org-canvas--logger
+                   "[Stage 1: Parse] Starting extraction at point %%d" (point))
+       (let* ((pom (point))
+              (raw (,(plist-get spec :read-fn) pom))
+              (data (,(plist-get spec :transform-fn) raw)))
+         (org-canvas--require-title (plist-get data ,title-key) pom ,entity-name)
+         (org-canvas--log-info org-canvas--logger
+                    "[Stage 1: Parse] Processing %s: '%%s' (ID: %%s)"
+                    ,entity-name
+                    (plist-get data ,title-key)
+                    (or (plist-get data ,id-key) "NEW"))
+         ,@(when body-key
+             `((org-canvas--log-debug org-canvas--logger
+                           "[Stage 1: Export] Exporting subtree to HTML...")
+               (let ((content (org-canvas--export-subtree-body-to-html)))
+                 (org-canvas--log-info org-canvas--logger
+                            "[Stage 1: Parse] Body size: %%d chars"
+                            (length content))
+                 (plist-put data ,body-key content))))
+         (plist-put data :pom pom)
+         data))))
+
+(defun org-canvas--parse-gen-forms (feature args)
+  "Return the forms `org-canvas-define-parse' emits for FEATURE and ARGS."
+  (let ((spec (org-canvas--parse-gen-spec feature args)))
+    `(progn
+       ,(org-canvas--parse-gen-read-fn spec)
+       ,(org-canvas--parse-gen-transform-fn spec)
+       ,(org-canvas--parse-gen-entry-fn spec))))
+
 (defmacro org-canvas-define-parse (feature &rest args)
   "Define read-props, transform-props, and parse-entry for FEATURE.
 
@@ -212,93 +350,7 @@ Example:
      (\"SPECIFIC_SECTIONS\" :specific_sections
                            :type string)))"
   (declare (indent 1))
-  (let* ((feature-name (symbol-name feature))
-         (read-fn (intern (format "org-canvas--%s-read-props" feature-name)))
-         (transform-fn (intern (format "org-canvas--%s-transform-props" feature-name)))
-         (parse-fn (intern (format "org-canvas--%s-parse-entry" feature-name)))
-         (props (plist-get args :properties))
-         (body-key (plist-get args :body))
-         (title-key (or (plist-get args :title-key) :title))
-         (id-key (or (plist-get args :id-key) :canvas-id))
-         (id-property (or (plist-get args :id-property) "CANVAS_ID"))
-         (entity-name (or (plist-get args :entity-name)
-                          (capitalize feature-name)))
-         (after-read (plist-get args :after-read))
-         (after-transform (plist-get args :after-transform))
-         ;; Generate the raw-key for id-property
-         (id-raw-key (if (string= id-property "CANVAS_ID")
-                         :canvas-id
-                       (intern (format ":%s" (downcase
-                                              (replace-regexp-in-string
-                                               "_" "-" id-property))))))
-         ;; Build read-props body: list of :key-raw (org-entry-get pom "PROP")
-         (read-forms
-          (apply #'append
-                 (mapcar (lambda (spec)
-                           (let ((prop-name (nth 0 spec))
-                                 (raw-key (org-canvas--parse-gen-raw-key (nth 0 spec))))
-                             (list raw-key `(org-entry-get pom ,prop-name))))
-                         props)))
-         ;; Build transform-props body: list of :data-key (transform-expr)
-         (transform-forms
-          (apply #'append
-                 (mapcar (lambda (spec)
-                           (let* ((prop-name (nth 0 spec))
-                                  (data-key (nth 1 spec))
-                                  (opts (cddr spec))
-                                  (type (or (plist-get opts :type) 'string))
-                                  (default (plist-get opts :default))
-                                  (values (plist-get opts :values)))
-                             (list data-key
-                                   (org-canvas--parse-gen-transform-form
-                                    prop-name data-key type default values))))
-                         props))))
-    `(progn
-       (defun ,read-fn (pom)
-         ,(format "Read raw property strings from the %s heading at POM." feature-name)
-         ,(let ((base-form `(list :title-raw (org-get-heading t t t t)
-                                  ,id-raw-key (org-entry-get pom ,id-property)
-                                  ,@read-forms)))
-            (if after-read
-                `(let ((raw ,base-form))
-                   (funcall ,after-read raw pom))
-              base-form)))
-
-       (defun ,transform-fn (raw)
-         ,(format "Transform raw property strings RAW into typed %s data.\nPure function — no buffer access." feature-name)
-         ,(let ((base-form `(list ,title-key (org-canvas--strip-statistics-cookie
-                                              (plist-get raw :title-raw))
-                                  ,id-key (plist-get raw ,id-raw-key)
-                                  ,@transform-forms)))
-            (if after-transform
-                `(let ((data ,base-form))
-                   (funcall ,after-transform data))
-              base-form)))
-
-       (defun ,parse-fn ()
-         ,(format "Extract %s data from the Org heading at point." feature-name)
-         (org-back-to-heading t)
-         (org-canvas--log-debug org-canvas--logger
-                     "[Stage 1: Parse] Starting extraction at point %%d" (point))
-         (let* ((pom (point))
-                (raw (,read-fn pom))
-                (data (,transform-fn raw)))
-           (org-canvas--require-title (plist-get data ,title-key) pom ,entity-name)
-           (org-canvas--log-info org-canvas--logger
-                      "[Stage 1: Parse] Processing %s: '%%s' (ID: %%s)"
-                      ,entity-name
-                      (plist-get data ,title-key)
-                      (or (plist-get data ,id-key) "NEW"))
-           ,@(when body-key
-               `((org-canvas--log-debug org-canvas--logger
-                             "[Stage 1: Export] Exporting subtree to HTML...")
-                 (let ((content (org-canvas--export-subtree-body-to-html)))
-                   (org-canvas--log-info org-canvas--logger
-                              "[Stage 1: Parse] Body size: %%d chars"
-                              (length content))
-                   (plist-put data ,body-key content))))
-           (plist-put data :pom pom)
-           data)))))
+  (org-canvas--parse-gen-forms feature args))
 
 (provide 'org-canvas-core-macros)
 ;;; org-canvas-core-macros.el ends here
