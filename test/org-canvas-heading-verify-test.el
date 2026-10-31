@@ -22,8 +22,19 @@
           "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1001\n:POINTS: 10\n"
           ":DUE_AT: <2026-11-06 Fri 23:59>\n:END:\nWrite it.\n"
           "* Draft\n:PROPERTIES:\n:CANVAS_ID: 1002\n:PUBLISHED: false\n:END:\n"
+          "* Rubricated\n:PROPERTIES:\n:CANVAS_ID: 1003\n:POINTS: 10\n"
+          ":RUBRIC_LINK: [[file:rubrics.org::*Python Basics][Python Basics]]\n:END:\n"
           "* Unpushed\nNot yet.\n")
-  "Two stamped assignment headings and one never pushed.")
+  "Three stamped assignment headings and one never pushed.")
+
+(defconst test-hver--rubrics
+  (concat "#+TITLE: Rubrics\n"
+          "* Python Basics\n:PROPERTIES:\n:CANVAS_ID: 900\n:END:\n"
+          "** Sources :5pt:\nEvaluate sources.\n"
+          "| Rating | Points |\n|--------+--------|\n| Full   | 5 |\n| None   | 0 |\n"
+          "** Argument :5pt:\n"
+          "| Rating | Points |\n|--------+--------|\n| Full   | 5 |\n| None   | 0 |\n")
+  "One two-criterion rubric worth ten points.")
 
 (defconst test-hver--modules
   (concat "#+TITLE: Modules\n"
@@ -59,6 +70,21 @@
                                (unlock_at) (lock_at)))
      ("assignments/1002\\'" . ((id . 1002) (name . "Draft") (published . :json-false)
                                (due_at) (unlock_at) (lock_at)))
+     ("assignments/1003\\'" . ((id . 1003) (name . "Rubricated") (published . t)
+                               (points_possible . 10.0)
+                               (due_at) (unlock_at) (lock_at)
+                               (rubric_settings . ((id . 900) (title . "Python Basics")
+                                                   (points_possible . 10)))
+                               (rubric . [((id . 11) (description . "Sources")
+                                           (points . 5))
+                                          ((id . 12) (description . "Argument")
+                                           (points . 5))])))
+     ("rubrics/900\\'" . ((id . 900) (title . "Python Basics")
+                          (points_possible . 10.0)
+                          (data . [((id . 11) (description . "Sources") (points . 5)
+                                    (long_description . "Evaluate sources."))
+                                   ((id . 12) (description . "Argument")
+                                    (points . 5))])))
      ("modules/501/items" . [((id . 9001) (title . "Friday") (position . 1)
                               (published . t))
                              ((id . 9002) (title . "Reading") (position . 3)
@@ -80,6 +106,11 @@
   "Make the module's mock item list ITEMS."
   (setcdr (assoc "modules/501/items" test-org-canvas-api-responses) items))
 
+(defun test-hver--respond-rubric (pattern &rest overrides)
+  "Make the mock response PATTERN carry OVERRIDES, (KEY VALUE) pairs."
+  (let ((cell (assoc pattern test-org-canvas-api-responses)))
+    (setcdr cell (test-hver--alist (cdr cell) overrides))))
+
 (defmacro test-hver--with-course (&rest body)
   "Run BODY in a course whose files hold the fixtures.
 DIR is bound to the course directory, the API mocked with
@@ -89,11 +120,13 @@ stubbed.  The buffers are killed and the directory deleted afterwards."
   `(let* ((dir (file-name-as-directory (make-temp-file "hver-" t)))
           (org-canvas-time-zone "UTC")
           (org-canvas-assignments-file (expand-file-name "assignments.org" dir))
+          (org-canvas-rubrics-file (expand-file-name "rubrics.org" dir))
           (org-canvas-modules-file (expand-file-name "modules.org" dir))
           (org-canvas-files-file (expand-file-name "files.org" dir)))
      (unwind-protect
          (progn
            (with-temp-file org-canvas-assignments-file (insert test-hver--assignments))
+           (with-temp-file org-canvas-rubrics-file (insert test-hver--rubrics))
            (with-temp-file org-canvas-modules-file (insert test-hver--modules))
            (with-temp-file org-canvas-files-file (insert test-hver--files))
            (with-org-canvas-test-config
@@ -102,8 +135,8 @@ stubbed.  The buffers are killed and the directory deleted afterwards."
                (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
                          ((symbol-function 'org-canvas--user-message) #'ignore))
                  ,@body))))
-       (dolist (f (list org-canvas-assignments-file org-canvas-modules-file
-                        org-canvas-files-file))
+       (dolist (f (list org-canvas-assignments-file org-canvas-rubrics-file
+                        org-canvas-modules-file org-canvas-files-file))
          (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
        (delete-directory dir t))))
 
@@ -181,6 +214,50 @@ stubbed.  The buffers are killed and the directory deleted afterwards."
       (let ((result (car (car (test-hver--verify '("files" "7001" canvas-id))))))
         (expect (plist-get result :title) :to-equal "deck.pdf")
         (expect (plist-get result :differences) :to-equal 0)))))
+
+;;;; Rubrics (issue #567)
+
+(describe "org-canvas-verify-headings and rubrics (issue #567)"
+  (it "compares the rubric an assignment carries with the one its heading links"
+    (test-hver--with-course
+      (pcase-let ((`(,results . ,text) (test-hver--verify '("assignments" . "Rubricated"))))
+        (expect (plist-get (car results) :differences) :to-equal 0)
+        (expect text :to-match "ok +rubric +:: Org \"Python Basics\" (id 900), 2 criteria, 10 points; Canvas \"Python Basics\" (id 900), 2 criteria, 10 points")
+        (expect text :to-match "ok +criterion 1 +:: Org \"Sources\" (5 points); Canvas \"Sources\" (5 points)")
+        (expect text :to-match "ok +criterion 2 +:: Org \"Argument\" (5 points); Canvas \"Argument\" (5 points)"))))
+
+  (it "calls a renamed rubric and a criterion whose points moved a difference"
+    (test-hver--with-course
+      (test-hver--respond-rubric
+       "assignments/1003\\'"
+       'rubric_settings '((id . 900) (title . "Python Basics v2") (points_possible . 12))
+       'rubric [((id . 11) (description . "Sources") (points . 7))
+                ((id . 12) (description . "Argument") (points . 5))])
+      (pcase-let ((`(,results . ,text) (test-hver--verify '("assignments" . "Rubricated"))))
+        (expect (plist-get (car results) :differences) :to-equal 2)
+        (expect text :to-match "DIFFERS rubric +:: Org \"Python Basics\" (id 900), 2 criteria, 10 points; Canvas \"Python Basics v2\" (id 900), 2 criteria, 12 points")
+        (expect text :to-match "DIFFERS criterion 1 +:: Org \"Sources\" (5 points); Canvas \"Sources\" (7 points)"))))
+
+  (it "reads a rubric heading back through the registry, writing nothing"
+    (test-hver--with-course
+      (pcase-let ((`(,results . ,text) (test-hver--verify '("rubrics" . "Python Basics"))))
+        (expect (plist-get (car results) :differences) :to-equal 0)
+        (expect (test-org-canvas-api-called-p 'GET "/courses/[0-9]+/rubrics/900\\'")
+                :to-be-truthy)
+        (expect (cl-every (lambda (call) (eq (car call) 'GET)) test-org-canvas-api-calls)
+                :to-be-truthy)
+        (expect text :to-match "ok +rubric +:: Org \"Python Basics\" (id 900), 2 criteria, 10 points")
+        (expect text :to-match "ok +criterion 1 +:: Org \"Sources\" (5 points); Canvas \"Sources\" (5 points)"))))
+
+  (it "calls a dropped criterion a difference, and goes on"
+    (test-hver--with-course
+      (test-hver--respond-rubric
+       "rubrics/900\\'"
+       'data [((id . 11) (description . "Sources") (points . 5))])
+      (pcase-let ((`(,results . ,text) (test-hver--verify '("rubrics" . "Python Basics"))))
+        (expect (plist-get (car results) :differences) :to-equal 2)
+        (expect text :to-match "DIFFERS rubric +:: Org \"Python Basics\" (id 900), 2 criteria, 10 points; Canvas \"Python Basics\" (id 900), 1 criterion, 10 points")
+        (expect text :to-match "DIFFERS criterion 2 +:: Org \"Argument\" (5 points); Canvas (none)")))))
 
 ;;;; Differences
 
@@ -291,6 +368,7 @@ stubbed.  The buffers are killed and the directory deleted afterwards."
     (expect (org-canvas-batch--heading-verify-arg-p "modules:Week 1") :to-be-truthy)
     (expect (org-canvas-batch--heading-verify-arg-p "file#7001") :to-be-truthy)
     (expect (org-canvas-batch--heading-verify-arg-p "assignments:Essay") :to-be-truthy)
+    (expect (org-canvas-batch--heading-verify-arg-p "rubrics:Python Basics") :to-be-truthy)
     (expect (org-canvas-batch--heading-verify-arg-p "Assignments: Essay") :to-be nil)
     (expect (org-canvas-batch--heading-verify-arg-p "announcements:Reminder") :to-be nil)
     (expect (org-canvas-batch--heading-verify-arg-p "1001") :to-be nil))
@@ -308,11 +386,13 @@ stubbed.  The buffers are killed and the directory deleted afterwards."
                  (lambda (targets hidden) (setq columns (list targets hidden))
                    (list (list :differences 0)))))
         (expect (org-canvas-batch-main '("verify" "HW" "announcements:Reminder"
-                                         "modules:Week 1" "file#7001"))
+                                         "modules:Week 1" "file#7001"
+                                         "rubrics:Python Basics"))
                 :to-equal 0)
         (expect columns :to-equal '(("HW") nil))
         (expect announcements :to-equal '(("announcements" "Reminder" title)))
-        (expect headings :to-equal '(("modules" "Week 1" title) ("file" "7001" canvas-id)))
+        (expect headings :to-equal '(("modules" "Week 1" title) ("file" "7001" canvas-id)
+                                     ("rubrics" "Python Basics" title)))
         (setq differences 2 columns nil)
         (expect (org-canvas-batch-main '("verify" "assignments:Essay")) :to-equal 1)
         (expect columns :to-be nil)))))

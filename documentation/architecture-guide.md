@@ -249,6 +249,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a table under a heading reconciles against a Canvas list in two places only, and stays two until a third arrives (#509)
 - a wanted document processor declared, compared and never sent (#293)
 - an assignment, a module's items and a file are read back through `verify assignments:TITLE modules:TITLE files:TITLE` (`org-canvas-verify-headings`): base dates, item order, titles and publish state, a file's lock state by the id it carries now; nothing written (#524)
+- a rubric is read back on both sides through `show` and `verify`: the rubric an assignment's `RUBRIC_LINK` names beside the one Canvas attaches (id, title, criterion count and total points, starred when they differ, with the criteria compared position by position), and a `rubrics:TITLE` heading read through the registry by its own id; Canvas's copy of an assignment's rubric comes with the assignment read, so neither adds a request, and neither writes (#567)
 - an announcement is read back through `verify announcements:TITLE` (`org-canvas-verify-announcements`): title, published, posting judged against now so a leftover schedule is a difference, comments against `locked`, the body exported offline; nothing written (#502)
 - assignment reads ask for their own dates and quizzes do not need to (#273)
 - batch reports (#155, #169)

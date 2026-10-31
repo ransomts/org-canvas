@@ -1,0 +1,15 @@
+* Added
+- #567 =scripts/org-canvas show "assignment:TITLE"= also names the
+  rubric the heading's =RUBRIC_LINK= resolves to beside the one Canvas
+  attaches to the assignment: its title, =CANVAS_ID=, criterion count
+  and total points, starred when they differ.  Canvas's copy comes with
+  the assignment read, so no extra request is made, and a heading that
+  links none, a link that resolves to no rubric heading, and a rubric
+  never pushed each say so on its line.
+- #567 =scripts/org-canvas verify "rubric:TITLE"= reads a rubric
+  heading back from Canvas and compares it with the Org side: title,
+  =CANVAS_ID=, criterion count and total points, then each criterion's
+  description and points by position.  Verifying an assignment now
+  compares the rubric its =RUBRIC_LINK= names the same way, criterion
+  by criterion.  Both exit 1 on a difference, and neither writes
+  anything, locally or on Canvas.

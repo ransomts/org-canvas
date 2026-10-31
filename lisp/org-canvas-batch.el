@@ -646,13 +646,13 @@ Nil ARGS verify nothing and agree."
                  (mapcar #'org-canvas-batch-heading-entry args)))))
 
 (defun org-canvas-batch--heading-verify-arg-p (arg)
-  "Return non-nil when ARG names an assignment, module or file heading.
+  "Return non-nil when ARG names an assignment, module, file or rubric heading.
 FEATURE:TITLE or FEATURE#ID, the feature spelled in lower case."
   (let ((case-fold-search nil))
-    (string-match-p "\\`\\(assignments?\\|modules?\\|files?\\)[:#]" arg)))
+    (string-match-p "\\`\\(assignments?\\|modules?\\|files?\\|rubrics?\\)[:#]" arg)))
 
 (defun org-canvas-batch--verify-headings (args)
-  "Verify the assignment, module and file headings ARGS name.
+  "Verify the assignment, module, file and rubric headings ARGS name.
 Return non-nil if all agree; nil ARGS verify nothing and agree."
   (or (null args)
       (cl-every (lambda (r) (zerop (plist-get r :differences)))
@@ -672,8 +672,8 @@ A column is compared with its grading file; --hidden counts a posted
 submission as a difference (`org-canvas-submissions-verify').  An
 announcements:TITLE or announcements#ID argument is compared with its
 heading (`org-canvas-verify-announcements', #502), and an
-assignments:, modules: or files: argument with its heading
-\(`org-canvas-verify-headings', #524).  Return 1 if any differs."
+assignments:, modules:, files: or rubrics: argument with its heading
+\(`org-canvas-verify-headings', #524, #567).  Return 1 if any differs."
   (let* ((args (plist-get parsed :args))
          (hidden (and (member "--hidden" args) t))
          (rest (remove "--hidden" args))

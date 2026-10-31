@@ -32,25 +32,45 @@
           "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 61\n:CANVAS_UPDATED_AT: 2026-09-01T00:00:00Z\n"
           ":PAYLOAD_HASH: bbb\n:END:\nLab two.\n** A part\nMore.\n"
           "* Lab 3\n:PROPERTIES:\n:CANVAS_ID: 62\n:CANVAS_UPDATED_AT: 2026-09-01T00:00:00Z\n"
-          ":END:\nNo table here.\n")
-  "Three stamped assignment headings.")
+          ":END:\nNo table here.\n"
+          "* Lab 4\n:PROPERTIES:\n:CANVAS_ID: 63\n"
+          ":RUBRIC_LINK: [[file:rubrics.org::*Python Basics][Python Basics]]\n:END:\n"
+          "Do it.\n")
+  "Four stamped assignment headings, the last with a rubric attached.")
+
+(defconst test-drift--rubrics
+  (concat "#+TITLE: Rubrics\n"
+          "* Python Basics\n:PROPERTIES:\n:CANVAS_ID: 900\n:END:\n"
+          "** Sources :5pt:\nEvaluate sources.\n"
+          "| Rating | Points |\n|--------+--------|\n| Full   | 5 |\n| None   | 0 |\n"
+          "** Argument :5pt:\n"
+          "| Rating | Points |\n|--------+--------|\n| Full   | 5 |\n| None   | 0 |\n")
+  "One two-criterion rubric worth ten points.")
 
 (defmacro test-drift--with-file (&rest body)
-  "Run BODY with `org-canvas-assignments-file' holding `test-drift--file'.
-FILE is bound to its path; the buffer is killed and the file deleted
-afterwards.  The clean-heading check is stubbed to say no, so no spec
-hashes a heading unless it asks to."
+  "Run BODY with the drift fixtures as the course's Org files.
+DIR is the course directory; `org-canvas-assignments-file' holds
+`test-drift--file' as assignments.org and `org-canvas-rubrics-file'
+`test-drift--rubrics' as rubrics.org, so a link between them resolves.
+FILE and RUBRICS-FILE are bound to their paths.  The buffers are killed
+and the directory deleted afterwards.  The clean-heading check is
+stubbed to say no, so no spec hashes a heading unless it asks to."
   (declare (indent 0))
-  `(let ((file (make-temp-file "drift-" nil ".org")))
+  `(let* ((dir (file-name-as-directory (make-temp-file "drift-" t)))
+          (file (expand-file-name "assignments.org" dir))
+          (rubrics-file (expand-file-name "rubrics.org" dir)))
      (unwind-protect
          (progn
            (with-temp-file file (insert test-drift--file))
-           (let ((org-canvas-assignments-file file))
+           (with-temp-file rubrics-file (insert test-drift--rubrics))
+           (let ((org-canvas-assignments-file file)
+                 (org-canvas-rubrics-file rubrics-file))
              (cl-letf (((symbol-function 'org-canvas--publish-heading-clean-p)
                         (lambda (_spec) nil)))
                ,@body)))
-       (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
-       (delete-file file))))
+       (dolist (f (list file rubrics-file))
+         (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
+       (delete-directory dir t))))
 
 (defun test-drift--text (file)
   "Return FILE's text, read from disk."
@@ -65,11 +85,37 @@ hashes a heading unless it asks to."
     (re-search-forward (concat "^\\* " (regexp-quote title) "$"))
     (org-entry-get (point) property)))
 
+(defun test-drift--show (title item)
+  "Return the show text of assignment heading TITLE against Canvas ITEM."
+  (with-current-buffer (org-canvas--find-file-noselect org-canvas-assignments-file)
+    (goto-char (point-min))
+    (re-search-forward (concat "^\\* " (regexp-quote title) "$"))
+    (org-canvas--drift-show-text (org-canvas--diff-find-feature "Assignments") item)))
+
 (defconst test-drift--item
   '((id . 60) (name . "Lab 1 renamed") (points_possible . 12) (published . t)
     (due_at) (description . "<p>Canvas wrote this.</p>")
     (updated_at . "2026-10-14T15:04:51Z"))
   "Lab 1 as Canvas holds it.")
+
+(defconst test-drift--rubric-item
+  '((id . 63) (name . "Lab 4") (points_possible . 10) (published . t)
+    (due_at) (description . "")
+    (rubric_settings . ((id . 900) (title . "Python Basics") (points_possible . 10)))
+    (rubric . [((id . 11) (description . "Sources") (points . 5))
+               ((id . 12) (description . "Argument") (points . 5))]))
+  "Lab 4 as Canvas holds it, with `test-drift--rubrics' attached.")
+
+(defun test-drift--rubric-item-with (&rest overrides)
+  "Return `test-drift--rubric-item' with OVERRIDES, (KEY VALUE) pairs, set.
+A `title' or `points_possible' lands in its `rubric_settings'."
+  (let ((item (copy-tree test-drift--rubric-item)))
+    (while overrides
+      (let ((key (pop overrides)) (value (pop overrides)))
+        (if (memq key '(title points_possible))
+            (setf (alist-get key (alist-get 'rubric_settings item)) value)
+          (setf (alist-get key item) value))))
+    item))
 
 (defun test-drift--entry (&rest fields)
   "Return Lab 1's CHANGED entry naming FIELDS, its item `test-drift--item'."
@@ -770,6 +816,65 @@ NAMES are the columns the row names as differing."
     (with-temp-org-buffer "* Q\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n#+NAME: accommodations\n| a |\n\nIntro.\n** Question\nText.\n"
       (expect (org-canvas--drift-local-body-org '(:body-fn ignore)) :to-equal "Intro.")
       (expect (org-canvas--drift-local-body-org nil) :to-match "Intro.\n\\*\\* Question"))))
+
+(describe "org-canvas--drift-show-rubric (issue #567)"
+  (it "shows the rubric the heading links beside the one Canvas attaches"
+    (test-drift--with-file
+      (let ((text (test-drift--show "Lab 4" test-drift--rubric-item)))
+        (expect text :to-match "RUBRIC_LINK +org: +\"Python Basics\" (id 900), 2 criteria, 10 points")
+        (expect text :to-match "canvas: \"Python Basics\" (id 900), 2 criteria, 10 points")
+        (expect text :not :to-match "\\* RUBRIC_LINK"))))
+
+  (it "stars a renamed rubric, or one worth other points"
+    (test-drift--with-file
+      (let ((text (test-drift--show
+                   "Lab 4" (test-drift--rubric-item-with
+                            'title "Python Basics v2" 'points_possible 12))))
+        (expect text :to-match "\\* RUBRIC_LINK +org: +\"Python Basics\" (id 900), 2 criteria, 10 points")
+        (expect text :to-match "canvas: \"Python Basics v2\" (id 900), 2 criteria, 12 points"))))
+
+  (it "shows a rubric Canvas attaches to a heading that links none"
+    (test-drift--with-file
+      (let ((text (test-drift--show "Lab 1" test-drift--rubric-item)))
+        (expect text :to-match "\\* RUBRIC_LINK +org: +(none)")
+        (expect text :to-match "canvas: \"Python Basics\" (id 900), 2 criteria, 10 points"))))
+
+  (it "has no rubric block when neither side has one"
+    (test-drift--with-file
+      (let ((text (test-drift--show "Lab 1" test-drift--item)))
+        (expect text :not :to-match "RUBRIC_LINK"))))
+
+  (it "shows no block on a feature whose read carries no rubric"
+    (test-drift--with-file
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-assignments-file)
+        (goto-char (point-min))
+        (re-search-forward "^\\* Lab 4$")
+        ;; A discussion's read returns no rubric, so its RUBRIC_LINK is
+        ;; not starred against one (issue #567).
+        (expect (org-canvas--drift-show-rubric
+                 (org-canvas--diff-find-feature "Discussions")
+                 (point) test-drift--item)
+                :to-equal ""))))
+
+  (it "says when the link resolves to nothing, and when the rubric was never pushed"
+    (test-drift--with-file
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-assignments-file)
+        (goto-char (point-min))
+        (re-search-forward "^\\* Lab 4$")
+        (org-entry-put (point) "RUBRIC_LINK" "[[file:rubrics.org::*Nope][Nope]]"))
+      (expect (test-drift--show "Lab 4" test-drift--rubric-item)
+              :to-match "(unresolved link)")
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-assignments-file)
+        (goto-char (point-min))
+        (re-search-forward "^\\* Lab 4$")
+        (org-entry-put (point) "RUBRIC_LINK"
+                       "[[file:rubrics.org::*Python Basics][Python Basics]]"))
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-rubrics-file)
+        (goto-char (point-min))
+        (re-search-forward "^:CANVAS_ID: 900\n")
+        (replace-match ""))
+      (expect (test-drift--show "Lab 4" test-drift--rubric-item)
+              :to-match "org: +\"Python Basics\" (no CANVAS_ID), 2 criteria, 10 points"))))
 
 (describe "org-canvas-diff-show-row (issue #500)"
   (it "shows the row's Canvas version from the item the report read"

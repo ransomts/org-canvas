@@ -1,4 +1,4 @@
-;;; org-canvas-heading-verify.el --- Read pushed assignments, modules and files back -*- lexical-binding: t; -*-
+;;; org-canvas-heading-verify.el --- Read pushed assignments, rubrics, modules and files back -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
@@ -8,27 +8,33 @@
 ;; Canvas answered, not what it now holds.  A module sync creates,
 ;; updates and reorders children, and a module item can publish the
 ;; file it points at; a re-upload gives a file a new id, so a check by
-;; the old id checks nothing.  Confirming such a push took a script of
-;; raw GETs read by eye (issue #524).
+;; the old id checks nothing.  A rubric heading, and the rubric an
+;; assignment links, had no read-back either (issue #567).
+;; Confirming such a push took a script of raw GETs read by eye
+;; (issue #524).
 ;;
 ;; `org-canvas-verify-headings' (`scripts/org-canvas verify
-;; modules:TITLE files:TITLE assignments:TITLE') is that read-back, in
-;; the shape of the announcement verify (#502).  Each named heading's
-;; object is read on its own, by the CANVAS_ID the heading carries now,
-;; through the feature registry's item URL and parameters (Hard Rule
-;; 13), and compared:
+;; modules:TITLE files:TITLE assignments:TITLE rubrics:TITLE') is that
+;; read-back, in the shape of the announcement verify (#502).  Each
+;; named heading's object is read on its own, by the CANVAS_ID the
+;; heading carries now, through the feature registry's item URL and
+;; parameters (Hard Rule 13), and compared:
 ;;
 ;;   - assignment: the title, PUBLISHED, POINTS (when written), and
 ;;     DUE_AT, UNLOCK_AT and LOCK_AT.  The read carries the feature's
 ;;     `override_assignment_dates=false', so the base dates are what is
-;;     compared, never a student's extension (#273);
+;;     compared, never a student's extension (#273); the rubric the
+;;     heading's RUBRIC_LINK names is compared with the one Canvas
+;;     attaches, criterion by criterion (issue #567);
 ;;   - module: the title, PUBLISHED, and its items: the module's item
 ;;     list is read once and each child heading, parsed as the module
 ;;     sync parses it, is checked for its position among the items the
 ;;     push sends, its title, and its publish state when the push sends
 ;;     one.  An item Canvas holds that no child names is a difference;
 ;;   - file: PUBLISHED (against `locked'), HIDDEN (false when absent, as
-;;     the push sends it), UNLOCK_AT and LOCK_AT.
+;;     the push sends it), UNLOCK_AT and LOCK_AT;
+;;   - rubric: the title, CANVAS_ID, criterion count and total points,
+;;     then each criterion's description and points.
 ;;
 ;; A date the heading leaves out wants none on Canvas: that is what a
 ;; student would not expect to see.  Nothing is written, locally or on
@@ -48,6 +54,8 @@
 (require 'org-canvas-assignments)
 (require 'org-canvas-modules)
 (require 'org-canvas-files)
+;; The rubric a heading links, for the rubric rows (issue #567).
+(require 'org-canvas-rubrics)
 
 (defconst org-canvas--heading-verify-buffer "*canvas-verify-headings*"
   "Buffer the heading verification report is rendered into.")
@@ -55,7 +63,8 @@
 (defconst org-canvas--heading-verify-features
   '(("assignment" "Assignments" org-canvas--heading-verify-assignment-rows)
     ("module" "Modules" org-canvas--heading-verify-module-rows)
-    ("file" "Files" org-canvas--heading-verify-file-rows))
+    ("file" "Files" org-canvas--heading-verify-file-rows)
+    ("rubric" "Rubrics" org-canvas--heading-verify-rubric-rows))
   "The features this command can verify, as (SINGULAR NAME ROWS-FN).
 NAME is the registry name; ROWS-FN is called with the feature entry,
 its property registration, the heading's entry and the Canvas item,
@@ -142,10 +151,59 @@ PROPS is the feature's property registration."
 (defun org-canvas--heading-verify-assignment-rows (feature props entry item)
   "Return the rows of assignment heading ENTRY against Canvas ITEM.
 FEATURE and PROPS are the assignment registry entries.  ITEM was read
-with `override_assignment_dates' false, so its dates are the base ones."
-  (cons (org-canvas--heading-verify-title entry item (plist-get feature :title-field))
-        (org-canvas--heading-verify-properties
-         props (plist-get entry :pom) item org-canvas--heading-verify-assignment-props)))
+with `override_assignment_dates' false, so its dates are the base ones.
+The rubric the heading links is compared too (issue #567)."
+  (append
+   (list (org-canvas--heading-verify-title entry item (plist-get feature :title-field)))
+   (org-canvas--heading-verify-properties
+    props (plist-get entry :pom) item org-canvas--heading-verify-assignment-props)
+   (org-canvas--heading-verify-assignment-rubric-rows entry item)))
+
+;;;; Rubrics
+
+(defun org-canvas--heading-verify-rubric-criterion-rows (local remote)
+  "Return one row per criterion of LOCAL against REMOTE, by position.
+Only when both sides carry the rubric: a missing one is the summary
+row's to report.  Criteria are compared position by position, not by
+their Canvas ids, since a push may mint fresh ones (issue #256)."
+  (when (and local remote)
+    (let ((org-criteria (plist-get local :criteria))
+          (canvas-criteria (plist-get remote :criteria)))
+      (cl-loop for index below (max (length org-criteria) (length canvas-criteria))
+               for a = (nth index org-criteria)
+               for b = (nth index canvas-criteria)
+               collect (org-canvas--announcement-verify-row
+                        (format "criterion %d" (1+ index))
+                        (org-canvas--rubric-criteria-agree-p a b)
+                        (org-canvas--rubric-criterion-text a)
+                        (org-canvas--rubric-criterion-text b))))))
+
+(defun org-canvas--heading-verify-rubric-report (local remote)
+  "Return the rubric rows of LOCAL against REMOTE, or nil for neither.
+One row compares the rubric itself (its id, title, criterion count and
+points); the rest compare its criteria, position by position."
+  (when (or local remote)
+    (append
+     (list (org-canvas--announcement-verify-row
+            "rubric"
+            (org-canvas--rubric-summary-agrees-p local remote)
+            (org-canvas--rubric-summary-text local)
+            (org-canvas--rubric-summary-text remote)))
+     (org-canvas--heading-verify-rubric-criterion-rows local remote))))
+
+(defun org-canvas--heading-verify-assignment-rubric-rows (entry item)
+  "Return the rubric rows of assignment heading ENTRY against Canvas ITEM.
+The heading's RUBRIC_LINK names its rubric; Canvas's copy comes with
+the assignment read, so no second request is made (issue #567)."
+  (org-canvas--heading-verify-rubric-report
+   (org-canvas--rubric-summary-at-property (plist-get entry :pom) "RUBRIC_LINK")
+   (org-canvas--rubric-assignment-summary item)))
+
+(defun org-canvas--heading-verify-rubric-rows (_feature _props entry item)
+  "Return the rows of rubric heading ENTRY against Canvas ITEM."
+  (org-canvas--heading-verify-rubric-report
+   (org-canvas--rubric-heading-summary (plist-get entry :pom))
+   (org-canvas--rubric-live-summary item)))
 
 (defun org-canvas--heading-verify-file-rows (_feature props entry item)
   "Return the rows of file heading ENTRY against Canvas ITEM.
@@ -348,7 +406,7 @@ An entry naming a feature this command does not verify is a
             (let* ((parsed (org-canvas--sync-headings-entry entry))
                    (kind (org-canvas--heading-verify-kind (car parsed))))
               (unless kind
-                (user-error "Verify reads assignments:, modules: or files:TITLE, not %s:%s"
+                (user-error "Verify reads assignments:, modules:, files: or rubrics:TITLE, not %s:%s"
                             (car parsed) (nth 1 parsed)))
               (cons kind (cdr parsed))))
           entries))
@@ -385,20 +443,24 @@ An entry naming a feature this command does not verify is a
 
 ;;;###autoload
 (defun org-canvas-verify-headings (&optional entries)
-  "Read pushed assignments, modules and files back; return what differs.
+  "Read pushed assignments, modules, files and rubrics back; return what differs.
 ENTRIES name the headings as `org-canvas-show-headings' takes them:
 \(FEATURE . TITLE) or (FEATURE TARGET BY), FEATURE assignments,
-modules or files and BY `title' or `canvas-id'.  Interactively, a
-feature and a title are asked for.
+modules, files or rubrics and BY `title' or `canvas-id'.
+Interactively, a feature and a title are asked for.
 
 Each object is read on its own by the CANVAS_ID its heading carries
 now (issue #524).  An assignment is compared on its title, PUBLISHED,
 POINTS and its base dates, read with `override_assignment_dates'
-false; a module on its title, PUBLISHED and its items, each child
-heading's position among the items the push sends, title and publish
-state, and an item no child names; a file on PUBLISHED against
-`locked', HIDDEN, UNLOCK_AT and LOCK_AT.  Nothing is written, locally
-or on Canvas.
+false, and on the rubric its RUBRIC_LINK names: the title, id,
+criterion count and total points, then each criterion's description
+and points, against the one Canvas attaches (issue #567); a module on
+its title, PUBLISHED and its items, each child heading's position
+among the items the push sends, title and publish state, and an item
+no child names; a file on PUBLISHED against `locked', HIDDEN,
+UNLOCK_AT and LOCK_AT; a rubric on its title, id, criterion count and
+points, then each criterion.  Nothing is written, locally or on
+Canvas.
 
 Returns one plist per heading: :feature, :title, :id, :rows (each with
 :field, :ok, :org and :canvas), :error (a heading not found, never
