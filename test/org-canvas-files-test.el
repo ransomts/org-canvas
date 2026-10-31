@@ -615,27 +615,21 @@
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "posts to folder files endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/456/files" . ((upload_url . "https://upload.example.com")
-                                        (upload_params . ((key . "value")))))))
-        (let ((payload (make-hash-table :test 'equal)))
-          (puthash "name" "test.pdf" payload)
-          (org-canvas--file-upload-step1-notify 456 payload)
-          (expect-api-called 'POST "folders/456/files")))))
+    (with-test-api-responses '(("folders/456/files" . ((upload_url . "https://upload.example.com")
+                                                        (upload_params . ((key . "value"))))))
+      (let ((payload (make-hash-table :test 'equal)))
+        (puthash "name" "test.pdf" payload)
+        (org-canvas--file-upload-step1-notify 456 payload)
+        (expect-api-called 'POST "folders/456/files"))))
 
   (it "returns upload info with upload_url"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders" . ((upload_url . "https://s3.example.com/upload")
-                              (upload_params . ((token . "abc123")))))))
-        (let ((payload (make-hash-table :test 'equal)))
-          (puthash "name" "test.pdf" payload)
-          (let ((response (org-canvas--file-upload-step1-notify 123 payload)))
-            (expect (alist-get 'upload_url response)
-                    :to-equal "https://s3.example.com/upload")))))))
+    (with-test-api-responses '(("folders" . ((upload_url . "https://s3.example.com/upload")
+                                              (upload_params . ((token . "abc123"))))))
+      (let ((payload (make-hash-table :test 'equal)))
+        (puthash "name" "test.pdf" payload)
+        (let ((response (org-canvas--file-upload-step1-notify 123 payload)))
+          (expect (alist-get 'upload_url response)
+                  :to-equal "https://s3.example.com/upload"))))))
 
 (describe "org-canvas--file-upload-step3-confirm"
   (before-each (test-org-canvas-reset-file-caches))
@@ -646,22 +640,16 @@
               :to-equal 99999)))
 
   (it "follows location URL when no id present"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files/confirmation" . ((id . 88888) (display_name . "uploaded.pdf")))))
-        (let ((step2-response '((location . "https://test.canvas.example.com/api/v1/files/confirmation"))))
-          (let ((result (org-canvas--file-upload-step3-confirm step2-response)))
-            (expect (alist-get 'id result) :to-equal 88888))))))
+    (with-test-api-responses '(("files/confirmation" . ((id . 88888) (display_name . "uploaded.pdf"))))
+      (let ((step2-response '((location . "https://test.canvas.example.com/api/v1/files/confirmation"))))
+        (let ((result (org-canvas--file-upload-step3-confirm step2-response)))
+          (expect (alist-get 'id result) :to-equal 88888)))))
 
   (it "handles relative location URLs"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("" . ((id . 77777) (display_name . "file.pdf")))))
-        (let ((step2-response '((location . "/api/v1/files/77777"))))
-          (let ((result (org-canvas--file-upload-step3-confirm step2-response)))
-            (expect (alist-get 'id result) :to-equal 77777))))))
+    (with-test-api-responses '(("" . ((id . 77777) (display_name . "file.pdf"))))
+      (let ((step2-response '((location . "/api/v1/files/77777"))))
+        (let ((result (org-canvas--file-upload-step3-confirm step2-response)))
+          (expect (alist-get 'id result) :to-equal 77777)))))
 
   (it "errors when no id or location in response"
     (let ((step2-response '((error . "something wrong"))))
@@ -672,37 +660,26 @@
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "searches files endpoint with search_term"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [((id . 111) (display_name . "Lab 1.pdf"))])))
-        (org-canvas--file-search-by-name "Lab 1.pdf" "")
-        (expect-api-called 'GET "files"))))
+    (with-test-api-responses '(("files" . [((id . 111) (display_name . "Lab 1.pdf"))]))
+      (org-canvas--file-search-by-name "Lab 1.pdf" "")
+      (expect-api-called 'GET "files")))
 
   (it "returns matching file object"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [((id . 222) (display_name . "Syllabus.pdf"))
-                            ((id . 333) (display_name . "Other.pdf"))])))
-        (let ((result (org-canvas--file-search-by-name "Syllabus.pdf" "")))
-          (expect (alist-get 'id result) :to-equal 222)))))
+    (with-test-api-responses '(("files" . [((id . 222) (display_name . "Syllabus.pdf"))
+                                            ((id . 333) (display_name . "Other.pdf"))]))
+      (let ((result (org-canvas--file-search-by-name "Syllabus.pdf" "")))
+        (expect (alist-get 'id result) :to-equal 222))))
 
   (it "returns nil when file not found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [])))
-        (let ((result (org-canvas--file-search-by-name "Missing.pdf" "")))
-          (expect result :to-be nil)))))
+    (with-test-api-responses '(("files" . []))
+      (let ((result (org-canvas--file-search-by-name "Missing.pdf" "")))
+        (expect result :to-be nil))))
 
   (it "returns nil on API error"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("API Error")))))
-        (let ((result (org-canvas--file-search-by-name "Any.pdf" "")))
-          (expect result :to-be nil))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("API Error")))
+      (let ((result (org-canvas--file-search-by-name "Any.pdf" "")))
+        (expect result :to-be nil)))))
 
 (describe "org-canvas--file-push-to-api (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
@@ -809,24 +786,22 @@
               (delete-file temp-file)))))))
 
   (it "signals error when upload fails"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest _args)
-                   (cond
-                    ((and (eq method 'GET) (string-match "folders/root" url))
-                     '((id . 100)))
-                    ((eq method 'POST)
-                     (signal 'error '("Upload failed")))
-                    (t nil)))))
-        (let ((temp-file (make-temp-file "test" nil ".pdf")))
-          (unwind-protect
-              (progn
-                (with-temp-file temp-file (insert "content"))
-                (let ((data (list :display-name "Test.pdf"
-                                  :local-path temp-file
-                                  :folder-path "")))
-                  (expect (org-canvas--file-push-to-api data) :to-throw 'error)))
-            (delete-file temp-file)))))))
+    (with-test-api-handler (lambda (method url &rest _args)
+                             (cond
+                               ((and (eq method 'GET) (string-match "folders/root" url))
+                                 '((id . 100)))
+                               ((eq method 'POST)
+                                 (signal 'error '("Upload failed")))
+                               (t nil)))
+      (let ((temp-file (make-temp-file "test" nil ".pdf")))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file (insert "content"))
+              (let ((data (list :display-name "Test.pdf"
+                                :local-path temp-file
+                                :folder-path "")))
+                (expect (org-canvas--file-push-to-api data) :to-throw 'error)))
+          (delete-file temp-file))))))
 
 ;;;; Stage 4: Finalize
 
@@ -878,46 +853,33 @@
     (setq org-canvas--file-root-folder-cache nil))
 
   (it "fetches root folder from API"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/root" . ((id . 1001) (name . "course files")))))
-        (let ((result (org-canvas--file-get-root-folder)))
-          (expect (alist-get 'id result) :to-equal 1001)
-          (expect-api-called 'GET "folders/root")))))
+    (with-test-api-responses '(("folders/root" . ((id . 1001) (name . "course files"))))
+      (let ((result (org-canvas--file-get-root-folder)))
+        (expect (alist-get 'id result) :to-equal 1001)
+        (expect-api-called 'GET "folders/root"))))
 
   (it "caches root folder for subsequent calls"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/root" . ((id . 1002) (name . "course files")))))
-        (org-canvas--file-get-root-folder)
-        (org-canvas--file-get-root-folder)
-        ;; Should only call API once due to caching
-        (expect (test-org-canvas-api-call-count) :to-equal 1)))))
+    (with-test-api-responses '(("folders/root" . ((id . 1002) (name . "course files"))))
+      (org-canvas--file-get-root-folder)
+      (org-canvas--file-get-root-folder)
+      (expect (test-org-canvas-api-call-count) :to-equal 1))))
 
 (describe "org-canvas--file-ensure-subfolder (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "returns existing folder when found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/100/folders" . [((id . 200) (name . "Labs"))
-                                          ((id . 201) (name . "Homework"))])))
-        (let ((parent '((id . 100)))
-              (result (org-canvas--file-ensure-subfolder '((id . 100)) "Labs")))
-          (expect (alist-get 'id result) :to-equal 200)))))
+    (with-test-api-responses '(("folders/100/folders" . [((id . 200) (name . "Labs"))
+                                                          ((id . 201) (name . "Homework"))]))
+      (let ((parent '((id . 100)))
+            (result (org-canvas--file-ensure-subfolder '((id . 100)) "Labs")))
+        (expect (alist-get 'id result) :to-equal 200))))
 
   (it "creates folder when not found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/100/folders" . [])
-                ("" . ((id . 999) (name . "NewFolder")))))
-        (let ((result (org-canvas--file-ensure-subfolder '((id . 100)) "NewFolder")))
-          ;; Should have made POST call to create folder
-          (expect-api-called 'POST "folders/100/folders"))))))
+    (with-test-api-responses '(("folders/100/folders" . [])
+                                ("" . ((id . 999) (name . "NewFolder"))))
+      (let ((result (org-canvas--file-ensure-subfolder '((id . 100)) "NewFolder")))
+        ;; Should have made POST call to create folder
+        (expect-api-called 'POST "folders/100/folders")))))
 
 (describe "org-canvas--file-resolve-folder-by-path (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
@@ -963,60 +925,45 @@
             (expect (alist-get 'id result) :to-equal 300))))))
 
   (it "caches intermediate folders"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest _args)
-                   (cond
-                    ((string-match "folders/root" url)
-                     '((id . 100) (name . "course files")))
-                    ((string-match "folders/100/folders" url)
-                     (if (eq method 'GET)
-                         [((id . 200) (name . "Labs"))]
-                       '((id . 200) (name . "Labs"))))
-                    (t nil)))))
-        (org-canvas--file-resolve-folder-by-path "Labs")
-        ;; Check that the folder was cached
-        (expect (gethash "Labs" org-canvas--file-folder-cache) :to-be-truthy)
-        (expect (alist-get 'id (gethash "Labs" org-canvas--file-folder-cache)) :to-equal 200)))))
+    (with-test-api-handler (lambda (method url &rest _args)
+                             (cond
+                               ((string-match "folders/root" url)
+                                 '((id . 100) (name . "course files")))
+                               ((string-match "folders/100/folders" url)
+                                 (if (eq method 'GET)
+                                   [((id . 200) (name . "Labs"))]
+                                   '((id . 200) (name . "Labs"))))
+                               (t nil)))
+      (org-canvas--file-resolve-folder-by-path "Labs")
+      (expect (gethash "Labs" org-canvas--file-folder-cache) :to-be-truthy)
+      (expect (alist-get 'id (gethash "Labs" org-canvas--file-folder-cache)) :to-equal 200))))
 
 (describe "org-canvas--file-get-or-create-folder (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "returns parent folder directly for empty path"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/100" . ((id . 100) (name . "root")))))
-        (let ((result (org-canvas--file-get-or-create-folder "" 100)))
-          (expect (alist-get 'id result) :to-equal 100)))))
+    (with-test-api-responses '(("folders/100" . ((id . 100) (name . "root"))))
+      (let ((result (org-canvas--file-get-or-create-folder "" 100)))
+        (expect (alist-get 'id result) :to-equal 100))))
 
   (it "returns parent folder directly for nil path"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/100" . ((id . 100) (name . "root")))))
-        (let ((result (org-canvas--file-get-or-create-folder nil 100)))
-          (expect (alist-get 'id result) :to-equal 100)))))
+    (with-test-api-responses '(("folders/100" . ((id . 100) (name . "root"))))
+      (let ((result (org-canvas--file-get-or-create-folder nil 100)))
+        (expect (alist-get 'id result) :to-equal 100))))
 
   (it "resolves existing folder by path"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders/by_path" . [((id . 200) (name . "Labs"))])))
-        (let ((result (org-canvas--file-get-or-create-folder "Labs" 100)))
-          (expect (alist-get 'id result) :to-equal 200))))))
+    (with-test-api-responses '(("folders/by_path" . [((id . 200) (name . "Labs"))]))
+      (let ((result (org-canvas--file-get-or-create-folder "Labs" 100)))
+        (expect (alist-get 'id result) :to-equal 200)))))
 
 (describe "org-canvas--file-create-folder (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "creates folder with correct payload"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders" . ((id . 999) (name . "NewFolder")))))
-        (let ((result (org-canvas--file-create-folder "Parent/NewFolder" 100)))
-          (expect-api-called 'POST "folders")
-          (expect (alist-get 'id result) :to-equal 999)))))
+    (with-test-api-responses '(("folders" . ((id . 999) (name . "NewFolder"))))
+      (let ((result (org-canvas--file-create-folder "Parent/NewFolder" 100)))
+        (expect-api-called 'POST "folders")
+        (expect (alist-get 'id result) :to-equal 999))))
 
   (it "falls back to resolve when creation fails"
     (with-org-canvas-test-config
@@ -1171,28 +1118,22 @@
     (setq org-canvas--file-root-folder-cache nil))
 
   (it "excludes root folder from results"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders$" . [((id . 100) (name . "root") (full_name . "course files"))
-                               ((id . 200) (name . "Labs") (full_name . "course files/Labs"))])
-                ("folders/root" . ((id . 100) (name . "course files")))))
-        (let ((result (org-canvas--file-get-all-folders)))
-          (expect (length result) :to-equal 1)
-          (expect (alist-get 'id (car result)) :to-equal 200)))))
+    (with-test-api-responses '(("folders$" . [((id . 100) (name . "root") (full_name . "course files"))
+                                               ((id . 200) (name . "Labs") (full_name . "course files/Labs"))])
+                                ("folders/root" . ((id . 100) (name . "course files"))))
+      (let ((result (org-canvas--file-get-all-folders)))
+        (expect (length result) :to-equal 1)
+        (expect (alist-get 'id (car result)) :to-equal 200))))
 
   (it "sorts folders by depth (deepest first)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("folders$" . [((id . 100) (full_name . "course files"))
-                               ((id . 200) (full_name . "course files/A"))
-                               ((id . 300) (full_name . "course files/A/B"))
-                               ((id . 400) (full_name . "course files/A/B/C"))])
-                ("folders/root" . ((id . 100) (name . "course files")))))
-        (let ((result (org-canvas--file-get-all-folders)))
-          ;; Deepest folder should be first
-          (expect (alist-get 'id (car result)) :to-equal 400))))))
+    (with-test-api-responses '(("folders$" . [((id . 100) (full_name . "course files"))
+                                               ((id . 200) (full_name . "course files/A"))
+                                               ((id . 300) (full_name . "course files/A/B"))
+                                               ((id . 400) (full_name . "course files/A/B/C"))])
+                                ("folders/root" . ((id . 100) (name . "course files"))))
+      (let ((result (org-canvas--file-get-all-folders)))
+        ;; Deepest folder should be first
+        (expect (alist-get 'id (car result)) :to-equal 400)))))
 
 (describe "org-canvas--file-delete-all-folders (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
@@ -1952,13 +1893,9 @@
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "logs search location with non-empty folder path"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [((display_name . "test.pdf") (id . 100))])))
-        ;; Should not error when folder-path is non-empty
-        (let ((result (org-canvas--file-search-by-name "test.pdf" "Labs/Week1")))
-          (expect (alist-get 'id result) :to-equal 100))))))
+    (with-test-api-responses '(("files" . [((display_name . "test.pdf") (id . 100))]))
+      (let ((result (org-canvas--file-search-by-name "test.pdf" "Labs/Week1")))
+        (expect (alist-get 'id result) :to-equal 100)))))
 
 (describe "org-canvas-sync-files pre-flight warning"
   (before-each (test-org-canvas-reset-file-caches))
@@ -2591,28 +2528,23 @@
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "calls PUT on usage_rights endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--file-set-usage-rights
-         42 '(:use-justification "own_copyright"
-              :usage-license "cc_by_sa"
-              :copyright "2026 Me"))
-        (expect-api-called 'PUT "usage_rights"))))
+    (with-test-api
+      (org-canvas--file-set-usage-rights
+       42 '(:use-justification "own_copyright"
+            :usage-license "cc_by_sa"
+            :copyright "2026 Me"))
+      (expect-api-called 'PUT "usage_rights")))
 
   (it "does nothing when use-justification is nil"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--file-set-usage-rights 42 '(:use-justification nil))
-        (expect (test-org-canvas-api-called-p 'PUT "usage_rights") :to-be nil))))
+    (with-test-api
+      (org-canvas--file-set-usage-rights 42 '(:use-justification nil))
+      (expect (test-org-canvas-api-called-p 'PUT "usage_rights") :to-be nil)))
 
   (it "handles API error gracefully"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _)
-                   (signal 'error '("403 Forbidden")))))
-        ;; Should not throw
-        (org-canvas--file-set-usage-rights
-         42 '(:use-justification "own_copyright"))))))
+    (with-test-api-handler (lambda (&rest _)
+                             (signal 'error '("403 Forbidden")))
+      (org-canvas--file-set-usage-rights
+       42 '(:use-justification "own_copyright")))))
 
 ;;;; Coverage: debug log root folder path (Line 324)
 
@@ -3879,20 +3811,19 @@ a heading the parser declines answers :skip, as the runner would count it."
           (progn
             (with-temp-file files-file (insert "* Folder\n"))
             (let ((org-canvas-files-file files-file))
-              (with-org-canvas-test-config
-                (with-mock-api
-                  (cl-letf (((symbol-function 'org-canvas--file-parse-entry)
-                             (lambda () (list :display-name "Test PDF" :pom (point))))
-                            ((symbol-function 'org-canvas--file-sync-parsed-entry)
-                             (lambda (_data &optional ctx)
-                               (org-canvas--ctx-push ctx :file-changed-ids "Test PDF")
-                               :success))
-                            ((symbol-function 'org-canvas--log-info)
-                             (lambda (_l fmt &rest args)
-                               (when (string-match-p "file ID(s) changed" fmt)
-                                 (setq warned (apply #'format fmt args))))))
-                    (org-canvas-sync-files))
-                  (expect warned :to-match "'Test PDF'")))))
+              (with-test-api
+                (cl-letf (((symbol-function 'org-canvas--file-parse-entry)
+                           (lambda () (list :display-name "Test PDF" :pom (point))))
+                          ((symbol-function 'org-canvas--file-sync-parsed-entry)
+                           (lambda (_data &optional ctx)
+                             (org-canvas--ctx-push ctx :file-changed-ids "Test PDF")
+                             :success))
+                          ((symbol-function 'org-canvas--log-info)
+                           (lambda (_l fmt &rest args)
+                             (when (string-match-p "file ID(s) changed" fmt)
+                               (setq warned (apply #'format fmt args))))))
+                  (org-canvas-sync-files))
+                (expect warned :to-match "'Test PDF'"))))
         (delete-directory temp-dir t)))))
 
 ;;;; Upload timeout recovery (issue #34)
@@ -3940,28 +3871,19 @@ a heading the parser declines answers :skip, as the runner would count it."
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "ignores a same-named file living in another folder"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))
-                            ((id . 222) (display_name . "notes.pdf") (folder_id . 9))])))
-        (let ((result (org-canvas--file-search-by-name "notes.pdf" "Labs" 9)))
-          (expect (alist-get 'id result) :to-equal 222)))))
+    (with-test-api-responses '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))
+                                            ((id . 222) (display_name . "notes.pdf") (folder_id . 9))]))
+      (let ((result (org-canvas--file-search-by-name "notes.pdf" "Labs" 9)))
+        (expect (alist-get 'id result) :to-equal 222))))
 
   (it "matches on name alone when no folder id is supplied"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))])))
-        (let ((result (org-canvas--file-search-by-name "notes.pdf" "")))
-          (expect (alist-get 'id result) :to-equal 111)))))
+    (with-test-api-responses '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))]))
+      (let ((result (org-canvas--file-search-by-name "notes.pdf" "")))
+        (expect (alist-get 'id result) :to-equal 111))))
 
   (it "returns nil when the only match is in a different folder"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))])))
-        (expect (org-canvas--file-search-by-name "notes.pdf" "Labs" 9) :to-be nil)))))
+    (with-test-api-responses '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))]))
+      (expect (org-canvas--file-search-by-name "notes.pdf" "Labs" 9) :to-be nil))))
 
 (describe "org-canvas--file-recover-upload-id"
   (before-each (test-org-canvas-reset-file-caches))

@@ -767,37 +767,33 @@ Write about...
 
 (describe "org-canvas--quiz-push-to-api (mocked)"
   (it "uses POST for new quizzes"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New" :canvas-id nil))
-              (payload '((quiz . ((title . "New"))))))
-          (org-canvas--quiz-push-to-api data payload)
-          (expect-api-called 'POST "quizzes$")))))
+    (with-test-api
+      (let ((data '(:title "New" :canvas-id nil))
+            (payload '((quiz . ((title . "New"))))))
+        (org-canvas--quiz-push-to-api data payload)
+        (expect-api-called 'POST "quizzes$"))))
 
   (it "uses PUT for existing quizzes"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "777"))
-              (payload '((quiz . ((title . "Existing"))))))
-          (org-canvas--quiz-push-to-api data payload)
-          (expect-api-called 'PUT "quizzes/777"))))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "777"))
+            (payload '((quiz . ((title . "Existing"))))))
+        (org-canvas--quiz-push-to-api data payload)
+        (expect-api-called 'PUT "quizzes/777")))))
 
 (describe "org-canvas--question-push-to-api (mocked)"
   (it "uses POST for new questions"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:name "Q1" :canvas-id nil :quiz-canvas-id "100"))
-              (payload '((question . ((question_name . "Q1"))))))
-          (org-canvas--question-push-to-api data payload)
-          (expect-api-called 'POST "quizzes/100/questions$")))))
+    (with-test-api
+      (let ((data '(:name "Q1" :canvas-id nil :quiz-canvas-id "100"))
+            (payload '((question . ((question_name . "Q1"))))))
+        (org-canvas--question-push-to-api data payload)
+        (expect-api-called 'POST "quizzes/100/questions$"))))
 
   (it "uses PUT for existing questions"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:name "Q1" :canvas-id "999" :quiz-canvas-id "100"))
-              (payload '((question . ((question_name . "Q1"))))))
-          (org-canvas--question-push-to-api data payload)
-          (expect-api-called 'PUT "quizzes/100/questions/999"))))))
+    (with-test-api
+      (let ((data '(:name "Q1" :canvas-id "999" :quiz-canvas-id "100"))
+            (payload '((question . ((question_name . "Q1"))))))
+        (org-canvas--question-push-to-api data payload)
+        (expect-api-called 'PUT "quizzes/100/questions/999")))))
 
 ;;;; Stage 4: Finalize
 
@@ -1301,23 +1297,19 @@ Read this carefully.
 
 (describe "org-canvas--quiz-push-to-api (mocked)"
   (it "re-signals errors"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("API error")))))
-        (let ((data '(:title "Test" :canvas-id nil))
-              (payload '((quiz . ((title . "Test"))))))
-          (expect (org-canvas--quiz-push-to-api data payload) :to-throw 'error))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("API error")))
+      (let ((data '(:title "Test" :canvas-id nil))
+            (payload '((quiz . ((title . "Test"))))))
+        (expect (org-canvas--quiz-push-to-api data payload) :to-throw 'error)))))
 
 (describe "org-canvas--question-push-to-api (mocked)"
   (it "re-signals errors"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("API error")))))
-        (let ((data '(:name "Q1" :canvas-id nil :quiz-canvas-id "100"))
-              (payload '((question . ((question_name . "Q1"))))))
-          (expect (org-canvas--question-push-to-api data payload) :to-throw 'error))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("API error")))
+      (let ((data '(:name "Q1" :canvas-id nil :quiz-canvas-id "100"))
+            (payload '((question . ((question_name . "Q1"))))))
+        (expect (org-canvas--question-push-to-api data payload) :to-throw 'error)))))
 
 ;;;; Additional Finalize Tests
 
@@ -1385,10 +1377,9 @@ Description.
 
 (describe "org-canvas--sync-quiz-questions (mocked)"
   (it "collects and syncs level-2 questions"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Quiz
+    (with-test-api
+      (with-temp-org-buffer
+       "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -1407,11 +1398,11 @@ Quiz description.
 
 - [X] Answer 2
 "
-         (org-back-to-heading)
-         (let ((marker (point-marker)))
-           (org-canvas--sync-quiz-questions marker "100")
-           ;; Both questions should have been POSTed
-           (expect-api-called 'POST "quizzes/100/questions"))))))
+       (org-back-to-heading)
+       (let ((marker (point-marker)))
+         (org-canvas--sync-quiz-questions marker "100")
+         ;; Both questions should have been POSTed
+         (expect-api-called 'POST "quizzes/100/questions")))))
 
   (it "continues after question failure"
     (with-org-canvas-test-config
@@ -1450,10 +1441,9 @@ Quiz description.
                (expect (cdr results) :to-equal 1))))))))
 
   (it "returns correct counts"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Quiz
+    (with-test-api
+      (with-temp-org-buffer
+       "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -1467,11 +1457,11 @@ Quiz description.
 ** Q3
 - [X] C
 "
-         (org-back-to-heading)
-         (let* ((marker (point-marker))
-                (results (org-canvas--sync-quiz-questions marker "100")))
-           (expect (car results) :to-equal 3)
-           (expect (cdr results) :to-equal 0)))))))
+       (org-back-to-heading)
+       (let* ((marker (point-marker))
+              (results (org-canvas--sync-quiz-questions marker "100")))
+         (expect (car results) :to-equal 3)
+         (expect (cdr results) :to-equal 0))))))
 
 ;;;; Sync Quizzes Pipeline
 
@@ -3219,38 +3209,32 @@ Content.
 
 (describe "org-canvas--question-group-push-to-api (mocked)"
   (it "POSTs for new groups and unwraps response"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest _args)
-                   (expect method :to-equal 'POST)
-                   (expect url :to-match "quizzes/100/groups$")
-                   '((quiz_groups . [((id . 55) (name . "Pool"))])))))
-        (let* ((data '(:name "Pool" :canvas-id nil :quiz-canvas-id "100"))
-               (payload '((quiz_groups . (((name . "Pool"))))))
-               (response (org-canvas--question-group-push-to-api data payload)))
-          (expect (alist-get 'id response) :to-equal 55)))))
+    (with-test-api-handler (lambda (method url &rest _args)
+                             (expect method :to-equal 'POST)
+                             (expect url :to-match "quizzes/100/groups$")
+                             '((quiz_groups . [((id . 55) (name . "Pool"))])))
+      (let* ((data '(:name "Pool" :canvas-id nil :quiz-canvas-id "100"))
+             (payload '((quiz_groups . (((name . "Pool"))))))
+             (response (org-canvas--question-group-push-to-api data payload)))
+        (expect (alist-get 'id response) :to-equal 55))))
 
   (it "PUTs for existing groups"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest _args)
-                   (expect method :to-equal 'PUT)
-                   (expect url :to-match "quizzes/100/groups/55$")
-                   '((quiz_groups . [((id . 55) (name . "Updated Pool"))])))))
-        (let* ((data '(:name "Updated Pool" :canvas-id "55" :quiz-canvas-id "100"))
-               (payload '((quiz_groups . (((name . "Updated Pool"))))))
-               (response (org-canvas--question-group-push-to-api data payload)))
-          (expect (alist-get 'id response) :to-equal 55)))))
+    (with-test-api-handler (lambda (method url &rest _args)
+                             (expect method :to-equal 'PUT)
+                             (expect url :to-match "quizzes/100/groups/55$")
+                             '((quiz_groups . [((id . 55) (name . "Updated Pool"))])))
+      (let* ((data '(:name "Updated Pool" :canvas-id "55" :quiz-canvas-id "100"))
+             (payload '((quiz_groups . (((name . "Updated Pool"))))))
+             (response (org-canvas--question-group-push-to-api data payload)))
+        (expect (alist-get 'id response) :to-equal 55))))
 
   (it "re-signals errors"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("API error")))))
-        (let ((data '(:name "Pool" :canvas-id nil :quiz-canvas-id "100"))
-              (payload '((quiz_groups . (((name . "Pool")))))))
-          (expect (org-canvas--question-group-push-to-api data payload)
-                  :to-throw 'error))))))
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             (signal 'error '("API error")))
+      (let ((data '(:name "Pool" :canvas-id nil :quiz-canvas-id "100"))
+            (payload '((quiz_groups . (((name . "Pool")))))))
+        (expect (org-canvas--question-group-push-to-api data payload)
+                :to-throw 'error)))))
 
 (describe "org-canvas--question-group-finalize"
   (it "saves CANVAS_ID from response"
@@ -3285,10 +3269,9 @@ Content.
 
 (describe "org-canvas--sync-quiz-groups (mocked)"
   (it "collects only TYPE=group headings"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Quiz
+    (with-test-api
+      (with-temp-org-buffer
+       "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -3311,17 +3294,16 @@ Content.
 :TYPE: essay_question
 :END:
 "
-         (org-back-to-heading)
-         (let ((marker (point-marker)))
-           (let ((results (org-canvas--sync-quiz-groups marker "100")))
-             (expect (car results) :to-equal 1)
-             (expect (cdr results) :to-equal 0)))))))
+       (org-back-to-heading)
+       (let ((marker (point-marker)))
+         (let ((results (org-canvas--sync-quiz-groups marker "100")))
+           (expect (car results) :to-equal 1)
+           (expect (cdr results) :to-equal 0))))))
 
   (it "returns (0 . 0) when no groups present"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Quiz
+    (with-test-api
+      (with-temp-org-buffer
+       "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 100
 :END:
@@ -3333,11 +3315,11 @@ Content.
 
 - [X] A
 "
-         (org-back-to-heading)
-         (let ((marker (point-marker)))
-           (let ((results (org-canvas--sync-quiz-groups marker "100")))
-             (expect (car results) :to-equal 0)
-             (expect (cdr results) :to-equal 0)))))))
+       (org-back-to-heading)
+       (let ((marker (point-marker)))
+         (let ((results (org-canvas--sync-quiz-groups marker "100")))
+           (expect (car results) :to-equal 0)
+           (expect (cdr results) :to-equal 0))))))
 
   (it "continues after group failure"
     (with-org-canvas-test-config
