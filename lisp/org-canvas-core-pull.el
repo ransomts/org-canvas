@@ -20,10 +20,10 @@
 (require 'org-canvas-core-org)
 (require 'org-canvas-core-html)
 
-;; Forward declaration: defined in `org-canvas-files', loaded by the time
-;; the rewriter runs during a pull.  Declared here to keep core free of
-;; a feature-module dependency while still satisfying byte-compile.
-(declare-function org-canvas--file-pull-download "org-canvas-files"
+;; Forward declaration: defined in `org-canvas-files-pull', loaded by the
+;; time the rewriter runs during a pull.  Declared here to keep core free
+;; of a feature-module dependency while still satisfying byte-compile.
+(declare-function org-canvas--file-pull-download "org-canvas-files-pull"
                   (display-name download-url local-path size))
 
 ;;;; File Header and Pulled Properties

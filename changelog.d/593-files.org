@@ -1,0 +1,16 @@
+* Changed
+- #593 The files module is split by concern into three files.
+  =lisp/org-canvas-files.el= keeps the configuration and session caches,
+  the heading helpers, the folder operations, the pre-flight folder
+  check, the sync itself and the delete commands.  The four-stage
+  upload -- extraction, preparation, the three-step send with its
+  confirm retry and in-place replacement, and finalization -- moves to
+  =lisp/org-canvas-files-upload.el=; rebuilding files.org from Canvas,
+  with the three layouts, the size check that keeps a re-pull from
+  downloading the course again (#158) and the forced download a
+  conflict's resolution makes, moves to
+  =lisp/org-canvas-files-pull.el=.  Both halves require
+  =org-canvas-files= back and never each other, so the base file
+  declares the eight functions it calls into, and =org-canvas.el=
+  loads all three.  The specs move with them, one
+  =test/org-canvas-<half>-test.el= per file.  No behaviour changes.

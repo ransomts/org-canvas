@@ -71,6 +71,8 @@
 (require 'org-canvas-discussions)
 (require 'org-canvas-discussion-replies)
 (require 'org-canvas-files)
+(require 'org-canvas-files-pull)
+(require 'org-canvas-files-upload)
 (require 'org-canvas-modules)
 (require 'org-canvas-outcomes)
 (require 'org-canvas-pages)
