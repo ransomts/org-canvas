@@ -15,3 +15,7 @@ gha-creds-*.json
 /lisp/org-canvas.log
 */org-canvas.log
 /test/contract/instance-schema.graphql
+
+# Claude Code: per-user settings and agent worktrees stay local
+.claude/settings.local.json
+.claude/worktrees/
