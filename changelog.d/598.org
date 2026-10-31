@@ -1,0 +1,7 @@
+* Changed
+- #598 The changelog fragment a branch owes is checked by
+  =scripts/changelog-collect.py --branch-check=, in CI and from the
+  branch-checks script: a branch named for an issue brings that issue's
+  fragment, and an =integration/= branch brings at least one new one.
+  The date in an integration branch's name is no longer read as an
+  issue number, so it no longer asks for =changelog.d/2026.org=.
