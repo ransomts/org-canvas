@@ -540,19 +540,20 @@ never ran =test/org-canvas-test.el= on its own; the shard list includes
 it.
 
 *Why aggregators.*  Branch protection requires checks by name:
-=test (29.3)=, =test (29.4)=, =test (30.1)=, =lint=, =complexity=.  A
-sharded job reports as =shards-293 / suite 1/3=, so a small job per
-version carries the old name, =needs= the shards, runs under
-=if: always()= and fails unless their result is =success=.  Without
-=always()= a failed shard would leave the aggregator skipped, and a
-skipped required check counts as passed.  Renaming any of these jobs
-means changing the protection rule in the same breath.  =isolation= is
-built the same way, but as of 2026-09-27 it is not among the required
-checks (=gh api repos/ransomts/org-canvas/branches/main/protection=
-lists them), so a red isolation run shows on the PR without blocking
-the merge.  Neither is =test (31.1) and lint=, the leading-edge leg
-added on 2026-10-31 (issue #591): a failure only 31 finds shows on the
-PR without blocking the merge, until the leg joins the rule.
+=test (29.3)=, =test (29.4)=, =test (30.1)=,
+=test (31.1) and lint=, =lint= and =complexity=.  A sharded job reports
+as =shards-293 / suite 1/3=, so a small job per version carries the old
+name, =needs= the shards, runs under =if: always()= and fails unless
+their result is =success=.  Without =always()= a failed shard would
+leave the aggregator skipped, and a skipped required check counts as
+passed.  Renaming any of these jobs means changing the protection rule
+in the same breath.  =isolation= is built the same way, but as of
+2026-09-27 it is not among the required checks (=gh api
+repos/ransomts/org-canvas/branches/main/protection= lists them), so a
+red isolation run shows on the PR without blocking the merge.
+=test (31.1) and lint=, the leading-edge leg added on 2026-10-31 (issue
+#591), joined the rule the same day: a failure only 31 finds blocks the
+merge rather than only showing on the PR.
 
 *Coverage stays on one job.*  Emacs 30.1 is the fastest suite and the
 only one measured, so its run is not split: one =coverage.json= and one
