@@ -39,20 +39,6 @@ Returns DEFAULT (or 0) if VALUE is nil or empty."
       (string-to-number value)
     (or default 0)))
 
-(defun org-canvas-org-get-boolean-property (pom property &optional default-true)
-  "Get PROPERTY at POM as a boolean value.
-If DEFAULT-TRUE is non-nil, returns t unless property is \"false\".
-Otherwise, returns t only if property is \"true\"."
-  (let ((value (org-entry-get pom property)))
-    (when (and value (not (member (downcase value) '("true" "false"))))
-      (when (boundp 'org-canvas--logger)
-        (org-canvas--log-warning org-canvas--logger
-          "[Validate] Property %s has value '%s' — expected 'true' or 'false'. Using %s"
-          property value (if default-true "true" "false")))
-      (message "Warning: %s '%s' is not true/false, using %s"
-        property value (if default-true "true" "false")))
-    (org-canvas--interpret-boolean value default-true)))
-
 (defun org-canvas--to-json-boolean (value)
   "Convert VALUE to Canvas JSON boolean (t or :json-false)."
   (if value t :json-false))
@@ -517,17 +503,6 @@ Returns a string like \"<2026-01-15 Thu 10:00>\" or nil."
           (format-time-string "<%Y-%m-%d %a %H:%M>" time zone))
       (error nil))))
 
-(defun org-canvas--iso8601-to-org-inactive-timestamp (iso8601)
-  "Convert ISO8601 timestamp to Org inactive timestamp.
-Written in `org-canvas--time-zone', the zone push reads timestamps in.
-Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
-  (when (org-canvas--iso8601-date-p iso8601)
-    (condition-case nil
-        (let ((time (date-to-time iso8601))
-              (zone (org-canvas--time-zone)))
-          (format-time-string "[%Y-%m-%d %a %H:%M]" time zone))
-      (error nil))))
-
 (defun org-canvas--validate-date-ordering (data)
   "Warn if UNLOCK_AT, DUE_AT, LOCK_AT in DATA are in wrong order.
 Also warns if any dates are in the past.
@@ -549,30 +524,6 @@ Compares ISO8601 strings lexicographically (works for UTC timestamps)."
           (when (and date (string< date now))
             (org-canvas--log-warning org-canvas--logger
               "[Dates] '%s': %s (%s) is in the past" title (cdr pair) date)))))))
-
-(defun org-canvas--for-each-entry (file query callback)
-  "Call CALLBACK at each entry matching QUERY in FILE.
-CALLBACK is called with point at each matching heading.
-Returns a list of (success-count . fail-count)."
-  (let ((targets nil)
-	(success-count 0)
-	(fail-count 0))
-    (with-current-buffer (org-canvas--find-file-noselect file)
-      (setq targets (org-map-entries (lambda () (point-marker)) query 'file)))
-    (dolist (marker targets)
-      (with-current-buffer (marker-buffer marker)
-	(save-excursion
-	  (goto-char (marker-position marker))
-	  (condition-case err
-	      (progn
-		(funcall callback)
-		(setq success-count (1+ success-count)))
-	    (error
-	     (setq fail-count (1+ fail-count))
-	     (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
-	       (marker-position marker) (error-message-string err)))))))
-    (dolist (m targets) (set-marker m nil))
-    (cons success-count fail-count)))
 
 (defun org-canvas--collect-subtree-markers (pom &optional predicate)
   "Return markers for the headings under the heading at POM, in order.
@@ -937,13 +888,6 @@ phrase for a message, such as \"carries the pandoc attribute CLASS\"."
           "repeats a heading block of the item above"))))))
 
 ;;;; Diagnostics and Report Output
-
-(defun org-canvas-get-course-name ()
-  "Fetch the name of the configured course from Canvas to verify access.
-Returns the course name as a string.  Signals an error if the request fails."
-  (let* ((endpoint (org-canvas-api-course-endpoint ""))
-	 (response (org-canvas-api-request 'GET endpoint)))
-    (alist-get 'name response)))
 
 (defun org-canvas-connection-info ()
   "Read the token's user and the configured course from Canvas.

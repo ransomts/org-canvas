@@ -78,20 +78,6 @@ Returns an issue or nil."
                 criterion)
         :not-link-severity 'warning)))))
 
-(defun org-canvas--validate-rubric-outcome-links (table-data file loc)
-  "Validate outcome links in 4th column of rubric TABLE-DATA.
-FILE is the rubrics file path.  LOC is a (:file :line :heading) plist.
-Returns a list of issues.
-Retained for backward compatibility with any caller passing legacy table data."
-  (let ((issues nil))
-    (dolist (row table-data)
-      (unless (or (eq row 'hline)
-                  (and (listp row) (stringp (nth 0 row))
-                       (string-match-p "\\`> " (string-trim-left (nth 0 row)))))
-        (let ((issue (org-canvas--validate-single-outcome-link row file loc)))
-          (when issue (push issue issues)))))
-    (nreverse issues)))
-
 (defun org-canvas--validate-rubric-criterion-outcome (file loc)
   "Validate the :OUTCOME: property on the criterion at point.
 FILE is the rubrics file; LOC is a (:file :line :heading) plist describing

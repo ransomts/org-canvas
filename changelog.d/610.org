@@ -1,0 +1,25 @@
+* Removed
+- #610 =org-canvas-get-course-name= is removed; use
+  =org-canvas-connection-info=, which returns the course's name and code
+  together with the token owner and the read-only flag.
+
+* Changed
+- #610 Ten functions that no production code called are gone, along
+  with their specs.  The property registry replaced
+  =org-canvas-org-get-boolean-property= and =org-canvas--for-each-entry=;
+  the reader is =org-canvas--interpret-boolean=.  The registry's
+  =--mask-headers= already masks =authorization= and the cookie headers,
+  which is all =org-canvas--mask-token= wrapped.  The pull path calls
+  =--quiz-pull-emit-questions= directly, so
+  =org-canvas--quiz-pull-insert-questions= was a leftover wrapper.  The
+  drift-aware skip reads =--sync-fetch-remote-snapshot= whole and takes
+  its conflict baseline from the entry's own =CANVAS_UPDATED_AT=, which
+  retired =org-canvas--sync-fetch-remote-updated= and
+  =org-canvas--parse-last-synced=.  Nothing wrote an inactive timestamp,
+  so =org-canvas--iso8601-to-org-inactive-timestamp= goes while
+  =--iso8601-to-org-timestamp= stays.  =org-canvas--validate-rubric-outcome-links=
+  validated the flat criteria table that child headings replaced, and
+  folder creation lives in =org-canvas--file-ensure-subfolder=, which
+  retired =org-canvas--file-get-or-create-folder= and
+  =org-canvas--file-create-folder=.  The architecture documentation now
+  names the functions that run.

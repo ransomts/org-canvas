@@ -2363,42 +2363,6 @@ Content.
               (org-canvas--quiz-pull-insert-question q)
               (expect (buffer-string) :to-equal appended))))))))
 
-(describe "org-canvas--quiz-pull-insert-questions"
-  (it "fetches and inserts questions"
-    (with-temp-org-buffer
-     "* Quiz
-:PROPERTIES:
-:CANVAS_ID: 100
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
-               ((symbol-function 'org-canvas-api-request-all-pages)
-                (lambda (_method _url &optional _params)
-                  '(((question_name . "Q1") (question_text . "Body")
-                     (question_type . "short_answer_question")
-                     (points_possible . 10) (answers . [])))))
-               ((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--quiz-pull-insert-questions 100)
-       (expect (buffer-string) :to-match "\\*\\* Q1"))))
-
-  (it "handles API error gracefully"
-    (with-temp-org-buffer
-     "* Quiz
-:PROPERTIES:
-:CANVAS_ID: 100
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
-               ((symbol-function 'org-canvas-api-request-all-pages)
-                (lambda (_method _url &optional _params)
-                  (signal 'error '("API error")))))
-       ;; Should not throw
-       (org-canvas--quiz-pull-insert-questions 100)
-       (expect (buffer-string) :not :to-match "\\*\\*")))))
-
 (describe "org-canvas-pull-quizzes"
   (it "creates headings from remote quizzes"
     (let* ((temp-dir (make-temp-file "pull-quiz-test" t))

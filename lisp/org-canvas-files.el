@@ -257,50 +257,6 @@ each name once more and a bare one is a malformed URI (issue #300)."
       (setq org-canvas--file-root-folder-cache response)
       response)))
 
-(defun org-canvas--file-get-or-create-folder (folder-path parent-folder-id)
-  "Get or create a folder at FOLDER-PATH under PARENT-FOLDER-ID.
-Return the folder object."
-  (if (or (null folder-path) (string-empty-p folder-path))
-      ;; Empty path means use parent directly
-      (org-canvas-api-request 'GET (format "%s/api/v1/folders/%s"
-                                           org-canvas-base-url parent-folder-id))
-    ;; Try to resolve the path, create if not found
-    (condition-case err
-        (let* ((encoded-path (url-hexify-string folder-path))
-               (endpoint (org-canvas-api-course-endpoint "folders/by_path/%s" encoded-path))
-               (folders (org-canvas-api-request 'GET endpoint)))
-          ;; Returns list of folders in path, last one is the target
-          (if (and folders (> (length folders) 0))
-              (elt folders (1- (length folders)))
-            (org-canvas--file-create-folder folder-path parent-folder-id)))
-      (error
-       ;; Only a 404 means the path does not exist.  Anything else —
-       ;; a 401 above all — used to masquerade as a missing folder and
-       ;; fire a create (#435)
-       (if (org-canvas--404-error-p err)
-           (org-canvas--file-create-folder folder-path parent-folder-id)
-         (org-canvas--log-error org-canvas--logger
-           "[Files] Could not read the folder path %s (%s); creating nothing"
-           folder-path (error-message-string err))
-         (signal (car err) (cdr err)))))))
-
-(defun org-canvas--file-create-folder (folder-path parent-folder-id)
-  "Create a folder at FOLDER-PATH under PARENT-FOLDER-ID."
-  (org-canvas--log-info org-canvas--logger "[Files] Creating folder: %s" folder-path)
-  (let* ((endpoint (org-canvas-api-course-endpoint "folders"))
-         (payload (make-hash-table :test 'equal)))
-    (puthash "name" (file-name-nondirectory folder-path) payload)
-    (puthash "parent_folder_path" (file-name-directory folder-path) payload)
-    (puthash "parent_folder_id" parent-folder-id payload)
-    (condition-case err
-        (let ((response (org-canvas-api-request 'POST endpoint :data payload)))
-          (org-canvas--log-info org-canvas--logger "[Files] Created folder ID: %s" (alist-get 'id response))
-          response)
-      (error
-       ;; If it already exists, try to get it
-       (org-canvas--log-debug org-canvas--logger "[Files] Folder creation failed (may exist): %s" (error-message-string err))
-       (org-canvas--file-resolve-folder-by-path folder-path)))))
-
 (defun org-canvas--file-resolve-or-cache-folder (current-path part current-folder)
   "Resolve folder for PART under CURRENT-FOLDER, using cache at CURRENT-PATH.
 Returns the resolved folder object."

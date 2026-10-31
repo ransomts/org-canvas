@@ -1497,13 +1497,6 @@ Returns nil on API error."
        quiz-id (error-message-string err))
      nil)))
 
-(defun org-canvas--quiz-pull-insert-questions (quiz-id)
-  "Fetch and write the questions of QUIZ-ID under the quiz at point.
-Point must be at the parent quiz heading; grouped questions go under
-their group heading (issue #243)."
-  (org-canvas--quiz-pull-emit-questions
-   quiz-id (org-canvas--quiz-pull-fetch-questions quiz-id)))
-
 (defun org-canvas--quiz-pull-insert-description-wrapped (description)
   "Write DESCRIPTION HTML inside a `** Description' subheading.
 Point must be at the parent quiz heading and is left there.  An

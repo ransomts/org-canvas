@@ -14,42 +14,6 @@
 
 ;;; Boolean Validation
 
-(describe "org-canvas-org-get-boolean-property validation"
-  (it "warns on non-boolean value with default-true"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:PUBLISHED: yes
-:END:
-"
-     (spy-on 'message)
-     (let ((result (org-canvas-org-get-boolean-property (point) "PUBLISHED" t)))
-       (expect result :to-be t)  ; default-true treats non-"false" as true
-       (expect 'message :to-have-been-called))))
-
-  (it "warns on non-boolean value without default-true"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:PUBLISHED: yes
-:END:
-"
-     (spy-on 'message)
-     (let ((result (org-canvas-org-get-boolean-property (point) "PUBLISHED")))
-       (expect result :to-be nil)  ; without default-true, non-"true" is nil
-       (expect 'message :to-have-been-called))))
-
-  (it "does not warn on valid boolean 'true'"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-"
-     (spy-on 'message)
-     (org-canvas-org-get-boolean-property (point) "PUBLISHED" t)
-     (expect 'message :not :to-have-been-called))))
-
 ;;; Enum Validation
 
 (describe "org-canvas--validate-property"
@@ -156,8 +120,7 @@
             (with-temp-file temp-file (insert "* Page\n"))
             (let ((org-canvas-pages-file temp-file))
               (cl-letf (((symbol-function 'display-buffer) #'ignore)
-                        ((symbol-function 'org-canvas--preflight-check) (lambda () nil))
-                        ((symbol-function 'org-canvas--for-each-entry) (lambda (&rest _) nil)))
+                        ((symbol-function 'org-canvas--preflight-check) (lambda () nil)))
                 ;; Should NOT throw user-error because inhibit-log-clear signals master sync
                 (expect (org-canvas--sync-validate-file "PAGES" temp-file)
                         :not :to-throw 'user-error))))
