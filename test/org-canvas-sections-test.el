@@ -1432,7 +1432,10 @@ Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
 The assignment's `updated_at' is BEFORE until an override write
 lands and AFTER from then on.  ROWS is the table's body.  DRY-RUN
 binds `org-canvas--dry-run'.  EXTRA is an alist added to every read
-of the assignment.  Return (FILE-TEXT . API-CALLS)."
+of the assignment.  Return (FILE-TEXT . API-CALLS).
+Positional is right: STAMP, BEFORE, AFTER and ROWS are the four things
+a case varies and each call reads as the folder it sets up; a bundle
+would rename them at nine call sites and clarify none (issue #599)."
   (let ((dir (make-temp-file "ovr348-" t)))
     (unwind-protect
         (let ((file (expand-file-name "assignments.org" dir)))

@@ -167,55 +167,71 @@ names the Canvas field, so both are tried."
        (or (null (plist-get spec :remote-fn))
            (plist-get override :fields))))
 
-(defun org-canvas-roundtrip--check (registry-key pull-fn parse-fn template
-                                                 base-item &optional overrides)
-  "Pull each checkable property of REGISTRY-KEY, parse it back, and compare.
-PULL-FN and PARSE-FN are the feature's functions, TEMPLATE the Org text
-of a heading to pull onto, BASE-ITEM the fields every synthetic item
-needs.  OVERRIDES is an alist of (ORG-PROP . PLIST) with optional
-`:value' (the Canvas value to use), `:fields' (a function of the value
-returning the item fields that carry it) and `:parsed' (a function of
-the parsed plist returning the value).  Returns (CHECKED . MISMATCHES)
-where each mismatch is (ORG-PROP EXPECTED PARSED)."
-  (let ((entry (gethash registry-key org-canvas--registry))
-        (mismatches nil)
-        (checked 0))
+(defun org-canvas-roundtrip--check (row)
+  "Pull each checkable property of the table's ROW and compare it back.
+ROW is one entry of `org-canvas-roundtrip--features', a list
+\(KEY PULL-FN PARSE-FN TEMPLATE BASE-ITEM OVERRIDES): the table is the
+bundle, and this reads it by naming the six parts once here rather than
+six parameters at every call site (issue #599).  Returns
+\(CHECKED . MISMATCHES) where each mismatch is (ORG-PROP EXPECTED
+PARSED) — what the spec's Canvas value should parse back to, and what
+it did."
+  (let ((entry (gethash (nth 0 row) org-canvas--registry))
+        (checked 0)
+        (mismatches nil))
     (dolist (spec (plist-get entry :properties))
-      (let ((override (cdr (assoc (plist-get spec :org-prop) overrides))))
+      (let ((override (org-canvas-roundtrip--override (nth 5 row) spec)))
         (when (org-canvas-roundtrip--checkable-p spec override)
           (cl-incf checked)
-          (let* ((value (if (plist-member override :value)
-                            (plist-get override :value)
-                          (org-canvas-roundtrip--synth spec)))
-                 (fields (if (plist-get override :fields)
-                             (funcall (plist-get override :fields) value)
-                           (list (cons (org-canvas--registry-remote-key spec)
-                                       value))))
-                 (item (append fields base-item))
-                 (expected (org-canvas-roundtrip--expected spec value))
-                 (parsed nil))
-            (with-temp-org-buffer template
-              (goto-char (point-min))
-              (re-search-forward "^:CANVAS_\\(ID\\|URL\\): ")
-              (org-back-to-heading t)
-              (with-html-to-org-identity
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (&rest _) nil)))
-                  ;; A pull that emits children (rubric criteria) leaves
-                  ;; point inside them; the heading itself does not move.
-                  (let ((heading (point)))
-                    (funcall pull-fn item heading)
-                    (goto-char heading))
-                  (let ((data (funcall parse-fn)))
-                    (setq parsed (org-canvas-roundtrip--normalize
-                                  spec
-                                  (if (plist-get override :parsed)
-                                      (funcall (plist-get override :parsed) data)
-                                    (org-canvas-roundtrip--parsed spec data))))))))
-            (unless (equal parsed expected)
-              (push (list (plist-get spec :org-prop) expected parsed)
-                    mismatches))))))
+          (let ((mismatch (org-canvas-roundtrip--check-property
+                           row spec override)))
+            (when mismatch (push mismatch mismatches))))))
     (cons checked (nreverse mismatches))))
+
+(defun org-canvas-roundtrip--override (overrides spec)
+  "Return OVERRIDES' entry for SPEC's property, or nil.
+OVERRIDES is the table row's alist of (ORG-PROP . PLIST)."
+  (cdr (assoc (plist-get spec :org-prop) overrides)))
+
+(defun org-canvas-roundtrip--check-property (row spec override)
+  "Pull SPEC of the table's ROW, parse it back and compare.
+ROW is (KEY PULL-FN PARSE-FN TEMPLATE BASE-ITEM OVERRIDES) and
+OVERRIDE the property's entry in it, or nil.  Returns nil when the
+value round-trips, else (ORG-PROP EXPECTED PARSED)."
+  (let* ((pull-fn (nth 1 row))
+         (parse-fn (nth 2 row))
+         (template (nth 3 row))
+         (base-item (nth 4 row))
+         (value (if (plist-member override :value)
+                    (plist-get override :value)
+                  (org-canvas-roundtrip--synth spec)))
+         (fields (if (plist-get override :fields)
+                     (funcall (plist-get override :fields) value)
+                   (list (cons (org-canvas--registry-remote-key spec)
+                               value))))
+         (item (append fields base-item))
+         (expected (org-canvas-roundtrip--expected spec value))
+         (parsed nil))
+    (with-temp-org-buffer template
+      (goto-char (point-min))
+      (re-search-forward "^:CANVAS_\\(ID\\|URL\\): ")
+      (org-back-to-heading t)
+      (with-html-to-org-identity
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) nil)))
+          ;; A pull that emits children (rubric criteria) leaves point
+          ;; inside them; the heading itself does not move.
+          (let ((heading (point)))
+            (funcall pull-fn item heading)
+            (goto-char heading))
+          (let ((data (funcall parse-fn)))
+            (setq parsed (org-canvas-roundtrip--normalize
+                          spec
+                          (if (plist-get override :parsed)
+                              (funcall (plist-get override :parsed) data)
+                            (org-canvas-roundtrip--parsed spec data))))))))
+    (unless (equal parsed expected)
+      (list (plist-get spec :org-prop) expected parsed))))
 
 (defun org-canvas-roundtrip--inverse-locked (value)
   "Return the `locked' field that means the boolean VALUE."
@@ -298,7 +314,7 @@ where each mismatch is (ORG-PROP EXPECTED PARSED)."
             (with-mock-api
               (setq test-org-canvas-api-responses
                     '(("pages/p" . ((page_id . 5) (body . "<p>x</p>")))))
-              (let ((result (apply #'org-canvas-roundtrip--check row)))
+              (let ((result (org-canvas-roundtrip--check row)))
                 (expect (car result) :to-be-greater-than 0)
                 (expect (cdr result) :to-equal nil)))))))))
 

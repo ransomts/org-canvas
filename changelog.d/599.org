@@ -1,0 +1,10 @@
+* Changed
+- #599 The functions that still took more than five parameters each have
+  a decision now rather than a place on a list.  Two internal runtimes
+  lost one: the push at point reads the spec's finalize stage from its
+  run context, as the full run already did, and the round-trip guard
+  takes one table row instead of the six parts of it.  The remaining
+  eight keep positional arguments and say in the docstring why —
+  =org-canvas-api-request='s =&key= tail is the language's own bundle
+  for four independent options, and the fixtures are the nodes they
+  build or a =call-process-region= stand-in.  A caller sees no change.

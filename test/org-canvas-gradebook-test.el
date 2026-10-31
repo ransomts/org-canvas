@@ -95,7 +95,10 @@ ARGS are the keyword arguments; a course read's :params are recorded."
 
 (defun test-gradebook--enrollment (uid name section current final &rest extra)
   "A student enrollment for UID named NAME in SECTION scoring CURRENT and FINAL.
-EXTRA pairs come first, so an explicit value shadows the default."
+EXTRA pairs come first, so an explicit value shadows the default.
+Positional is right: fifty-odd call sites read as the row they build —
+student, section, two scores — and a bundle would add a field name per
+argument at every one without changing what is passed (issue #599)."
   (append extra
           `((id . ,(+ 1000 uid (* 10 section)))
             (user_id . ,uid) (type . "StudentEnrollment")
@@ -1411,7 +1414,10 @@ Q3 sits in Quizzes, E2 is omitted from the final grade."
 (defun test-gradebook--standing-sub (aid name group due lock points &rest extra)
   "Adams's submission to assignment AID, NAME, in group GROUP, out of POINTS.
 DUE and LOCK are ISO8601 strings, or :null for no date; EXTRA pairs
-come first, so an explicit value shadows the default."
+come first, so an explicit value shadows the default.
+Positional is right: the five are the fields a case varies and each
+call reads as the submission it describes; a bundle would rename them
+and nothing else (issue #599)."
   (append extra
           `((user_id . 1) (assignment_id . ,aid) (score . :null)
             (grade . :null) (workflow_state . "unsubmitted")

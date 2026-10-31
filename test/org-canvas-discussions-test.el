@@ -804,7 +804,10 @@ Content.
 (defun test-discussions--checkpoint-node (id topic-points topic-due-at reply-points reply-due-at required)
   "A GraphQL discussion node ID with the two checkpoints.
 TOPIC-POINTS and TOPIC-DUE-AT describe reply_to_topic, REPLY-POINTS
-and REPLY-DUE-AT reply_to_entry, REQUIRED the replies required."
+and REPLY-DUE-AT reply_to_entry, REQUIRED the replies required.
+Positional is right: the six are the node's own fields, every call site
+varies one against the rest, and a bundle would spell each field name
+five times without making a call clearer (issue #599)."
   `((_id . ,id) (replyToEntryRequiredCount . ,required)
     (checkpoints . [((tag . "reply_to_topic") (pointsPossible . ,topic-points) (dueAt . ,topic-due-at))
                     ((tag . "reply_to_entry") (pointsPossible . ,reply-points) (dueAt . ,reply-due-at))])))
