@@ -756,7 +756,7 @@ Content.
                      :peer_reviews t :automatic_peer_reviews nil))
              (payload (org-canvas--assignment-build-payload data))
              (assignment (gethash "assignment" payload)))
-        ;; org-canvas-org-get-boolean-property returns nil for "false",
+        ;; the registry's boolean interpretation returns nil for "false",
         ;; which the build function treats the same as "not set" (defaults to t)
         (expect (gethash "automatic_peer_reviews" assignment) :to-be t)))
 

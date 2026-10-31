@@ -251,7 +251,6 @@ Largest suites: files, modules, quizzes, core-push, core-sync, core-api, core-pu
 - Org property getters/setters (string, boolean, number)
 - Sync state persistence (=org-canvas-org-save-sync-state=)
 - Timestamp parsing (Org → ISO8601)
-- Safe entry iteration (=org-canvas--for-each-entry=)
 - Generic push/search/finalize helpers
 - Error handling (timeout recovery, 404 retry, cascading errors)
 - Link resolution between files

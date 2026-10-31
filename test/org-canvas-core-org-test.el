@@ -49,60 +49,6 @@
      (expect (org-canvas-org-get-property (point) "TITLE")
              :to-equal "My Great Title"))))
 
-(describe "org-canvas-org-get-boolean-property"
-  (it "returns t when property is \"true\""
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas-org-get-boolean-property (point) "PUBLISHED")
-             :to-be t)))
-
-  (it "returns nil when property is \"false\""
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:PUBLISHED: false
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas-org-get-boolean-property (point) "PUBLISHED")
-             :to-be nil)))
-
-  (it "returns nil when property is missing (default-true = nil)"
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas-org-get-boolean-property (point) "PUBLISHED")
-             :to-be nil)))
-
-  (it "returns t when property is missing and default-true is set"
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas-org-get-boolean-property (point) "PUBLISHED" t)
-             :to-be t)))
-
-  (it "returns nil when property is \"false\" even with default-true"
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:PUBLISHED: false
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas-org-get-boolean-property (point) "PUBLISHED" t)
-             :to-be nil))))
-
 (describe "org-canvas-org-get-number-property"
   (it "parses integer property"
     (with-temp-org-buffer
@@ -454,76 +400,6 @@
     (let ((result (org-canvas-current-iso8601-timestamp)))
       (expect result :to-match "Z$"))))
 
-;;;; 6. Entry Iteration
-
-(describe "org-canvas--for-each-entry"
-  (it "finds entries matching query"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org"))
-          (found-titles nil))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* First Heading
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-
-* Second Heading
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-"))
-            (org-canvas--for-each-entry temp-file "LEVEL=1"
-              (lambda ()
-                (push (org-get-heading t t t t) found-titles)))
-            (expect (length found-titles) :to-equal 2)
-            (expect found-titles :to-contain "First Heading")
-            (expect found-titles :to-contain "Second Heading"))
-        (delete-file temp-file))))
-
-  (it "returns success and fail counts"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Heading One\n* Heading Two\n* Heading Three\n"))
-            (let ((result (org-canvas--for-each-entry temp-file "LEVEL=1"
-                            (lambda () nil))))
-              (expect (car result) :to-equal 3)
-              (expect (cdr result) :to-equal 0)))
-        (delete-file temp-file))))
-
-  (it "continues after callback error"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org"))
-          (call-count 0))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* First\n* Second\n* Third\n"))
-            (let ((result (org-canvas--for-each-entry temp-file "LEVEL=1"
-                            (lambda ()
-                              (setq call-count (1+ call-count))
-                              (when (= call-count 2)
-                                (error "Simulated error"))))))
-              ;; Should have called 3 times despite error
-              (expect call-count :to-equal 3)
-              ;; 2 success, 1 fail
-              (expect (car result) :to-equal 2)
-              (expect (cdr result) :to-equal 1)))
-        (delete-file temp-file))))
-
-  (it "handles empty file"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert ""))
-            (let ((result (org-canvas--for-each-entry temp-file "LEVEL=1"
-                            (lambda () nil))))
-              (expect (car result) :to-equal 0)
-              (expect (cdr result) :to-equal 0)))
-        (delete-file temp-file)))))
-
 (describe "org-canvas--collect-subtree-markers"
   (it "collects every heading of the subtree, in order, nested included"
     (with-temp-org-buffer "* Parent
@@ -567,51 +443,6 @@ Body text only.
       (search-forward "Parent")
       (org-back-to-heading t)
       (expect (org-canvas--collect-subtree-markers (point-marker)) :to-be nil))))
-
-;;;; 21. For Each Entry Error Handling
-
-(describe "org-canvas--for-each-entry error details"
-  (it "logs error position on failure"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org"))
-          (error-logged nil))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Heading\n"))
-            (cl-letf (((symbol-function 'org-canvas--log-error)
-                       (lambda (&rest _args) (setq error-logged t) nil)))
-              (org-canvas--for-each-entry temp-file "LEVEL=1"
-                (lambda () (error "Test error")))
-              (expect error-logged :to-be t)))
-        (delete-file temp-file)))))
-
-;;;; 29. org-canvas--for-each-entry edge paths
-
-(describe "org-canvas--for-each-entry edge paths"
-  (it "handles file with no matching entries"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Heading\n:PROPERTIES:\n:END:\n"))
-            ;; Query that matches nothing
-            (let ((result (org-canvas--for-each-entry temp-file "LEVEL=2"
-                            (lambda () nil))))
-              (expect (car result) :to-equal 0)
-              (expect (cdr result) :to-equal 0)))
-        (delete-file temp-file))))
-
-  (it "increments fail count on error"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* First\n* Second\n"))
-            (let ((result (org-canvas--for-each-entry temp-file "LEVEL=1"
-                            (lambda () (error "Always fails")))))
-              (expect (car result) :to-equal 0)
-              (expect (cdr result) :to-equal 2)))
-        (delete-file temp-file)))))
 
 ;;;; Org Link Property Resolution Tests
 
@@ -1247,12 +1078,6 @@ Page content.
       (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
               :to-equal "<2026-04-03 Fri 23:59>")))
 
-  (it "converts UTC ISO-8601 to course-local Org inactive timestamp"
-    (let ((org-canvas-time-zone nil)
-          (org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
-      (expect (org-canvas--iso8601-to-org-inactive-timestamp "2026-04-04T03:59:00Z")
-              :to-equal "[2026-04-03 Fri 23:59]")))
-
   (it "uses Emacs's local zone when no course zone is known (issue #136)"
     (let ((orig-tz (getenv "TZ")))
       (unwind-protect
@@ -1275,9 +1100,7 @@ Page content.
     ;; A bad Canvas timestamp must degrade gracefully, never erroring (or in
     ;; some org versions prompting) and hanging a pull.  Rejected by the
     ;; ISO-date format guard before parsing.
-    (expect (org-canvas--iso8601-to-org-timestamp "not-a-date") :to-be nil)
-    (expect (org-canvas--iso8601-to-org-inactive-timestamp "not-a-date")
-            :to-be nil))
+    (expect (org-canvas--iso8601-to-org-timestamp "not-a-date") :to-be nil))
 
   (it "returns nil when date-to-time signals on a date-prefixed string"
     ;; date-to-time is version-inconsistent: it errors on some inputs in CI.
@@ -1285,8 +1108,6 @@ Page content.
     (cl-letf (((symbol-function 'date-to-time)
                (lambda (_s) (error "Invalid date"))))
       (expect (org-canvas--iso8601-to-org-timestamp "2026-01-01T00:00:00Z")
-              :to-be nil)
-      (expect (org-canvas--iso8601-to-org-inactive-timestamp "2026-01-01T00:00:00Z")
               :to-be nil))))
 
 (describe "course TZ resolver"
@@ -1946,15 +1767,6 @@ Page content.
 
   (it "returns nil for empty string"
     (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
-
-(describe "org-canvas--iso8601-to-org-inactive-timestamp"
-  (it "converts ISO8601 to inactive timestamp"
-    (let ((result (org-canvas--iso8601-to-org-inactive-timestamp
-                   "2026-01-15T10:00:00Z")))
-      (expect result :to-match "\\[2026-01-15")))
-
-  (it "returns nil for nil inactive-timestamp input"
-    (expect (org-canvas--iso8601-to-org-inactive-timestamp nil) :to-be nil)))
 
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

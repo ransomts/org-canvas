@@ -168,11 +168,6 @@ fails; the caller then falls back to skipping unverified and says so."
            feature-name (error-message-string err))
          nil)))))
 
-(defun org-canvas--sync-fetch-remote-updated (feature-name)
-  "Return a hash of remote id to `updated_at' for FEATURE-NAME, or nil.
-The `:updated' half of `org-canvas--sync-fetch-remote-snapshot'."
-  (plist-get (org-canvas--sync-fetch-remote-snapshot feature-name) :updated))
-
 (defun org-canvas--sync-remote-newer-at (canvas-id ctx)
   "Return the remote `updated_at' of CANVAS-ID if it postdates the baseline.
 Called with point on the entry's heading.  CTX carries the remote
@@ -346,14 +341,6 @@ POM is a marker, or a position in the current buffer."
     (when buf
       (with-current-buffer buf
         (org-canvas--pull-read-file-header)))))
-
-(defun org-canvas--parse-last-synced (pom)
-  "Parse the file-level #+LAST_SYNCED header to an Emacs time value.
-POM is a marker or position in the buffer to query.  Returns nil
-if no #+LAST_SYNCED header exists in that buffer."
-  (let ((ts (org-canvas--last-synced-header pom)))
-    (when ts
-      (encode-time (org-parse-time-string ts)))))
 
 (defun org-canvas--conflict-baseline (pom &optional fallback)
   "Return the time the entry at POM was last known to agree with Canvas.

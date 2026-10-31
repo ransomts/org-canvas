@@ -938,56 +938,6 @@
       (expect (gethash "Labs" org-canvas--file-folder-cache) :to-be-truthy)
       (expect (alist-get 'id (gethash "Labs" org-canvas--file-folder-cache)) :to-equal 200))))
 
-(describe "org-canvas--file-get-or-create-folder (mocked)"
-  (before-each (test-org-canvas-reset-file-caches))
-
-  (it "returns parent folder directly for empty path"
-    (with-test-api-responses '(("folders/100" . ((id . 100) (name . "root"))))
-      (let ((result (org-canvas--file-get-or-create-folder "" 100)))
-        (expect (alist-get 'id result) :to-equal 100))))
-
-  (it "returns parent folder directly for nil path"
-    (with-test-api-responses '(("folders/100" . ((id . 100) (name . "root"))))
-      (let ((result (org-canvas--file-get-or-create-folder nil 100)))
-        (expect (alist-get 'id result) :to-equal 100))))
-
-  (it "resolves existing folder by path"
-    (with-test-api-responses '(("folders/by_path" . [((id . 200) (name . "Labs"))]))
-      (let ((result (org-canvas--file-get-or-create-folder "Labs" 100)))
-        (expect (alist-get 'id result) :to-equal 200)))))
-
-(describe "org-canvas--file-create-folder (mocked)"
-  (before-each (test-org-canvas-reset-file-caches))
-
-  (it "creates folder with correct payload"
-    (with-test-api-responses '(("folders" . ((id . 999) (name . "NewFolder"))))
-      (let ((result (org-canvas--file-create-folder "Parent/NewFolder" 100)))
-        (expect-api-called 'POST "folders")
-        (expect (alist-get 'id result) :to-equal 999))))
-
-  (it "falls back to resolve when creation fails"
-    (with-org-canvas-test-config
-      ;; State the precondition locally.  The fallback resolves the path
-      ;; from the root folder, and this spec used to rely on an earlier
-      ;; spec having left the root cached — passing for a reason that had
-      ;; nothing to do with it (issue #43).
-      (setq org-canvas--file-root-folder-cache
-            '((id . 100) (name . "course files")))
-      (let ((call-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (cond
-                      ;; First call: POST that fails (folder exists)
-                      ((and (eq method 'POST) (= call-count 1))
-                       (signal 'error '("Folder already exists")))
-                      ;; Second call: resolve by path
-                      ((eq method 'GET)
-                       [((id . 888) (name . "ExistingFolder"))])
-                      (t nil)))))
-          (let ((result (org-canvas--file-create-folder "ExistingFolder" 100)))
-            (expect (alist-get 'id result) :to-equal 888)))))))
-
 ;;;; Pre-flight Operations
 
 (describe "org-canvas--file-collect-folder-paths"
@@ -1650,25 +1600,6 @@
 
 ;;;; Folder Path Resolution Edge Cases
 
-(describe "org-canvas--file-get-or-create-folder edge cases"
-  (before-each (test-org-canvas-reset-file-caches))
-
-  (it "re-signals a non-404 read error and creates nothing (issue #435)"
-    (with-org-canvas-test-config
-      (let ((create-called nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (&rest _)
-                     ;; A 401, a timeout, anything but a 404 — it must not
-                     ;; masquerade as a missing folder
-                     (org-canvas--signal 'org-canvas-api-error "401")))
-                  ((symbol-function 'org-canvas--file-create-folder)
-                   (lambda (&rest _)
-                     (setq create-called t)
-                     '((id . 999)))))
-          (expect (org-canvas--file-get-or-create-folder "NewFolder" 100)
-                  :to-throw 'org-canvas-api-error)
-          (expect create-called :to-be nil))))))
-
 (describe "org-canvas--file-ensure-subfolder"
   (before-each (test-org-canvas-reset-file-caches))
 
@@ -1756,25 +1687,6 @@
             (expect warning-logged :to-be t)))))))
 
 ;;;; Coverage Gap Tests
-
-(describe "org-canvas--file-get-or-create-folder empty list"
-  (before-each (test-org-canvas-reset-file-caches))
-
-  (it "falls through to create-folder when API returns empty list"
-    (with-org-canvas-test-config
-      (let ((create-called nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (_method _url &rest _args)
-                     ;; Return empty list for by_path lookup
-                     []))
-                  ((symbol-function 'org-canvas--file-create-folder)
-                   (lambda (path parent-id)
-                     (setq create-called (list path parent-id))
-                     '((id . 999) (name . "new-folder")))))
-          (let ((result (org-canvas--file-get-or-create-folder "Labs" 100)))
-            (expect create-called :to-be-truthy)
-            (expect (car create-called) :to-equal "Labs")
-            (expect (alist-get 'id result) :to-equal 999)))))))
 
 (describe "org-canvas--file-resolve-folder-by-path cached intermediate"
   (before-each (test-org-canvas-reset-file-caches))
@@ -4790,49 +4702,6 @@ or :fail to signal.  Returns (COUNTERS . FINAL-MESSAGE)."
   (it "reports a dry run in the dry-run wording, and only then"
     (expect (cdr (test-files--sync-with '(:dry-run))) :to-match "1 would sync")
     (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would sync")))
-
-(describe "org-canvas--file-get-or-create-folder by_path result"
-  (before-each (test-org-canvas-reset-file-caches))
-
-  ;; No test drove by_path returning an empty list, which is what Canvas
-  ;; gives for a path that does not exist yet.  Note the `and'->`or'
-  ;; mutant here is equivalent and stays alive by design: an empty vector
-  ;; is truthy in Elisp, so `or' takes the "use last folder" branch,
-  ;; `(elt [] -1)' signals, and the enclosing condition-case creates the
-  ;; folder anyway — the same observable outcome.  These specs are for
-  ;; the behavior, not for that mutant.
-  (it "creates the folder when by_path returns an empty list"
-    (with-org-canvas-test-config
-      (let ((created nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (&rest _) []))
-                  ((symbol-function 'org-canvas--file-create-folder)
-                   (lambda (path _parent) (setq created path) '((id . 9)))))
-          (expect (alist-get 'id (org-canvas--file-get-or-create-folder "Labs" 1))
-                  :to-equal 9)
-          (expect created :to-equal "Labs")))))
-
-  (it "returns the last folder of a non-empty by_path result"
-    ;; by_path returns the whole chain; the target is the final element.
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _) [((id . 5) (name . "course files"))
-                                    ((id . 6) (name . "Labs"))]))
-                ((symbol-function 'org-canvas--file-create-folder)
-                 (lambda (&rest _) (error "Should not create an existing folder"))))
-        (expect (alist-get 'id (org-canvas--file-get-or-create-folder "Labs" 1))
-                :to-equal 6))))
-
-  (it "creates the folder when by_path signals"
-    (with-org-canvas-test-config
-      (let ((created nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (&rest _)
-                     (org-canvas--signal 'org-canvas-api-error "404")))
-                  ((symbol-function 'org-canvas--file-create-folder)
-                   (lambda (path _parent) (setq created path) '((id . 9)))))
-          (org-canvas--file-get-or-create-folder "Labs" 1)
-          (expect created :to-equal "Labs"))))))
 
 (describe "org-canvas--file-get-all-folders ordering"
   (before-each (test-org-canvas-reset-file-caches))

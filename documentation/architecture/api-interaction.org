@@ -45,7 +45,7 @@ forgets).  From there it reaches Canvas once, as the
 meets a redaction layer first:
 
 - the log line for a request carries that function's *masked* headers
-  (=org-canvas--mask-token=), never the real ones
+  (=org-canvas--mask-headers=), never the real ones
 - the curl PATCH fallback passes its whole config on stdin, so the
   token never reaches the command line (the same trick plz uses; a
   process listing cannot see it)
@@ -60,7 +60,7 @@ graph LR
     ENSURE(["ensure-credentials<br/>auth-source cache, per host and course"])
     HEADERS(["api-request-headers<br/>real, or masked for the log"])
     SEND(["plz — and curl for PATCH<br/>config on stdin, token off the command line"])
-    REDACT(["log-redact<br/>mask-token"])
+    REDACT(["log-redact<br/>mask-headers"])
     OUT["the log buffer and file,<br/>user messages, errors"]
     CANVAS["Canvas LMS"]
 
@@ -632,7 +632,7 @@ returns ='pulled=, or returns ='conflict= (for skip).
 ** Baseline, Drift-Aware Skip, and Strategy Rules
 
 - Baseline is =org-canvas--conflict-baseline=: the entry's own =CANVAS_UPDATED_AT= (the remote =updated_at= finalize recorded on the last push — Canvas's clock, so no skew allowance, and present on push-only courses), falling back to the file-level =#+LAST_SYNCED= header. Pushes now write that header too, stamped from the newest remote =updated_at= of the run and rounded up a minute (issue #48). The write is forward-only (=org-canvas--sync-advance-file-header=) and every single-entry push advances it from the stamp finalize just wrote (=org-canvas--sync-advance-header-from-entry=, issue #104: a file maintained at point read 13 days stale). Since that advance never compared the file's other entries, the verified-skip path backfills =CANVAS_UPDATED_AT= on a legacy entry from the snapshot (=org-canvas--sync-backfill-baseline=) so the header stops being anyone's baseline after one full sync
-- The payload-hash skip is drift-aware: =org-canvas--sync-fetch-remote-updated= takes one list snapshot per feature and =org-canvas--sync-remote-drifted-p= pulls any remotely-modified entry off the skip path so it goes through the normal conflict comparison. A matching hash only proves the /local/ file is unchanged — without this, an item edited only in the web UI was skipped forever. When the snapshot is unavailable, =org-canvas--sync-warn-unverified-skips= says how many entries went unchecked
+- The payload-hash skip is drift-aware: =org-canvas--sync-fetch-remote-snapshot= takes one list snapshot per feature and =org-canvas--sync-remote-drifted-p= pulls any remotely-modified entry off the skip path so it goes through the normal conflict comparison. A matching hash only proves the /local/ file is unchanged — without this, an item edited only in the web UI was skipped forever. When the snapshot is unavailable, =org-canvas--sync-warn-unverified-skips= says how many entries went unchecked
 - =org-canvas--conflict-check= returns =(cons 'conflict REMOTE-RESPONSE)= (not bare ='conflict=)
 - =org-canvas--resolve-conflict= shows a diff buffer and prompts: push/pull/skip (capitals = apply to all)
 - =:conflict-apply-all= in the run context: the batch decision, created empty by each run and discarded with it (issue #141)

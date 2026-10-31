@@ -43,25 +43,6 @@
     (let ((org-canvas-log-level 'info))
       (expect (org-canvas--trace-enabled-p) :to-be nil))))
 
-(describe "org-canvas--mask-token"
-  (it "masks Authorization header value"
-    (let* ((headers '(("Authorization" . "Bearer secret-token")
-                      ("Content-Type" . "application/json")))
-           (masked (org-canvas--mask-token headers)))
-      (expect (cdr (assoc "Authorization" masked))
-              :to-equal "Bearer ***MASKED***")
-      (expect (cdr (assoc "Content-Type" masked))
-              :to-equal "application/json")))
-
-  (it "handles empty headers list"
-    (expect (org-canvas--mask-token nil) :to-equal nil))
-
-  (it "preserves non-auth headers unchanged"
-    (let* ((headers '(("X-Custom" . "value")
-                      ("Accept" . "application/json")))
-           (masked (org-canvas--mask-token headers)))
-      (expect masked :to-equal headers))))
-
 (describe "org-canvas--pretty-json"
   (it "formats hash-table as JSON"
     (let ((data (make-hash-table)))
@@ -415,15 +396,6 @@ ran alone (issue #260)."
        (expect (cadr err) :to-equal "title Page is empty (entry 4)")))))
 
 ;;;; 7. Diagnostics
-
-(describe "org-canvas-get-course-name (mocked)"
-  (it "returns course name from API response"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("courses/99999" . ((name . "Test Course 101")))))
-        (let ((name (org-canvas-get-course-name)))
-          (expect name :to-equal "Test Course 101"))))))
 
 (describe "org-canvas-test-connection (mocked)"
   (it "calls API and logs result"

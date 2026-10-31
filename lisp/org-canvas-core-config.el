@@ -1206,16 +1206,6 @@ matched case-insensitively against `org-canvas--sensitive-header-names'."
               h))
           headers))
 
-(defun org-canvas--mask-token (headers)
-  "Return a copy of HEADERS with the Authorization token masked.
-Delegates to `org-canvas--mask-headers', which also masks cookie
-headers."
-  (mapcar (lambda (h)
-	    (if (string= (car h) "Authorization")
-		(cons "Authorization" "Bearer ***MASKED***")
-	      h))
-	  (org-canvas--mask-headers headers)))
-
 (defun org-canvas--pretty-json (data)
   "Return a pretty-printed JSON string for DATA.
 Handles hash-tables, alists, and already-encoded strings."

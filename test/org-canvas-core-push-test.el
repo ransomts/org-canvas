@@ -551,28 +551,6 @@
   (it "returns nil for non-string input"
     (expect (org-canvas--parse-iso8601-time 12345) :to-be nil)))
 
-(describe "org-canvas--parse-last-synced"
-  (it "parses #+LAST_SYNCED file header into a time value"
-    (with-temp-org-buffer
-     "#+LAST_SYNCED: [2026-01-15 Thu 10:00]
-* Item
-:PROPERTIES:
-:END:
-"
-     (re-search-forward "^\\* ")
-     (org-back-to-heading)
-     (let ((result (org-canvas--parse-last-synced (point-marker))))
-       (expect result :to-be-truthy))))
-
-  (it "returns nil when no #+LAST_SYNCED header"
-    (with-temp-org-buffer
-     "* Item
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas--parse-last-synced (point-marker)) :to-be nil))))
-
 (describe "org-canvas--conflict-check"
   (it "returns conflict cons when remote is newer"
     (with-org-canvas-test-config
@@ -1020,43 +998,6 @@
 "
      (org-back-to-heading)
      (expect (org-canvas--conflict-baseline (point)) :to-be nil))))
-
-(describe "org-canvas--sync-fetch-remote-updated"
-  (it "maps remote ids to their updated_at"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (&rest _)
-                   '(((id . 1) (updated_at . "2026-08-19T13:19:49Z"))
-                     ((id . 2) (updated_at . "2026-08-01T00:00:00Z"))))))
-        (let ((map (org-canvas--sync-fetch-remote-updated "assignments")))
-          (expect (gethash "1" map) :to-equal "2026-08-19T13:19:49Z")
-          (expect (gethash "2" map) :to-equal "2026-08-01T00:00:00Z")))))
-
-  (it "keys pages on url so the map matches CANVAS_URL"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (&rest _)
-                   '(((url . "welcome") (id . 9)
-                      (updated_at . "2026-08-19T13:19:49Z"))))))
-        (let ((map (org-canvas--sync-fetch-remote-updated "pages")))
-          (expect (gethash "welcome" map) :to-equal "2026-08-19T13:19:49Z")
-          (expect (gethash "9" map) :to-be nil)))))
-
-  (it "returns nil for an unregistered feature without calling the API"
-    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-               (lambda (&rest _) (error "Must not be called"))))
-      (expect (org-canvas--sync-fetch-remote-updated "not-a-feature") :to-be nil)))
-
-  (it "returns nil and warns when the list request fails"
-    (with-org-canvas-test-config
-      (let ((warnings nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (&rest _) (error "Connection refused")))
-                  ((symbol-function 'org-canvas--log-warning)
-                   (lambda (_logger fmt &rest args)
-                     (push (apply #'format fmt args) warnings))))
-          (expect (org-canvas--sync-fetch-remote-updated "assignments") :to-be nil)
-          (expect (car warnings) :to-match "without checking Canvas"))))))
 
 (describe "org-canvas--sync-remote-drifted-p"
   (let ((baseline (encode-time (org-parse-time-string "[2026-08-19 Wed 12:00]"))))
