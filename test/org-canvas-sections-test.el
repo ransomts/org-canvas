@@ -1980,16 +1980,17 @@ with Canvas.  DRY-RUN binds `org-canvas--dry-run'; CONFIRM passes
     ((id . 11) (student_ids . [279871]) (due_at . "2026-09-29T18:00:00Z")))
   "Two overrides Canvas holds; the table claims only the section's.")
 
-(defun test-ovr411-delete (confirm answer &optional dry-run)
+(defun test-ovr411-delete (confirm answer &optional dry-run prune)
   "Run the delete step with CONFIRM over `test-ovr411-existing'.
 ANSWER is what `y-or-n-p' answers, `batch' making the run
-noninteractive instead.  DRY-RUN binds `org-canvas--dry-run'.  Return
-\(RESULT ASKED CALLS): what the step returned, the prompt it asked or
-nil, and the API calls made."
+noninteractive instead.  DRY-RUN binds `org-canvas--dry-run', PRUNE
+`org-canvas--override-prune'.  Return (RESULT ASKED CALLS): what the
+step returned, the prompt it asked or nil, and the API calls made."
   (let ((asked nil))
     (with-org-canvas-test-config
       (with-mock-api
         (let ((org-canvas--dry-run dry-run)
+              (org-canvas--override-prune prune)
               (noninteractive (eq answer 'batch)))
           (cl-letf (((symbol-function 'y-or-n-p)
                      (lambda (prompt) (setq asked prompt) answer))
@@ -2030,8 +2031,27 @@ nil, and the API calls made."
       (expect (cl-find-if (lambda (c) (eq (car c) 'DELETE)) (nth 2 run))
               :to-be nil)))
 
-  (it "asks nothing under a dry run, which sends nothing anyway"
+  (it "predicts in a dry run what the same batch push does, keeping them (#566)"
+    (let ((run (test-ovr411-delete t 'batch t)))
+      (expect (nth 0 run) :to-equal '(0 . 1))
+      (expect (nth 1 run) :to-be nil)
+      (expect (nth 2 run) :to-equal nil)))
+
+  (it "keeps them in an interactive dry run too, saying a real push asks (#566)"
     (let ((run (test-ovr411-delete t nil t)))
+      (expect (nth 0 run) :to-equal '(0 . 1))
+      (expect (nth 1 run) :to-be nil)
+      (expect (nth 2 run) :to-equal nil)))
+
+  (it "deletes without asking when --prune-overrides asked for it (#566)"
+    (let ((run (test-ovr411-delete t nil nil t)))
+      (expect (nth 0 run) :to-equal '(1 . 0))
+      (expect (nth 1 run) :to-be nil)
+      (expect (cl-find-if (lambda (c) (eq (car c) 'DELETE)) (nth 2 run))
+              :to-be-truthy)))
+
+  (it "reports the prune's delete without sending it under a dry run (#566)"
+    (let ((run (test-ovr411-delete t nil t t)))
       (expect (nth 0 run) :to-equal '(1 . 0))
       (expect (nth 1 run) :to-be nil)
       (expect (nth 2 run) :to-equal nil)))
@@ -2057,7 +2077,17 @@ nil, and the API calls made."
           (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
             (expect (org-canvas--override-sync-for-assignment
                      "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
-                    :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1))))))))
+                    :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1)))))))
+
+  (it "counts a dry run's kept overrides as kept, not deleted (#566)"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              `(("assignments/456/overrides" . ,(vconcat test-ovr411-existing))))
+        (let ((org-canvas--dry-run t) (noninteractive t))
+          (expect (org-canvas--override-sync-for-assignment
+                   "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
+                  :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1)))))))
 
 (describe "org-canvas--override-match-accepts (issue #538)"
   (it "pairs a group or students row by whom it names, in any order"
