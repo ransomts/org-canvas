@@ -12,7 +12,8 @@ writing tests.
 - Coverage: undercover plugin; the pre-push hook gates at 99% (run
   =eldev test -u "on,codecov,dontsend" -U coverage/coverage.json= for
   the current figure)
-- CI: GitHub Actions, Emacs 29.3, 29.4 (three shards each) and 30.1, plus a sharded isolation check
+- CI: GitHub Actions, Emacs 29.3, 29.4 (three shards each), 30.1, and
+  31.1 with the linter, plus a sharded isolation check
 - Local gate: pre-push hook (lint + complexity + both Emacs versions)
 - Reports: JUnit XML (Codecov test analytics), Codecov JSON (coverage)
 
@@ -407,8 +408,9 @@ Org-mode ships with Emacs but has its own version (e.g., org 9.6 in Emacs 29.x, 
 
 *Testing across Emacs versions:*
 
-CI runs Emacs 30.1 as one job and 29.3 and 29.4 in shards (see "CI
-Pipeline" below); the pre-push hook runs 29 and 30 through nix-shell.
+CI runs Emacs 30.1 as one job, 31.1 as one job with the linter, and
+29.3 and 29.4 in shards (see "CI Pipeline" below); the pre-push hook
+runs 29 and 30 through nix-shell.
 
 *File-backed buffers for org-mode tests:*
 
@@ -494,6 +496,9 @@ Only =:type= is affected; other keywords work fine.
 #+begin_example
   test (30.1)       the whole suite with coverage, one job (~50 s of tests)
                     → Codecov: coverage/coverage.json and test-results.xml
+  test (31.1) and lint
+                    the whole suite, then the linter, one job: the
+                    leading edge
   shards-293 / shards-294
                     Emacs 29.3 / 29.4, three shards each
                     (.github/workflows/test-shards.yml)
@@ -545,7 +550,9 @@ means changing the protection rule in the same breath.  =isolation= is
 built the same way, but as of 2026-09-27 it is not among the required
 checks (=gh api repos/ransomts/org-canvas/branches/main/protection=
 lists them), so a red isolation run shows on the PR without blocking
-the merge.
+the merge.  Neither is =test (31.1) and lint=, the leading-edge leg
+added on 2026-10-31 (issue #591): a failure only 31 finds shows on the
+PR without blocking the merge, until the leg joins the rule.
 
 *Coverage stays on one job.*  Emacs 30.1 is the fastest suite and the
 only one measured, so its run is not split: one =coverage.json= and one
