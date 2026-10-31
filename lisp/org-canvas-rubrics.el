@@ -749,9 +749,10 @@ what `org-canvas--push-to-api' returns."
           (push assoc removed))))
     (unwind-protect
         (org-canvas--push-to-api data payload
-          :ctx ctx
-          :endpoint "rubrics"
-          :find-fn #'org-canvas--rubric-find-by-title)
+                                 (org-canvas--push-options
+                                  :ctx ctx
+                                  :endpoint "rubrics"
+                                  :find-fn #'org-canvas--rubric-find-by-title))
       (dolist (assoc (nreverse removed))
         (org-canvas--rubric-restore-association id assoc)))))
 
@@ -878,9 +879,10 @@ run context."
   (let ((id (plist-get data :canvas-id)))
     (if (or (not id) org-canvas--dry-run)
         (org-canvas--push-to-api data payload
-          :ctx ctx
-          :endpoint "rubrics"
-          :find-fn #'org-canvas--rubric-find-by-title)
+                                 (org-canvas--push-options
+                                  :ctx ctx
+                                  :endpoint "rubrics"
+                                  :find-fn #'org-canvas--rubric-find-by-title))
       (let* ((live (org-canvas--rubric-fetch-live id))
              (baselines (org-canvas--rubric-clean-baselines live)))
         (org-canvas--rubric-pin-ids payload (plist-get data :criteria) live)
@@ -934,7 +936,8 @@ criterion heading is then stamped with the id Canvas gave it."
   (org-canvas--log-debug org-canvas--logger "[Stage 4: Finalize] Processing response...")
   (let ((rubric-data (or (alist-get 'rubric response) response)))
     (org-canvas--rubric-warn-recreated data (alist-get 'id rubric-data))
-    (org-canvas--finalize-item data rubric-data :ctx ctx)
+    (org-canvas--finalize-item data rubric-data
+                               (org-canvas--finalize-options :ctx ctx))
     (org-canvas--rubric-stamp-criterion-ids data rubric-data)))
 
 ;;;; Main Sync Functions

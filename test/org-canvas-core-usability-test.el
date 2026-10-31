@@ -340,7 +340,8 @@
         (let ((result (org-canvas--push-to-api
                        '(:title "Test" :canvas-id nil)
                        '((name . "Test"))
-                       :endpoint "pages")))
+                       (org-canvas--push-options
+                        :endpoint "pages"))))
           ;; Should return mock response without calling API
           (expect 'org-canvas-api-request :not :to-have-been-called)
           (expect (alist-get 'id result) :to-equal "dry-run")))))
@@ -352,7 +353,8 @@
         (let ((result (org-canvas--push-to-api
                        '(:title "Test" :canvas-id "123")
                        '((name . "Test"))
-                       :endpoint "pages")))
+                       (org-canvas--push-options
+                        :endpoint "pages"))))
           (expect 'org-canvas-api-request :not :to-have-been-called)
           (expect (alist-get 'id result) :to-equal "dry-run"))))))
 

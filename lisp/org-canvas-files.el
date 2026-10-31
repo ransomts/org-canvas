@@ -894,8 +894,9 @@ dirty rather than be recorded as synced."
 CANVAS_UPDATED_AT is stamped from `modified_at', the content
 timestamp, so the baseline agrees with what conflict detection and the
 drift report compare for files (issue #94)."
-  (org-canvas--finalize-item data response :title-key :display-name
-                             :updated-field 'modified_at))
+  (org-canvas--finalize-item data response
+                             (org-canvas--finalize-options :title-key :display-name
+                                                           :updated-field 'modified_at)))
 
 (defun org-canvas--file-set-usage-rights (file-id data)
   "Set usage rights on FILE-ID using DATA plist properties.
@@ -1176,8 +1177,12 @@ the package does."
     ;; modified_at, not updated_at: a metadata-only touch is not a
     ;; remote content change (issue #94).
     (org-canvas--push-check-and-resolve-conflict
-     "files" (plist-get data :canvas-id) data (plist-get data :display-name)
-     'modified_at ctx)))
+     data (plist-get data :canvas-id)
+     (org-canvas--push-options
+      :endpoint "files"
+      :title-key :display-name
+      :updated-field 'modified_at
+      :ctx ctx))))
 
 (defun org-canvas--file-record-metadata-update (data response file-hash)
   "Record an in-place metadata update of DATA at point.
@@ -1671,12 +1676,18 @@ is missing from FOLDER-MAP fall under \"\" (root)."
           (push (cons rel-path (list item)) groups))))
     groups))
 
-(defun org-canvas--file-pull-emit-file-heading
-    (item depth rel-path content-dir total counter)
+(cl-defstruct (org-canvas--file-pull-context (:copier nil)
+               (:constructor org-canvas--file-pull-context))
+  "The state one files.org tree pull carries across the files it emits.
+CONTENT-DIR is the directory files download into, TOTAL how many files
+the pull has to emit, and COUNTER a cons whose car is the number it has
+emitted so far."
+  content-dir total counter)
+
+(defun org-canvas--file-pull-emit-file-heading (item depth rel-path context)
   "Emit a heading + properties for ITEM at DEPTH under REL-PATH.
-COUNTER is a cons cell whose car is the running file count (mutated).
-TOTAL is the count of all files for the progress message.
-Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
+CONTEXT is the pull's `org-canvas--file-pull-context': it counts the
+file and is asked to download it to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
   (let* ((id (alist-get 'id item))
          (display-name (alist-get 'display_name item))
          (download-url (alist-get 'url item))
@@ -1688,13 +1699,16 @@ Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
                         (concat "file:" link-target)
                         (org-canvas--file-sanitize-headline-desc
                          display-name)))
-         (local-path (org-canvas--file-safe-local-path local-rel content-dir)))
+         (counter (org-canvas--file-pull-context-counter context))
+         (local-path (org-canvas--file-safe-local-path
+                      local-rel (org-canvas--file-pull-context-content-dir context))))
     (insert (make-string depth ?*) " " heading-text "\n")
     (let ((pos (save-excursion (forward-line -1) (point))))
       (org-canvas-org-save-sync-state pos id)
       (org-canvas--file-pull-set-properties pos item))
     (setcar counter (1+ (car counter)))
-    (message "Files [%d/%d] Pulling '%s'..." (car counter) total display-name)
+    (message "Files [%d/%d] Pulling '%s'..." (car counter)
+             (org-canvas--file-pull-context-total context) display-name)
     (org-canvas--file-pull-download
      display-name download-url local-path (alist-get 'size item))))
 
@@ -1730,8 +1744,9 @@ and `org-canvas--file-pull-set-properties' for parity with flat mode."
   (unless (bolp) (insert "\n"))
   (let* ((groups (org-canvas--file-pull-group-by-folder folder-map remote-items))
          (sorted-paths (sort (mapcar #'car groups) #'string<))
-         (total (length remote-items))
-         (counter (list 0))
+         (context (org-canvas--file-pull-context
+                   :content-dir content-dir :total (length remote-items)
+                   :counter (list 0)))
          (current-parts nil))
     (dolist (rel-path sorted-paths)
       (let* ((parts (if (string-empty-p rel-path) nil
@@ -1745,8 +1760,8 @@ and `org-canvas--file-pull-set-properties' for parity with flat mode."
         (setq current-parts parts)
         (dolist (item items)
           (org-canvas--file-pull-emit-file-heading
-           item file-depth rel-path content-dir total counter))))
-    (car counter)))
+           item file-depth rel-path context))))
+    (car (org-canvas--file-pull-context-counter context))))
 
 (defun org-canvas--file-pull-set-properties (pos item)
   "Set visibility, usage-rights, content-type and size properties at POS.
@@ -1996,7 +2011,10 @@ it is never read or marked: a folder deleted on Canvas takes its files
 with it, and those are what get marked (issue #399).  A fresh pull
 builds the tree from the list and has nothing to mark."
   (org-canvas--pull-gone-suffix
-   (org-canvas--pull-mark-unlisted file "files" remote 'id "CANVAS_ID" "LEVEL>0")))
+   (org-canvas--pull-mark-unlisted
+    (org-canvas--pull-gone-request
+     :file file :feature "files" :remote remote
+     :id-field 'id :id-property "CANVAS_ID" :query "LEVEL>0"))))
 
 (defun org-canvas--file-detect-duplicates (items)
   "Warn for any group of items in ITEMS sharing size and content-type.

@@ -26,8 +26,13 @@
                      '(((id . 1) (title . "Item 1"))
                        ((id . 2) (title . "Item 2")))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (items endpoint-fn id-field title-field &optional skip-fn _delete-data)
-                     (setq queued-args (list items endpoint-fn id-field title-field skip-fn))
+                   (lambda (items options)
+                     (setq queued-args
+                           (list items
+                                 (org-canvas--delete-all-options-url-fn options)
+                                 (org-canvas--delete-all-options-id-field options)
+                                 (org-canvas--delete-all-options-title-field options)
+                                 (org-canvas--delete-all-options-skip-fn options)))
                      (cons 2 '("1" "2")))))
 		 (let ((deleted (org-canvas--delete-all-items (list :feature "items"
 								    :endpoint "items"
@@ -46,8 +51,9 @@
                      '(((id . 1) (title . "Keep") (front_page . t))
                        ((id . 2) (title . "Delete") (front_page . :json-false)))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items _endpoint-fn _id-field _title-field &optional skip-fn _delete-data)
-                     (setq queued-skip-fn skip-fn)
+                   (lambda (_items options)
+                     (setq queued-skip-fn
+                           (org-canvas--delete-all-options-skip-fn options))
                      (cons 1 '("2")))))
 		 (org-canvas--delete-all-items (list :feature "pages"
 						     :endpoint "pages"
@@ -62,8 +68,12 @@
                    (lambda (_method _url &optional _params)
                      '(((url . "my-page") (name . "My Page")))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (items endpoint-fn id-field title-field &optional _skip-fn _delete-data)
-                     (setq queued-args (list items endpoint-fn id-field title-field))
+                   (lambda (items options)
+                     (setq queued-args
+                           (list items
+                                 (org-canvas--delete-all-options-url-fn options)
+                                 (org-canvas--delete-all-options-id-field options)
+                                 (org-canvas--delete-all-options-title-field options)))
                      (cons 1 '("my-page")))))
 		 (let ((deleted (org-canvas--delete-all-items (list :feature "pages"
 								    :endpoint "pages"
@@ -81,8 +91,9 @@
                    (lambda (_method _url &optional _params)
                      '(((id . 42) (title . "Test")))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                     (setq captured-endpoint-fn endpoint-fn)
+                   (lambda (_items options)
+                     (setq captured-endpoint-fn
+                           (org-canvas--delete-all-options-url-fn options))
                      (cons 1 '("42")))))
 		 (org-canvas--delete-all-items (list :feature "items"
 						     :endpoint "things"
@@ -113,7 +124,7 @@
                          (lambda (_method _url &optional _params)
                            '(((id . 1) (title . "Item 1")))))
                         ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                         (lambda (_items _options)
                            (cons 1 '("1")))))
                        (org-canvas--delete-all-items (list :feature "items"
 							   :endpoint "items"
@@ -237,19 +248,17 @@
 
 (describe "org-canvas--delete-items-queued"
   (it "returns (0 . nil) for empty items list"
-    (let ((result (org-canvas--delete-items-queued
-                   nil
-                   (lambda (id) (format "http://example.com/%s" id))
-                   'id 'title)))
+    (let ((result (org-canvas--delete-items-queued nil
+                                                   (org-canvas--delete-all-options
+                                                    :url-fn (lambda (id) (format "http://example.com/%s" id))))))
       (expect (car result) :to-equal 0)
       (expect (cdr result) :to-be nil)))
 
   (it "returns (0 . nil) when all items are skipped"
-    (let ((result (org-canvas--delete-items-queued
-                   '(((id . 1) (title . "A")) ((id . 2) (title . "B")))
-                   (lambda (id) (format "http://example.com/%s" id))
-                   'id 'title
-                   (lambda (_item) t))))
+    (let ((result (org-canvas--delete-items-queued '(((id . 1) (title . "A")) ((id . 2) (title . "B")))
+                                                   (org-canvas--delete-all-options
+                                                    :url-fn (lambda (id) (format "http://example.com/%s" id))
+                                                    :skip-fn (lambda (_item) t)))))
       (expect (car result) :to-equal 0)
       (expect (cdr result) :to-be nil)))
 
@@ -257,11 +266,10 @@
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . 1) (title . "First"))
-                         ((id . 2) (title . "Second")))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title)))
+        (let ((result (org-canvas--delete-items-queued '(((id . 1) (title . "First"))
+                                                         ((id . 2) (title . "Second")))
+                                                       (org-canvas--delete-all-options
+                                                        :url-fn (lambda (id) (format "http://example.com/%s" id))))))
           (expect (car result) :to-equal 2)
           (expect (member "1" (cdr result)) :to-be-truthy)
           (expect (member "2" (cdr result)) :to-be-truthy)))))
@@ -274,11 +282,10 @@
                      (setq call-count (1+ call-count))
                      (when (= call-count 1)
                        (error "Delete failed")))))
-          (let ((result (org-canvas--delete-items-queued
-                         '(((id . 1) (title . "Fail"))
-                           ((id . 2) (title . "Succeed")))
-                         (lambda (id) (format "http://example.com/%s" id))
-                         'id 'title)))
+          (let ((result (org-canvas--delete-items-queued '(((id . 1) (title . "Fail"))
+                                                           ((id . 2) (title . "Succeed")))
+                                                         (org-canvas--delete-all-options
+                                                          :url-fn (lambda (id) (format "http://example.com/%s" id))))))
             (expect (car result) :to-equal 1)
             (expect (cdr result) :to-equal '("2")))))))
 
@@ -286,10 +293,9 @@
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . 42) (title . "Numeric")))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title)))
+        (let ((result (org-canvas--delete-items-queued '(((id . 42) (title . "Numeric")))
+                                                       (org-canvas--delete-all-options
+                                                        :url-fn (lambda (id) (format "http://example.com/%s" id))))))
           (expect (car result) :to-equal 1)
           (expect (car (cdr result)) :to-equal "42")))))
 
@@ -297,10 +303,9 @@
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . "my-page") (title . "String")))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title)))
+        (let ((result (org-canvas--delete-items-queued '(((id . "my-page") (title . "String")))
+                                                       (org-canvas--delete-all-options
+                                                        :url-fn (lambda (id) (format "http://example.com/%s" id))))))
           (expect (car result) :to-equal 1)
           (expect (car (cdr result)) :to-equal "my-page")))))
 
@@ -311,22 +316,20 @@
                    (lambda (_method url &rest _args)
                      (setq captured-url url)
                      nil)))
-          (org-canvas--delete-items-queued
-           '(((id . 5) (title . "Test")))
-           (lambda (id) (format "http://canvas.example.com/items/%s" id))
-           'id 'title)
+          (org-canvas--delete-items-queued '(((id . 5) (title . "Test")))
+                                           (org-canvas--delete-all-options
+                                            :url-fn (lambda (id) (format "http://canvas.example.com/items/%s" id))))
           (expect captured-url :to-equal "http://canvas.example.com/items/5")))))
 
   (it "skips items with skip-fn and deletes the rest"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . 1) (title . "Keep") (front_page . t))
-                         ((id . 2) (title . "Delete") (front_page . :json-false)))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title
-                       (lambda (item) (eq (alist-get 'front_page item) t)))))
+        (let ((result (org-canvas--delete-items-queued '(((id . 1) (title . "Keep") (front_page . t))
+                                                         ((id . 2) (title . "Delete") (front_page . :json-false)))
+                                                       (org-canvas--delete-all-options
+                                                        :url-fn (lambda (id) (format "http://example.com/%s" id))
+                                                        :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))))))
           (expect (car result) :to-equal 1))))))
 
 (describe "org-canvas--delete-item-at-point (mocked)"
@@ -343,7 +346,7 @@
          (org-back-to-heading)
          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
            (org-canvas--delete-item-at-point "item"
-             :endpoint "items/%s")
+                                             (org-canvas--delete-at-point-options :endpoint "items/%s"))
            (expect-api-called 'DELETE "items/555")
            (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
            (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
@@ -372,7 +375,8 @@
 "
          (goto-char (point-min))
          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas--delete-item-at-point "item" :endpoint "items/%s"))
+           (org-canvas--delete-item-at-point "item"
+                                             (org-canvas--delete-at-point-options :endpoint "items/%s")))
          (expect (org-map-entries
                   (lambda ()
                     (list (org-entry-get (point) "CANVAS_ID")
@@ -390,7 +394,8 @@
 :END:
 "
      (org-back-to-heading)
-     (expect (org-canvas--delete-item-at-point "item" :endpoint "items/%s")
+     (expect (org-canvas--delete-item-at-point "item"
+                                               (org-canvas--delete-at-point-options :endpoint "items/%s"))
              :to-throw 'user-error)))
 
   (it "uses custom id-property"
@@ -405,8 +410,8 @@
          (org-back-to-heading)
          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
            (org-canvas--delete-item-at-point "page"
-             :endpoint "pages/%s"
-             :id-property "CANVAS_URL")
+                                             (org-canvas--delete-at-point-options :endpoint "pages/%s"
+                                                                                  :id-property "CANVAS_URL"))
            (expect-api-called 'DELETE "pages/my-page-slug")))))))
 
 (describe "org-canvas--delete-all-items edge cases (mocked)"
@@ -418,7 +423,7 @@
                      (setq captured-params params)
                      nil))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                   (lambda (_items _options)
                      (cons 0 nil))))
 		 (org-canvas--delete-all-items (list :feature "items"
 						     :endpoint "items"
@@ -431,7 +436,7 @@
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (_method _url &optional _params) nil))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                 (lambda (_items _options)
                    (cons 0 nil))))
                (let ((deleted (org-canvas--delete-all-items (list :feature "items"
 								  :endpoint "items"
@@ -444,7 +449,7 @@
                  (lambda (_method _url &optional _params)
                    '(((id . 1) (title . "Item")))))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                 (lambda (_items _options)
                    (cons 1 '("1")))))
                (let ((deleted (org-canvas--delete-all-items (list :feature "items"
 								  :endpoint "items"
@@ -577,7 +582,8 @@
 "
          (org-back-to-heading)
          ;; Should return nil on failure, not throw
-         (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
+         (let ((result (org-canvas--delete-item-at-point "item"
+                                                         (org-canvas--delete-at-point-options :endpoint "items/%s"))))
            (expect result :to-be nil))))))
 
   (it "returns declined when user cancels"
@@ -591,7 +597,8 @@
 "
          (org-back-to-heading)
          ;; Declined, which is not a failure (#525)
-         (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
+         (let ((result (org-canvas--delete-item-at-point "item"
+                                                         (org-canvas--delete-at-point-options :endpoint "items/%s"))))
            (expect result :to-be 'declined)))))))
 
 (describe "org-canvas--delete-all-items edge paths"
@@ -600,7 +607,7 @@
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (_method _url &optional _params) nil))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                 (lambda (_items _options)
                    (cons 0 nil))))
                (let ((deleted (org-canvas--delete-all-items (list :feature "items"
 								  :endpoint "items"
@@ -630,7 +637,7 @@
                            '(((id . 1) (title . "Item A"))
                              ((id . 2) (title . "Item B")))))
                         ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                         (lambda (_items _options)
                            ;; Simulate: item 1 deleted, item 2 failed
                            (cons 1 '("1")))))
                        (org-canvas--delete-all-items (list :feature "items"
@@ -651,7 +658,7 @@
                  (lambda (_method _url &optional _params)
                    '(((id . 1) (title . "Item")))))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                 (lambda (_items _options)
                    (cons 1 '("1")))))
         ;; Should not error even with nil file
                (let ((deleted (org-canvas--delete-all-items (list :feature "items"
@@ -674,7 +681,8 @@
 :END:
 "
          (org-back-to-heading)
-         (org-canvas--delete-item-at-point "item" :endpoint "items/%s")
+         (org-canvas--delete-item-at-point "item"
+                                           (org-canvas--delete-at-point-options :endpoint "items/%s"))
          ;; Properties should be preserved on failure
          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "999")
          (expect (org-entry-get (point) "LAST_SYNCED") :to-equal "[2024-01-01 Mon]")))))
@@ -692,7 +700,8 @@
 "
          (org-back-to-heading)
          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
+           (let ((result (org-canvas--delete-item-at-point "item"
+                                                           (org-canvas--delete-at-point-options :endpoint "items/%s"))))
              (expect result :to-be 'deleted)
              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
              (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
@@ -923,8 +932,11 @@
                         ((symbol-function 'y-or-n-p) (lambda (_) t))
                         ((symbol-function 'display-buffer) (lambda (&rest _) nil))
                         ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (items del-fn &rest _)
-                           (setq delete-url (funcall del-fn (alist-get 'id (car items))))
+                         (lambda (items options)
+                           (setq delete-url
+                                 (funcall
+                                  (org-canvas--delete-all-options-url-fn options)
+                                  (alist-get 'id (car items))))
                            (cons (length items) nil))))
                        (expect (org-canvas--prune-runtime (list :feature "pages"
 								:endpoint "pages" :file temp-file
@@ -1057,9 +1069,9 @@ The pages file is the same file, so a page spec can name its headings."
          (org-back-to-heading)
          (let ((seen nil) (org-canvas-delete-confirmed t))
            (cl-letf (((symbol-function 'display-buffer) #'ignore))
-             (expect (org-canvas--delete-item-at-point
-                      "item" :endpoint "items/%s"
-                      :post-delete-fn (lambda (pom) (setq seen pom)))
+             (expect (org-canvas--delete-item-at-point "item"
+                                                       (org-canvas--delete-at-point-options :endpoint "items/%s"
+                                                                                            :post-delete-fn (lambda (pom) (setq seen pom))))
                      :to-be 'deleted))
            (expect seen :to-equal (point))))))))
 

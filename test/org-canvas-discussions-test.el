@@ -473,7 +473,8 @@ Content.
       (with-mock-api
         (let ((data '(:title "New" :canvas-id nil))
               (payload '((title . "New"))))
-          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "discussion_topics"))
           (expect-api-called 'POST "discussion_topics")))))
 
   (it "uses PUT for existing discussions"
@@ -481,7 +482,8 @@ Content.
       (with-mock-api
         (let ((data '(:title "Existing" :canvas-id "456"))
               (payload '((title . "Existing"))))
-          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "discussion_topics"))
           (expect-api-called 'PUT "discussion_topics/456")))))
 
   (it "sends a payload whose body reflects the org input"

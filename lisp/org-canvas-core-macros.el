@@ -24,67 +24,91 @@
 ;; Runtime helpers and macro for generating build-payload functions
 ;; from property registry specs.
 
-(defun org-canvas--payload-build-alist (data registry-key title-api-key
-                                        &optional body-key body-api-key
-                                        static-fields)
-  "Build an alist payload from DATA using property specs in REGISTRY-KEY.
-TITLE-API-KEY is the alist key symbol for the title field.
-BODY-KEY/BODY-API-KEY add body content when both non-nil.
-STATIC-FIELDS is an alist of fixed key-value pairs."
-  (let* ((spec (gethash registry-key org-canvas--property-registry))
-         (properties (plist-get spec :properties))
-         (title-data-key (or (plist-get spec :title-key) :title))
-         (base (list (cons title-api-key (plist-get data title-data-key)))))
+(cl-defstruct (org-canvas--payload-options (:copier nil)
+               (:constructor org-canvas--payload-options))
+  "What a generated build-payload function was told to build.
+REGISTRY-KEY names the property registry entry the payload's
+properties come from.  TITLE-API-KEY is the payload's key for the
+title -- a symbol in an alist, a string in a hash table.  BODY-KEY and
+BODY-API-KEY add a body when both are non-nil.  STATIC-FIELDS are
+fixed key-value pairs an alist payload always carries, WRAPPER-KEY the
+hash a hash-table payload is wrapped in, and EXTRA-REQUIRED-FN a
+function that adds the fields only the module can compute.  Every slot
+is a constant of the generated function, so none of them varies with
+the entry being built."
+  registry-key title-api-key body-key body-api-key
+  static-fields wrapper-key extra-required-fn)
+
+(defun org-canvas--payload-registry (options)
+  "Return the property registry entry OPTIONS' payload is built from."
+  (gethash (org-canvas--payload-options-registry-key options)
+           org-canvas--property-registry))
+
+(defun org-canvas--payload-title (data options)
+  "Return DATA's title as (API-KEY . TITLE), the way OPTIONS names it.
+A registry entry that syncs some other property as the title names it
+in its `:title-key'."
+  (let ((spec (org-canvas--payload-registry options)))
+    (cons (org-canvas--payload-options-title-api-key options)
+          (plist-get data (or (plist-get spec :title-key) :title)))))
+
+(defun org-canvas--payload-property-pairs (options data)
+  "Return (API-KEY . VALUE) for each property OPTIONS takes from DATA.
+API-KEY is the registry's string, which a hash-table payload takes as
+it stands and an alist payload interns.  A property DATA carries no
+value for is left out, unless the registry marks it `:required' or
+`:boolean-json': Canvas reads a missing boolean as false, so a payload
+that means yes has to say it."
+  (let (pairs)
+    (dolist (prop (plist-get (org-canvas--payload-registry options) :properties))
+      (let ((api-key (plist-get prop :api-key))
+            (value (plist-get data (plist-get prop :data-key))))
+        (when (and api-key (or value (plist-get prop :required)
+                               (plist-get prop :boolean-json)))
+          (push (cons api-key
+                      (if (plist-get prop :boolean-json)
+                          (org-canvas--to-json-boolean value)
+                        value))
+                pairs))))
+    (nreverse pairs)))
+
+(defun org-canvas--payload-build-alist (data options)
+  "Build an alist payload from DATA and OPTIONS.
+OPTIONS is an `org-canvas--payload-options'; its `static-fields' are
+added as given, and the property pairs last."
+  (let ((base (list (org-canvas--payload-title data options)))
+        (body-key (org-canvas--payload-options-body-key options))
+        (body-api-key (org-canvas--payload-options-body-api-key options)))
     ;; Add body if specified
     (when (and body-key body-api-key)
       (push (cons body-api-key (plist-get data body-key)) base))
     ;; Add static fields
-    (dolist (field static-fields)
+    (dolist (field (org-canvas--payload-options-static-fields options))
       (push field base))
     ;; Add properties from registry
-    (dolist (prop properties)
-      (let* ((api-key (plist-get prop :api-key))
-             (data-key (plist-get prop :data-key))
-             (boolean-json (plist-get prop :boolean-json))
-             (required (plist-get prop :required))
-             (value (plist-get data data-key)))
-        (when (and api-key (or value required boolean-json))
-          (let ((final-value (if boolean-json
-                                 (org-canvas--to-json-boolean value)
-                               value)))
-            (push (cons (intern api-key) final-value) base)))))
+    (dolist (pair (org-canvas--payload-property-pairs options data))
+      (push (cons (intern (car pair)) (cdr pair)) base))
     (nreverse base)))
 
-(defun org-canvas--payload-build-hash-table (data registry-key title-api-key
-                                             &optional body-key body-api-key
-                                             wrapper-key extra-required-fn)
-  "Build a hash-table payload from DATA using property specs in REGISTRY-KEY.
-TITLE-API-KEY is the hash key string for the title field.
-BODY-KEY/BODY-API-KEY add body content when both non-nil.
-WRAPPER-KEY wraps inner hash in an outer hash.
-EXTRA-REQUIRED-FN is (lambda (data inner-hash)) for extra required fields."
-  (let* ((spec (gethash registry-key org-canvas--property-registry))
-         (properties (plist-get spec :properties))
-         (title-data-key (or (plist-get spec :title-key) :title))
-         (inner (make-hash-table :test 'equal)))
+(defun org-canvas--payload-build-hash-table (data options)
+  "Build a hash-table payload from DATA and OPTIONS.
+OPTIONS is an `org-canvas--payload-options'.  Its `extra-required-fn',
+when set, is called with DATA and the table before the table is
+wrapped in a further one named by its `wrapper-key'."
+  (let ((inner (make-hash-table :test 'equal))
+        (title (org-canvas--payload-title data options))
+        (body-key (org-canvas--payload-options-body-key options))
+        (body-api-key (org-canvas--payload-options-body-api-key options))
+        (extra-required-fn (org-canvas--payload-options-extra-required-fn options))
+        (wrapper-key (org-canvas--payload-options-wrapper-key options)))
     ;; Add title
-    (puthash title-api-key (plist-get data title-data-key) inner)
+    (puthash (car title) (cdr title) inner)
     ;; Add body if specified
     (when (and body-key body-api-key)
       (puthash body-api-key (plist-get data body-key) inner))
     ;; Add properties from registry
-    (dolist (prop properties)
-      (let* ((api-key (plist-get prop :api-key))
-             (data-key (plist-get prop :data-key))
-             (boolean-json (plist-get prop :boolean-json))
-             (required (plist-get prop :required))
-             (value (plist-get data data-key)))
-        (when (and api-key (or value required boolean-json))
-          (puthash api-key
-                   (if boolean-json
-                       (org-canvas--to-json-boolean value)
-                     value)
-                   inner))))
+    (dolist (pair (org-canvas--payload-property-pairs options data))
+      (puthash (car pair) (cdr pair) inner))
     ;; Call extra-required-fn if provided
     (when extra-required-fn
       (funcall extra-required-fn data inner))
@@ -128,16 +152,22 @@ FEATURE is an unquoted symbol.  ARGS is a plist:
     (unless title-api-key
       (error "Org-canvas-define-payload %s: :title-api-key is required"
              feature-name))
-    (let ((builder-call
-           (if (eq format-type 'alist)
-               `(org-canvas--payload-build-alist
-                 data ,registry-key ',title-api-key
-                 ,body-key ',body-api-key
-                 ',static-fields)
-             `(org-canvas--payload-build-hash-table
-               data ,registry-key ,title-api-key
-               ,body-key ,body-api-key
-               ,wrapper-key ,extra-required-fn))))
+    (let* ((alist-p (eq format-type 'alist))
+           ;; An alist payload's keys are symbols, a hash table's strings;
+           ;; the module names each the way its format reads it.
+           (options
+            `(org-canvas--payload-options
+              :registry-key ,registry-key
+              :title-api-key ,(if alist-p `',title-api-key title-api-key)
+              :body-key ,body-key
+              :body-api-key ,(if alist-p `',body-api-key body-api-key)
+              :static-fields ,(and static-fields (list 'quote static-fields))
+              :wrapper-key ,wrapper-key
+              :extra-required-fn ,extra-required-fn))
+           (builder-call
+            (if alist-p
+                `(org-canvas--payload-build-alist data ,options)
+              `(org-canvas--payload-build-hash-table data ,options))))
       `(defun ,fn-name (data)
          ,(format "Convert extracted DATA plist into a Canvas API payload for %s." feature-name)
          (let ((title (plist-get data ,(or (plist-get args :title-key) :title))))

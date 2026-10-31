@@ -232,9 +232,12 @@ A read may still be a GraphQL query, sent as a POST to /api/graphql."
              (props (org-canvas--diff-find-properties "Assignments"))
              (entry (append (org-canvas--diff-local-entry "CANVAS_ID")
                             (list :pom (point-marker))))
-             (d (org-canvas--diff-entry entry index (plist-get props :properties)
-                                        (plist-put (copy-sequence props) :body-api-key nil)
-                                        nil 'name)))
+             (d (org-canvas--diff-entry
+                 entry index
+                 (org-canvas--diff-options
+                  :specs (plist-get props :properties)
+                  :props (plist-put (copy-sequence props) :body-api-key nil)
+                  :title-field 'name))))
         (expect (car (plist-get d :fields)) :to-equal '("TITLE" "Lab 1" "Lab One"))
         (expect (assoc "POINTS" (plist-get d :fields)) :to-equal '("POINTS" "10" "12"))
         (expect (alist-get 'name (plist-get d :item)) :to-equal "Lab One"))))))

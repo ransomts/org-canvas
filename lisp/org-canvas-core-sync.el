@@ -742,11 +742,12 @@ Returns a quoted lambda of (DATA PAYLOAD &optional CTX) that calls
 FIND-FN, handing it the run context."
   `(lambda (data payload &optional ctx)
      (org-canvas--push-to-api data payload
-       :ctx ctx
-       :endpoint ,endpoint
-       ,@(when id-key `(:id-key ,id-key))
-       ,@(when title-key `(:title-key ,title-key))
-       ,@(when find-fn `(:find-fn ,find-fn)))))
+                              (org-canvas--push-options
+                               :ctx ctx
+                               :endpoint ,endpoint
+                               ,@(when id-key `(:id-key ,id-key))
+                               ,@(when title-key `(:title-key ,title-key))
+                               ,@(when find-fn `(:find-fn ,find-fn))))))
 
 (defun org-canvas--make-finalize-fn-form (id-field id-property title-key post-fn
                                                    &optional endpoint)
@@ -758,12 +759,13 @@ travels with POST-FN so a post-fn that writes to Canvas again can have
 the baseline re-read from it (issue #124)."
   `(lambda (data response &optional ctx)
      (org-canvas--finalize-item data response
-       :ctx ctx
-       ,@(when id-field `(:id-field ,id-field))
-       ,@(when id-property `(:id-property ,id-property))
-       ,@(when title-key `(:title-key ,title-key))
-       ,@(when (and post-fn endpoint) `(:endpoint ,endpoint))
-       ,@(when post-fn `(:post-fn ,post-fn)))))
+                                (org-canvas--finalize-options
+                                 :ctx ctx
+                                 ,@(when id-field `(:id-field ,id-field))
+                                 ,@(when id-property `(:id-property ,id-property))
+                                 ,@(when title-key `(:title-key ,title-key))
+                                 ,@(when (and post-fn endpoint) `(:endpoint ,endpoint))
+                                 ,@(when post-fn `(:post-fn ,post-fn))))))
 
 (defconst org-canvas--sync-spec-keys
   '(:feature :file :query :parse :build :push :finalize
@@ -967,8 +969,11 @@ Canvas having deleted the item).  The whole-file pull is
                  feature-name)
         (interactive)
         (org-canvas--pull-heading-runtime
-         ,singular (expand-file-name ,file-expr) ,query
-         ,(or id-property "CANVAS_ID") target by))
+         (org-canvas--heading-query
+          :file (expand-file-name ,file-expr) :query ,query
+          :target target :by by
+          :id-property ,(or id-property "CANVAS_ID")
+          :feature ,singular :verb "pull")))
       (org-canvas--pull-register-heading-fn ,singular #',fn-name))))
 
 (defmacro org-canvas-define-sync (feature &rest args)

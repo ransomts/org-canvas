@@ -329,8 +329,9 @@ Content.
         (let ((data '(:title "New" :canvas-id nil))
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
-            :endpoint "assignments"
-            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
+                                   (org-canvas--push-options
+                                    :endpoint "assignments"
+                                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
           (expect-api-called 'POST "assignments$")))))
 
   (it "uses PUT for existing assignments"
@@ -339,8 +340,9 @@ Content.
         (let ((data '(:title "Existing" :canvas-id "789"))
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
-            :endpoint "assignments"
-            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
+                                   (org-canvas--push-options
+                                    :endpoint "assignments"
+                                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
           (expect-api-called 'PUT "assignments/789")))))
 
   (it "sends a payload whose body reflects the org input"
@@ -397,7 +399,8 @@ Content.
      (let ((data (list :title "Test Assignment" :pom (point-marker) :rubric-id nil))
            (response '((id . 44444) (name . "Test Assignment"))))
        (org-canvas--finalize-item data response
-         :post-fn #'org-canvas--assignment-post-finalize)
+                                  (org-canvas--finalize-options
+                                   :post-fn #'org-canvas--assignment-post-finalize))
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "44444"))))
 
   (it "does not write per-entry LAST_SYNCED (file-level header instead)"
@@ -410,7 +413,8 @@ Content.
      (let ((data (list :title "Test" :pom (point-marker) :rubric-id nil))
            (response '((id . 33333))))
        (org-canvas--finalize-item data response
-         :post-fn #'org-canvas--assignment-post-finalize)
+                                  (org-canvas--finalize-options
+                                   :post-fn #'org-canvas--assignment-post-finalize))
        (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))
 
   (it "signals error when no ID in response"
@@ -423,7 +427,8 @@ Content.
      (let ((data (list :title "No ID Assignment" :pom (point-marker) :rubric-id nil))
            (response '((error . "failed"))))
        (expect (org-canvas--finalize-item data response
-                 :post-fn #'org-canvas--assignment-post-finalize)
+                                          (org-canvas--finalize-options
+                                           :post-fn #'org-canvas--assignment-post-finalize))
                :to-throw 'error)))))
 
 ;;;; Resolve Link ID Tests
@@ -869,8 +874,9 @@ Content.
           (let ((data '(:title "Stale" :canvas-id "old-id"))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
-                            :endpoint "assignments"
-                            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))))
+                                                   (org-canvas--push-options
+                                                    :endpoint "assignments"
+                                                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))))
               (expect (alist-get 'id result) :to-equal 999)
               (expect call-count :to-equal 2)))))))
 
@@ -889,8 +895,9 @@ Content.
           (let ((data '(:title "Timeout Assignment" :canvas-id nil))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
-                            :endpoint "assignments"
-                            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))))
+                                                   (org-canvas--push-options
+                                                    :endpoint "assignments"
+                                                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))))
               (expect (alist-get 'id result) :to-equal 888)))))))
 
   (it "signals error on non-recoverable failure"
@@ -901,8 +908,9 @@ Content.
         (let ((data '(:title "Bad" :canvas-id nil))
               (payload (make-hash-table)))
           (expect (org-canvas--push-to-api data payload
-                    :endpoint "assignments"
-                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
+                                           (org-canvas--push-options
+                                            :endpoint "assignments"
+                                            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
                   :to-throw 'error))))))
 
 ;;;; Additional Find by Name Tests
@@ -3430,8 +3438,9 @@ Return (TEXT WARNINGS): the buffer text and the warnings logged."
             (org-canvas--push-to-api
              (list :title "Column" :canvas-id "61" :pom (point-marker))
              '((assignment . ((name . "Column"))))
-             :endpoint "assignments"
-             :ctx (org-canvas--sync-make-ctx :feature-name "assignments")))
+             (org-canvas--push-options
+              :endpoint "assignments"
+              :ctx (org-canvas--sync-make-ctx :feature-name "assignments"))))
           (expect (reverse methods) :to-equal '(GET PUT)))))))
 
 ;;; org-canvas-assignments-test.el ends here

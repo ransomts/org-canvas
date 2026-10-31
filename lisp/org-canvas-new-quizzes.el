@@ -613,10 +613,11 @@ is absent in RESPONSE."
            ;; Fallback: copy assignment_id from id
            (cons (cons 'assignment_id (alist-get 'id response)) response))))
     (org-canvas--finalize-item data effective-response
-      :ctx ctx
-      :id-field 'assignment_id
-      :id-property "CANVAS_ASSIGNMENT_ID"
-      :post-fn #'org-canvas--new-quiz-sync-children)))
+                               (org-canvas--finalize-options
+                                :ctx ctx
+                                :id-field 'assignment_id
+                                :id-property "CANVAS_ASSIGNMENT_ID"
+                                :post-fn #'org-canvas--new-quiz-sync-children))))
 
 
 ;;;; Sync Item Loop
@@ -826,8 +827,9 @@ anything else."
   (let* ((file (expand-file-name org-canvas-new-quizzes-file))
          (target (or target (org-canvas--sync-heading-ask "new-quiz" file "LEVEL=1")))
          (marker (org-canvas--sync-find-heading
-                  :file file :query "LEVEL=1" :target target :by by
-                  :id-property "CANVAS_ASSIGNMENT_ID" :feature "new-quiz")))
+                  (org-canvas--heading-query
+                   :file file :query "LEVEL=1" :target target :by by
+                   :id-property "CANVAS_ASSIGNMENT_ID" :feature "new-quiz"))))
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char marker)
@@ -845,8 +847,10 @@ CANVAS_ASSIGNMENT_ID.  Never asks to confirm; saves the file and
 returns a plist whose :outcome is `pulled', `dry-run' or `deleted'."
   (interactive)
   (org-canvas--pull-heading-runtime
-   "new-quiz" (expand-file-name org-canvas-new-quizzes-file) "LEVEL=1"
-   "CANVAS_ASSIGNMENT_ID" target by))
+   (org-canvas--heading-query
+    :file (expand-file-name org-canvas-new-quizzes-file) :query "LEVEL=1"
+    :target target :by by
+    :id-property "CANVAS_ASSIGNMENT_ID" :feature "new-quiz" :verb "pull")))
 
 (org-canvas--pull-register-heading-fn "new-quiz" #'org-canvas-pull-new-quiz)
 
@@ -1045,8 +1049,13 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
         ;; Read through the pull-only entry's item URL; the quiz's
         ;; items are never marked (#399).
         (setq unlisted (org-canvas--pull-mark-unlisted
-                        file (org-canvas--pull-feature-for-file file) remote
-                        '(assignment_id id) "CANVAS_ASSIGNMENT_ID" "LEVEL=1"))
+                        (org-canvas--pull-gone-request
+                         :file file
+                         :feature (org-canvas--pull-feature-for-file file)
+                         :remote remote
+                         :id-field '(assignment_id id)
+                         :id-property "CANVAS_ASSIGNMENT_ID"
+                         :query "LEVEL=1")))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)

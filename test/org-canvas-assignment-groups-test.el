@@ -205,7 +205,8 @@
         (let ((data '(:name "New" :canvas-id nil))
               (payload '((name . "New"))))
           (org-canvas--push-to-api data payload
-            :endpoint "assignment_groups" :title-key :name)
+                                   (org-canvas--push-options
+                                    :endpoint "assignment_groups" :title-key :name))
           (expect-api-called 'POST "assignment_groups$")))))
 
   (it "uses PUT for existing groups"
@@ -214,7 +215,8 @@
         (let ((data '(:name "Existing" :canvas-id "321"))
               (payload '((name . "Existing"))))
           (org-canvas--push-to-api data payload
-            :endpoint "assignment_groups" :title-key :name)
+                                   (org-canvas--push-options
+                                    :endpoint "assignment_groups" :title-key :name))
           (expect-api-called 'PUT "assignment_groups/321")))))
 
   (it "sends a POST body reflecting the org input (real pipeline)"
@@ -252,7 +254,8 @@
      (org-back-to-heading)
      (let ((data (list :name "Test Group" :pom (point-marker)))
            (response '((id . 55555) (name . "Test Group"))))
-       (org-canvas--finalize-item data response :title-key :name)
+       (org-canvas--finalize-item data response
+                                  (org-canvas--finalize-options :title-key :name))
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55555"))))
 
   (it "does not write per-entry LAST_SYNCED (file-level header instead)"
@@ -267,7 +270,8 @@
      (org-back-to-heading)
      (let ((data (list :name "Test" :pom (point-marker)))
            (response '((id . 44444))))
-       (org-canvas--finalize-item data response :title-key :name)
+       (org-canvas--finalize-item data response
+                                  (org-canvas--finalize-options :title-key :name))
        (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 ;;;; Pull Function Tests

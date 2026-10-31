@@ -1127,19 +1127,27 @@ document said null, and a field read from one is nil, not false."
   (let ((v (alist-get key alist)))
     (if (or (null v) (eq v :null)) nil v)))
 
-(defun org-canvas--graphql-connection-page (query variables connection-path
-                                               node-fn map cursor)
-  "Read one page of the GraphQL QUERY after CURSOR into MAP.
-VARIABLES is the request's variable alist; the cursor rides beside
-it.  CONNECTION-PATH is the two-key path to the reply's Connection
-object, (PARENT CONNECTION) — (course assignmentsConnection),
+(cl-defstruct (org-canvas--graphql-request (:copier nil)
+               (:constructor org-canvas--graphql-request))
+  "One paginated GraphQL read.
+QUERY is the document, VARIABLES the request's variable alist, and
+CONNECTION-PATH the two-key path to the reply's Connection object,
+\(PARENT CONNECTION): (course assignmentsConnection),
 \(assignment submissionsConnection), (user commentBankItemsConnection).
-NODE-FN is called with each node of the page and MAP, storing what it
-wants in it.  Return the next page's cursor, or nil after the last."
+A read is these three or it is not the same read, so they go together."
+  query variables connection-path)
+
+(defun org-canvas--graphql-connection-page (request node-fn map cursor)
+  "Read one page of REQUEST after CURSOR into MAP.
+REQUEST is an `org-canvas--graphql-request'; the cursor rides beside
+its variables.  NODE-FN is called with each node of the page and MAP,
+storing what it wants in it.  Return the next page's cursor, or nil
+after the last."
   (let* ((data (org-canvas--graphql-query
-                query
-                (append variables
+                (org-canvas--graphql-request-query request)
+                (append (org-canvas--graphql-request-variables request)
                         (when cursor (list (cons 'cursor cursor))))))
+         (connection-path (org-canvas--graphql-request-connection-path request))
          (connection (alist-get (cadr connection-path)
                                 (alist-get (car connection-path) data)))
          (info (alist-get 'pageInfo connection)))
@@ -1148,17 +1156,16 @@ wants in it.  Return the next page's cursor, or nil after the last."
     (and (eq (alist-get 'hasNextPage info) t)
          (org-canvas--alist-get-non-null 'endCursor info))))
 
-(defun org-canvas--graphql-walk-pages (query variables connection-path node-fn)
-  "Read every page of the GraphQL QUERY into a fresh hash table, and return it.
-VARIABLES and CONNECTION-PATH are as for
-`org-canvas--graphql-connection-page'; NODE-FN is called with each node
-of each page and the map being filled.  Errors propagate to the
-caller, which owns the one warning and the fallback (the #171 rule: a
-GraphQL read degrades to a warning, it never aborts the command)."
+(defun org-canvas--graphql-walk-pages (request node-fn)
+  "Read every page of REQUEST into a fresh hash table, and return it.
+REQUEST is an `org-canvas--graphql-request'; NODE-FN is called with
+each node of each page and the map being filled.  Errors propagate to
+the caller, which owns the one warning and the fallback (the #171 rule:
+a GraphQL read degrades to a warning, it never aborts the command)."
   (let ((map (make-hash-table :test 'equal))
         (cursor nil))
     (while (setq cursor (org-canvas--graphql-connection-page
-                         query variables connection-path node-fn map cursor)))
+                         request node-fn map cursor)))
     map))
 
 (defvar org-canvas--course-post-policy-cache nil

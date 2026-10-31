@@ -98,8 +98,9 @@
     (with-rul-file nil
       (let* ((result (org-canvas-submissions-apply-ruling
                       nil '(5001 "5002")
-                      :rows 0 :row-comment "No link, so it scores zero."
-                      :score 0 :note "Open-link rule."))
+                      (org-canvas-submissions-ruling
+                       :rows 0 :row-comment "No link, so it scores zero."
+                       :score 0 :note "Open-link rule.")))
              (alice (car (plist-get result :changed)))
              (notes (test-rul--section "5001" org-canvas--submissions-notes-heading)))
         (expect (mapcar (lambda (p) (plist-get p :user-id)) (plist-get result :changed))
@@ -128,9 +129,11 @@
   (it "derives SCORE from a function of the total and the column's points"
     (with-rul-file "#+PROPERTY: POINTS_POSSIBLE 20\n"
       (let* ((result (org-canvas-submissions-apply-ruling
-                      nil '(5002) :row-comment 'empty
-                      :score (lambda (total max) (- total (* 0.2 max)))
-                      :comment "Late, so 20% of the column comes off."))
+                      nil '(5002)
+                      (org-canvas-submissions-ruling
+                       :row-comment 'empty
+                       :score (lambda (total max) (- total (* 0.2 max)))
+                       :comment "Late, so 20% of the column comes off.")))
              (bob (car (plist-get result :changed))))
         (expect (plist-get bob :score) :to-equal "5")
         (expect (test-rul--rows "5002") :to-equal '(("_1" "4" nil) ("_2" "5" nil)))
@@ -143,8 +146,10 @@
     (with-rul-file nil
       (let ((seen nil))
         (org-canvas-submissions-apply-ruling
-         nil '(5001) :rows 'empty
-         :score (lambda (total max) (setq seen (list total max)) -3))
+         nil '(5001)
+         (org-canvas-submissions-ruling
+          :rows 'empty
+          :score (lambda (total max) (setq seen (list total max)) -3)))
         (expect seen :to-equal '(0 10))
         (expect (test-rul--prop "5001" "SCORE") :to-equal "0")
         (expect (test-rul--rows "5001")
@@ -152,8 +157,10 @@
 
   (it "records a replaced draft, and adds the Comment to post heading when missing"
     (with-rul-file nil
-      (org-canvas-submissions-apply-ruling nil '(5001 5003) :comment "New draft.\nLine two."
-                                           :note "Two\nlines")
+      (org-canvas-submissions-apply-ruling
+       nil '(5001 5003)
+       (org-canvas-submissions-ruling
+        :comment "New draft.\nLine two." :note "Two\nlines"))
       (expect (test-rul--section "5001" org-canvas--submissions-draft-heading)
               :to-equal "New draft.\nLine two.")
       (expect (test-rul--section "5001" org-canvas--submissions-notes-heading)
@@ -166,7 +173,8 @@
   (it "names the ids that match nothing and keeps back what it cannot rule on"
     (with-rul-file nil
       (let ((result (org-canvas-submissions-apply-ruling
-                     nil '(9999 5003 5004 5004) :rows 0)))
+                     nil '(9999 5003 5004 5004)
+                     (org-canvas-submissions-ruling :rows 0))))
         (expect (plist-get result :changed) :to-be nil)
         (expect (plist-get result :unmatched) :to-equal '("9999"))
         (expect (plist-get result :skipped)
@@ -176,10 +184,14 @@
 
   (it "keeps back a SCORE the rubric total contradicts when the rubric grades"
     (with-rul-file "#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true\n"
-      (let ((result (org-canvas-submissions-apply-ruling nil '(5001) :rows 1 :score 0)))
+      (let ((result (org-canvas-submissions-apply-ruling
+                     nil '(5001) (org-canvas-submissions-ruling
+                                  :rows 1 :score 0))))
         (expect (cdar (plist-get result :skipped)) :to-match "disagrees with the rubric total 2")
         (expect (test-rul--prop "5001" "SCORE") :to-equal "8"))
-      (expect (plist-get (org-canvas-submissions-apply-ruling nil '(5001) :rows 0 :score 0)
+      (expect (plist-get (org-canvas-submissions-apply-ruling
+                          nil '(5001) (org-canvas-submissions-ruling
+                                       :rows 0 :score 0))
                          :changed)
               :not :to-be nil)))
 
@@ -187,7 +199,9 @@
     (with-rul-file nil
       (let* ((before (buffer-string))
              (org-canvas--dry-run t)
-             (result (org-canvas-submissions-apply-ruling nil '(5001) :rows 0 :score 0)))
+             (result (org-canvas-submissions-apply-ruling
+                      nil '(5001)
+                      (org-canvas-submissions-ruling :rows 0 :score 0))))
         (expect (buffer-string) :to-equal before)
         (expect (plist-get result :dry-run) :to-be t)
         (expect (plist-get (car (plist-get result :changed)) :score) :to-equal "0"))))
@@ -214,7 +228,8 @@
   (it "refuses a ruling it cannot apply before reading any file"
     (dolist (args '((:rows "zero") (:rows -1) (:row-comment 3) (:score "0")
                     (:comment 4) (:comment "Fine.\n# hidden")))
-      (expect (apply #'org-canvas-submissions-apply-ruling "HW" '(1) args)
+      (expect (org-canvas-submissions-apply-ruling
+               "HW" '(1) (apply #'org-canvas-submissions-ruling args))
               :to-throw 'user-error))))
 
 ;;;; JSON and the command line

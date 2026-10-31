@@ -225,8 +225,9 @@ Content.
         (let ((data '(:title "New" :canvas-url nil))
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
-            :endpoint "pages" :id-key :canvas-url
-            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
+                                   (org-canvas--push-options
+                                    :endpoint "pages" :id-key :canvas-url
+                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
           (expect-api-called 'POST "pages$")))))
 
   (it "uses PUT for existing pages"
@@ -235,8 +236,9 @@ Content.
         (let ((data '(:title "Existing" :canvas-url "existing-page"))
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
-            :endpoint "pages" :id-key :canvas-url
-            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
+                                   (org-canvas--push-options
+                                    :endpoint "pages" :id-key :canvas-url
+                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
           (expect-api-called 'PUT "pages/existing-page"))))))
 
 (describe "page search (mocked)"
@@ -270,7 +272,8 @@ Content.
      (let ((data (list :title "Test Page" :pom (point-marker)))
            (response '((url . "test-page-url") (title . "Test Page"))))
        (org-canvas--finalize-item data response
-         :id-field 'url :id-property "CANVAS_URL")
+                                  (org-canvas--finalize-options
+                                   :id-field 'url :id-property "CANVAS_URL"))
        (expect (org-entry-get (point) "CANVAS_URL") :to-equal "test-page-url"))))
 
   (it "does not write per-entry LAST_SYNCED (file-level header instead)"
@@ -283,7 +286,8 @@ Content.
      (let ((data (list :title "Test" :pom (point-marker)))
            (response '((url . "test"))))
        (org-canvas--finalize-item data response
-         :id-field 'url :id-property "CANVAS_URL")
+                                  (org-canvas--finalize-options
+                                   :id-field 'url :id-property "CANVAS_URL"))
        (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 ;;;; Additional Parse Tests
@@ -355,8 +359,9 @@ This is *bold* text.
           (let ((data '(:title "Stale Page" :canvas-url "old-url"))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
-                            :endpoint "pages" :id-key :canvas-url
-                            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
+                                                   (org-canvas--push-options
+                                                    :endpoint "pages" :id-key :canvas-url
+                                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))))
               (expect (alist-get 'url result) :to-equal "new-page-url")
               (expect (nreverse writes) :to-equal '(PUT POST))))))))
 
@@ -374,8 +379,9 @@ This is *bold* text.
           (let ((data '(:title "Stale Page" :canvas-url "old-url"))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
-                            :endpoint "pages" :id-key :canvas-url
-                            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
+                                                   (org-canvas--push-options
+                                                    :endpoint "pages" :id-key :canvas-url
+                                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))))
               (expect (alist-get 'url result) :to-equal "twin-url")
               (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
               (expect (cl-some (lambda (r) (and (eq (car r) 'PUT)
@@ -400,8 +406,9 @@ This is *bold* text.
           (let ((data '(:title "Timeout Page" :canvas-url nil))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
-                            :endpoint "pages" :id-key :canvas-url
-                            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
+                                                   (org-canvas--push-options
+                                                    :endpoint "pages" :id-key :canvas-url
+                                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))))
               (expect (alist-get 'url result) :to-equal "recovered-page")))))))
 
   (it "signals error on non-recoverable failure"
@@ -412,8 +419,9 @@ This is *bold* text.
         (let ((data '(:title "Bad Page" :canvas-url nil))
               (payload (make-hash-table)))
           (expect (org-canvas--push-to-api data payload
-                    :endpoint "pages" :id-key :canvas-url
-                    :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
+                                           (org-canvas--push-options
+                                            :endpoint "pages" :id-key :canvas-url
+                                            :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
                   :to-throw 'error))))))
 
 ;;;; Additional Find by Title Tests
@@ -448,7 +456,8 @@ This is *bold* text.
      (let ((data (list :title "No URL Page" :pom (point-marker)))
            (response '((error . "something went wrong"))))
        (expect (org-canvas--finalize-item data response
-                 :id-field 'url :id-property "CANVAS_URL")
+                                          (org-canvas--finalize-options
+                                           :id-field 'url :id-property "CANVAS_URL"))
                :to-throw 'error)))))
 
 ;;;; Delete Page at Point Tests
@@ -600,8 +609,13 @@ Page content.
                              '(((url . "home") (title . "Home") (front_page . t))
                                ((url . "other") (title . "Other") (front_page . nil)))))
                           ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _endpoint-fn _id-field _title-field &optional skip-fn _delete-data)
-                             (let ((to-delete (if skip-fn (cl-remove-if skip-fn items) items)))
+                           (lambda (items options)
+                             (let* ((skip-fn
+                                     (org-canvas--delete-all-options-skip-fn
+                                      options))
+                                    (to-delete (if skip-fn
+                                                   (cl-remove-if skip-fn items)
+                                                 items)))
                                (setq deleted-count (length to-delete))
                                (cons (length to-delete) nil)))))
                   (org-canvas-delete-all-pages)

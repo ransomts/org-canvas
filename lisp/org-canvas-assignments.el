@@ -696,9 +696,10 @@ what the command does instead: the assignments still pull and report
 \(the #171 rule)."
   (condition-case err
       (org-canvas--graphql-walk-pages
-       query
-       (list (cons 'courseId (format "%s" org-canvas-course-id)))
-       '(course assignmentsConnection)
+       (org-canvas--graphql-request
+        :query query
+        :variables (list (cons 'courseId (format "%s" org-canvas-course-id)))
+        :connection-path '(course assignmentsConnection))
        (lambda (node map)
          (puthash (format "%s" (alist-get '_id node))
                   (funcall node-value node)

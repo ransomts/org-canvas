@@ -198,7 +198,8 @@ No comments allowed.
       (with-mock-api
         (let ((data '(:title "New" :canvas-id nil))
               (payload '((title . "New"))))
-          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "discussion_topics"))
           (expect-api-called 'POST "discussion_topics")))))
 
   (it "uses PUT for existing announcements"
@@ -206,7 +207,8 @@ No comments allowed.
       (with-mock-api
         (let ((data '(:title "Existing" :canvas-id "123"))
               (payload '((title . "Existing"))))
-          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
+          (org-canvas--push-to-api data payload
+                                   (org-canvas--push-options :endpoint "discussion_topics"))
           (expect-api-called 'PUT "discussion_topics/123"))))))
 
 ;;;; Stage 4: Finalize
@@ -341,7 +343,7 @@ Hello class.
                            (lambda (_method _url &optional _params)
                              '(((id . 111) (title . "Announcement")))))
                           ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
+                           (lambda (items _options)
                              (setq deleted-count (length items))
                              (cons (length items) (mapcar (lambda (i) (number-to-string (alist-get 'id i))) items)))))
                   (org-canvas-delete-all-announcements)
@@ -358,7 +360,8 @@ Hello class.
                    (signal 'error '("API Error: 500 Internal Server Error")))))
         (let ((data '(:title "Bad" :canvas-id nil))
               (payload '((title . "Bad"))))
-          (expect (org-canvas--push-to-api data payload :endpoint "discussion_topics")
+          (expect (org-canvas--push-to-api data payload
+                                           (org-canvas--push-options :endpoint "discussion_topics"))
                   :to-throw 'error)))))
 
   (it "re-signals error for existing announcement update"
@@ -368,7 +371,8 @@ Hello class.
                    (signal 'error '("API Error: 403 Forbidden")))))
         (let ((data '(:title "Forbidden" :canvas-id "123"))
               (payload '((title . "Forbidden"))))
-          (expect (org-canvas--push-to-api data payload :endpoint "discussion_topics")
+          (expect (org-canvas--push-to-api data payload
+                                           (org-canvas--push-options :endpoint "discussion_topics"))
                   :to-throw 'error))))))
 
 ;;;; Pull Function Tests

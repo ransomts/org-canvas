@@ -24,6 +24,65 @@
 (require 'org-canvas-core-conflict)
 (require 'org-canvas-core-sync)
 
+;;;; 0. Option Bundles
+;;
+;; The runtimes on the push path took a tail of arguments that only ever
+;; travelled together: `org-canvas--push-to-api' seven keyword arguments,
+;; `org-canvas--finalize-item' seven more, `org-canvas--conflict-check'
+;; eight positional ones.  Every call site named them all, and the
+;; signature said nothing about which ones belonged together.  Each is
+;; now one bundle, built where the module knows its wiring (issue #592).
+;; `org-canvas--conflict-request' keeps a second positional constructor
+;; for the call sites that were already positional.
+
+(cl-defstruct (org-canvas--push-options (:copier nil)
+               (:constructor org-canvas--push-options))
+  "Where and how one item is pushed to Canvas.
+ENDPOINT is the API suffix.  ID-KEY and TITLE-KEY are the plist keys
+the parsed data spells the item's Canvas id and display name under.
+FIND-FN looks the item up by title after a timeout.  POST-URL-FN and
+PUT-URL-FN build the create and update URLs where the course-scoped
+default is not where the feature lives.  UPDATED-FIELD names the
+response field that tracks modification: `updated_at' unless a module
+passes `modified_at', as files do.  CTX is the run context."
+  endpoint id-key title-key find-fn post-url-fn put-url-fn
+  updated-field ctx)
+
+(cl-defstruct (org-canvas--conflict-request
+               (:copier nil)
+               (:constructor org-canvas--conflict-request)
+               (:constructor org-canvas--conflict-request-from
+                             (endpoint id pom
+                                       &optional title modified-field
+                                       params url scheduled-fn)))
+  "One item's conflict check.
+ENDPOINT and ID name the item, POM the heading whose baseline is
+compared, TITLE the entry in the log line.  MODIFIED-FIELD names the
+response field that tracks content modification, PARAMS the query the
+read carries, URL the item's address where the course-scoped default
+404s, and SCHEDULED-FN the feature's answer to whether a newer remote
+timestamp is a bump Canvas makes itself."
+  endpoint id pom title modified-field params url scheduled-fn)
+
+(cl-defstruct (org-canvas--restamp-options (:copier nil)
+               (:constructor org-canvas--restamp-options))
+  "What `org-canvas--finalize-restamp-updated' re-reads.
+POM is the heading to stamp, ENDPOINT and ID the item to read, FIELD
+the response field holding its timestamp, TITLE the entry in the log,
+and CTX the run context whose feature says where the item lives."
+  pom endpoint id field title ctx)
+
+(cl-defstruct (org-canvas--finalize-options (:copier nil)
+               (:constructor org-canvas--finalize-options))
+  "How `org-canvas--finalize-item' stamps one pushed entry.
+ID-FIELD and ID-PROPERTY say where the id is read from the response and
+which Org property holds it.  TITLE-KEY is the plist key of the display
+name.  UPDATED-FIELD names the response field stamped into
+CANVAS_UPDATED_AT.  POST-FN, when non-nil, runs after the stamp, and
+ENDPOINT with CTX is what lets a post-fn that writes to Canvas again
+have its baseline re-read (issue #124)."
+  id-field id-property title-key updated-field post-fn endpoint ctx)
+
 ;;;; 6a. Remote Drift Detection
 ;;
 ;; A payload-hash match proves the local file has not changed since the
@@ -368,25 +427,26 @@ must not let the push past it (issue #453)."
          title (error-message-string err))
        nil))))
 
-(cl-defun org-canvas--conflict-check (endpoint id pom &optional title modified-field
-                                               params url scheduled-fn)
-  "Check if the remote item at ENDPOINT/ID was modified after the baseline at POM.
-TITLE names the entry in the log line; without it ENDPOINT/ID does.
-MODIFIED-FIELD names the response field that tracks content
+(cl-defun org-canvas--conflict-check (request)
+  "Compare REQUEST's item with the baseline its heading recorded.
+REQUEST is an `org-canvas--conflict-request'.  Its ENDPOINT and ID name
+the item, its POM the heading whose baseline is compared, and its TITLE
+the entry in the log line; without a TITLE, ENDPOINT/ID does.
+Its MODIFIED-FIELD names the response field that tracks content
 modification, default `updated_at'; files pass `modified_at', because
 Canvas bumps their `updated_at' on metadata-only touches and comparing
 it re-flagged files whose bytes never changed (issue #94).
-PARAMS are query parameters the read carries — the feature's
+Its PARAMS are query parameters the read carries — the feature's
 `:item-params', since the response is what the conflict prompt's pull
 writes into the heading, and an assignment read without them carries a
 student's extension as its due date (issue #273).
-URL, when non-nil, is the item's address, as
+Its URL, when non-nil, is the item's address, as
 `org-canvas--sync-item-url' resolves it; without it ENDPOINT/ID is read
 under the course, which 404s for a feature that does not live there —
 calendar events are global, and every one of them used to push
 unguarded (issue #344).
-SCHEDULED-FN, when non-nil, is the feature's `:scheduled-dates-fn': a
-remote timestamp that one of the dates it answers explains is not an
+Its SCHEDULED-FN, when non-nil, is the feature's `:scheduled-dates-fn':
+a remote timestamp that one of the dates it answers explains is not an
 edit, and the push goes ahead (`org-canvas--conflict-scheduled-bump',
 issue #453).
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
@@ -396,7 +456,15 @@ when there is no baseline at all (first sync).
 The log line names the baseline actually compared — the entry's
 CANVAS_UPDATED_AT, or the file header when it has none — rather than
 the header regardless (issue #86)."
-  (let* ((source (org-canvas--conflict-baseline-source pom))
+  (let* ((endpoint (org-canvas--conflict-request-endpoint request))
+         (id (org-canvas--conflict-request-id request))
+         (pom (org-canvas--conflict-request-pom request))
+         (title (org-canvas--conflict-request-title request))
+         (modified-field (org-canvas--conflict-request-modified-field request))
+         (params (org-canvas--conflict-request-params request))
+         (url (org-canvas--conflict-request-url request))
+         (scheduled-fn (org-canvas--conflict-request-scheduled-fn request))
+         (source (org-canvas--conflict-baseline-source pom))
          (local-time (car source)))
     (unless local-time
       (cl-return-from org-canvas--conflict-check nil))
@@ -537,13 +605,17 @@ or when `org-canvas-duplicate-title-strategy' is `create'."
          title (error-message-string err))
        nil))))
 
-(defun org-canvas--recovery-update-twin (endpoint payload twin title put-url-fn id-key)
+(defun org-canvas--recovery-update-twin (payload options twin title)
   "Update TWIN, the item on Canvas under TITLE, with PAYLOAD.
-ENDPOINT is the base endpoint; PUT-URL-FN, when non-nil, builds the
-item URL from an id; ID-KEY names the field the id is read from.
+OPTIONS is the push's `org-canvas--push-options': its ENDPOINT is the
+base endpoint, its PUT-URL-FN, when non-nil, builds the item URL from
+an id, and its ID-KEY names the field the id is read from.
 Returns the API response, whose id finalize stamps over the stale
 one."
-  (let* ((id (org-canvas--push-item-id twin id-key))
+  (let* ((endpoint (org-canvas--push-options-endpoint options))
+         (put-url-fn (org-canvas--push-options-put-url-fn options))
+         (id-key (or (org-canvas--push-options-id-key options) :canvas-id))
+         (id (org-canvas--push-item-id twin id-key))
          (url (if put-url-fn
                   (funcall put-url-fn id)
                 (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))))
@@ -554,22 +626,27 @@ one."
       (org-canvas--log-info org-canvas--logger "[Recovery] PUT successful for '%s'" title)
       response)))
 
-(defun org-canvas--handle-404-retry (endpoint payload find-fn title _err
-                                              &optional post-url put-url-fn id-key)
+(defun org-canvas--handle-404-retry (payload options title)
   "Recover from a 404 on PUT: update the item's twin, or create it again.
-ENDPOINT is the base endpoint, PAYLOAD the data to send.  FIND-FN and
-TITLE first look for an item Canvas still holds under the title
-\(issue #179), and serve timeout recovery on the retry.  ERR is the
-original error for re-signaling.  POST-URL, when non-nil, overrides
-the default course-scoped POST URL; PUT-URL-FN builds the URL of an
-adopted twin from its id, which ID-KEY (default `:canvas-id'; pages
-pass `:canvas-url') reads from the item."
-  (let* ((id-key (or id-key :canvas-id))
+PAYLOAD is the data to send and TITLE names the item in the log.
+OPTIONS is the push's `org-canvas--push-options': its FIND-FN, with
+TITLE, first looks for an item Canvas still holds under the title
+\(issue #179), and serves timeout recovery on the retry; its
+POST-URL-FN, when non-nil, overrides the default course-scoped POST
+URL; its PUT-URL-FN builds the URL of an adopted twin from its id,
+which its ID-KEY (default `:canvas-id'; pages pass `:canvas-url')
+reads from the item."
+  (let* ((endpoint (org-canvas--push-options-endpoint options))
+         (find-fn (org-canvas--push-options-find-fn options))
+         (post-url-fn (org-canvas--push-options-post-url-fn options))
+         (put-url-fn (org-canvas--push-options-put-url-fn options))
+         (id-key (or (org-canvas--push-options-id-key options) :canvas-id))
          (twin (org-canvas--recovery-find-twin find-fn title id-key)))
     (if twin
-        (org-canvas--recovery-update-twin endpoint payload twin title put-url-fn id-key)
+        (org-canvas--recovery-update-twin payload options twin title)
       (org-canvas--log-warning org-canvas--logger "[Recovery] Item not found (404). Retrying as POST...")
-      (let ((new-endpoint (or post-url (org-canvas-api-course-endpoint endpoint))))
+      (let ((new-endpoint (or (and post-url-fn (funcall post-url-fn))
+                              (org-canvas-api-course-endpoint endpoint))))
         (condition-case post-err
             (let ((response (org-canvas-api-request 'POST new-endpoint :data payload)))
               (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
@@ -615,27 +692,37 @@ at the global /calendar_events/:id, and a course-scoped read of one
       (org-canvas--feature-item-url feature id))
      (t (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id)))))
 
-(defun org-canvas--push-check-and-resolve-conflict (endpoint id data title
-                                                             &optional modified-field ctx
-                                                             put-url-fn)
-  "Check for conflicts on ENDPOINT/ID using DATA.
-TITLE is for logging.  MODIFIED-FIELD is passed to
-`org-canvas--conflict-check' — files compare `modified_at' (issue #94).
-CTX is the run context: its :pull-item-fn makes the pull option
-available, its :conflict-apply-all remembers a capital answer, and its
-:feature-name finds the `:item-params' the check reads with, so what
-the pull option writes is the item's own dates (issue #273).
-PUT-URL-FN and CTX resolve the address read, through
-`org-canvas--sync-item-url' (issue #344).  CTX's feature also says
-which dates explain a newer remote timestamp that nobody edited
+(defun org-canvas--push-check-and-resolve-conflict (data id options)
+  "Check for conflicts on the item DATA names, under ID, using OPTIONS.
+OPTIONS is the push's `org-canvas--push-options': its ENDPOINT names
+the item, its TITLE-KEY is where DATA spells the title for the log, its
+UPDATED-FIELD is what `org-canvas--conflict-check' compares (files
+pass `modified_at', issue #94), its CTX is the run context and its
+PUT-URL-FN the item's address.
+CTX's :pull-item-fn makes the pull option available, its
+:conflict-apply-all remembers a capital answer, and its :feature-name
+finds the `:item-params' the check reads with, so what the pull option
+writes is the item's own dates (issue #273).  PUT-URL-FN and CTX
+resolve the address read, through `org-canvas--sync-item-url'
+\(issue #344).  CTX's feature also says which dates explain a newer
+remote timestamp that nobody edited
 \(`org-canvas--sync-item-scheduled-fn', issue #453).
 Returns `push', `skip', or `pulled'."
-  (let ((conflict-result (org-canvas--conflict-check
-                          endpoint id (plist-get data :pom) title
-                          modified-field (org-canvas--sync-item-params ctx)
-                          (org-canvas--sync-item-url
-                           endpoint id ctx put-url-fn)
-                          (org-canvas--sync-item-scheduled-fn ctx))))
+  (let* ((endpoint (org-canvas--push-options-endpoint options))
+         (title-key (or (org-canvas--push-options-title-key options) :title))
+         (title (plist-get data title-key))
+         (ctx (org-canvas--push-options-ctx options))
+         (put-url-fn (org-canvas--push-options-put-url-fn options))
+         (request (org-canvas--conflict-request
+                   :endpoint endpoint
+                   :id id
+                   :pom (plist-get data :pom)
+                   :title title
+                   :modified-field (org-canvas--push-options-updated-field options)
+                   :params (org-canvas--sync-item-params ctx)
+                   :url (org-canvas--sync-item-url endpoint id ctx put-url-fn)
+                   :scheduled-fn (org-canvas--sync-item-scheduled-fn ctx)))
+         (conflict-result (org-canvas--conflict-check request)))
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
@@ -873,28 +960,24 @@ carries TITLE.  ID-KEY, FIND-FN and CTX are as for
                title id-list)
              nil)))))))
 
-(cl-defun org-canvas--push-to-api (data payload
-					&key
-					endpoint
-					id-key
-					title-key
-					find-fn
-					post-url-fn
-					put-url-fn
-					ctx)
+(cl-defun org-canvas--push-to-api (data payload options)
   "Generic push-to-API with 404 retry and optional timeout recovery.
 
 DATA is the parsed entry plist (must contain :canvas-id or :canvas-url).
 PAYLOAD is the API payload to send.
-
-Keyword arguments:
-  ENDPOINT - API endpoint suffix (e.g., \"assignments\" or \"pages\").
-  ID-KEY - Key in DATA for Canvas ID (default: :canvas-id).
-  TITLE-KEY - Key in DATA for title (default: :title).
-  FIND-FN - Optional function (TITLE) to search for item after timeout.
-  POST-URL-FN - Optional () -> URL for POST (overrides course-scoped default).
-  PUT-URL-FN - Optional (ID) -> URL for PUT (overrides course-scoped default).
-  CTX - The run context (`org-canvas--sync-make-ctx'): the snapshot's
+OPTIONS is an `org-canvas--push-options' saying where and how the item
+is pushed:
+  ENDPOINT names the API endpoint suffix (\"assignments\", \"pages\").
+  ID-KEY and TITLE-KEY name the keys in DATA that spell the item's
+    Canvas ID (default :canvas-id) and title (default :title).
+  FIND-FN is an optional function (TITLE) searching for the item after
+    a timeout.
+  POST-URL-FN and PUT-URL-FN are optional functions building the POST
+    and PUT URLs where the course-scoped default is not where the
+    feature lives.
+  UPDATED-FIELD names the response field the conflict check compares:
+    default `updated_at'.
+  CTX is the run context (`org-canvas--sync-make-ctx'): the snapshot's
     title index for the create guard, the module's pull function for
     the conflict prompt, and the run's remembered capital answers.  Nil
     from a caller outside any run, which behaves as a single push: the
@@ -910,8 +993,13 @@ Handle:
 
 Returns the API response alist, or one of the symbols `conflict',
 `pulled' and `duplicate' when the push stopped short."
-  (let* ((id-key (or id-key :canvas-id))
-         (title-key (or title-key :title))
+  (let* ((endpoint (org-canvas--push-options-endpoint options))
+         (id-key (or (org-canvas--push-options-id-key options) :canvas-id))
+         (title-key (or (org-canvas--push-options-title-key options) :title))
+         (find-fn (org-canvas--push-options-find-fn options))
+         (post-url-fn (org-canvas--push-options-post-url-fn options))
+         (put-url-fn (org-canvas--push-options-put-url-fn options))
+         (ctx (org-canvas--push-options-ctx options))
          (title (plist-get data title-key))
          (guard (and (not (plist-get data id-key))
                      (not org-canvas--dry-run)
@@ -922,8 +1010,7 @@ Returns the API response alist, or one of the symbols `conflict',
                          ((and id put-url-fn) (funcall put-url-fn id))
                          ((and (not id) post-url-fn) (funcall post-url-fn))
                          (id (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))
-                         (t (org-canvas-api-course-endpoint endpoint))))
-         (post-url (when post-url-fn (funcall post-url-fn))))
+                         (t (org-canvas-api-course-endpoint endpoint)))))
 
     (when (eq guard 'skip)
       (cl-return-from org-canvas--push-to-api 'duplicate))
@@ -938,7 +1025,7 @@ Returns the API response alist, or one of the symbols `conflict',
                (eq method 'PUT)
                (plist-get data :pom))
       (let ((decision (org-canvas--push-check-and-resolve-conflict
-                       endpoint id data title nil ctx put-url-fn)))
+                       data id options)))
         (unless (eq decision 'push)
           (cl-return-from org-canvas--push-to-api
             (if (eq decision 'pulled) 'pulled 'conflict)))))
@@ -961,8 +1048,7 @@ Returns the API response alist, or one of the symbols `conflict',
 
         ;; CASE 2: 404 on PUT -> update the title's twin, else retry as POST
         ((org-canvas--404-on-put-p err method)
-         (org-canvas--handle-404-retry endpoint payload find-fn title err
-                                       post-url put-url-fn id-key))
+         (org-canvas--handle-404-retry payload options title))
 
         ;; Default: Re-throw
         (t (signal (car err) (cdr err))))))))
@@ -975,9 +1061,13 @@ The push response's timestamp is no longer what Canvas holds, so
 baseline from it (issue #124)."
   (plist-put ctx :remote-touched t))
 
-(defun org-canvas--finalize-restamp-updated (pom endpoint id field title
-                                                  &optional ctx)
-  "Re-read ENDPOINT/ID and stamp its FIELD into CANVAS_UPDATED_AT at POM.
+(defun org-canvas--finalize-restamp-updated (restamp)
+  "Re-read RESTAMP's item and stamp its field into CANVAS_UPDATED_AT.
+RESTAMP is an `org-canvas--restamp-options': its POM is the heading to
+stamp, its ENDPOINT and ID the item to read, its FIELD the response
+field holding the timestamp, its TITLE the entry in the log, and its
+CTX the run context, whose feature says where the item lives
+\(`org-canvas--sync-item-url', issue #344).
 A post-fn that writes to Canvas again — the rubric association is the
 one that started this — moves the item's timestamp past the stamp
 finalize just wrote from the push response.  The baseline is then
@@ -986,46 +1076,45 @@ the entry CHANGED with no compared property differing, and the next
 push walks into the conflict check, both over the sync's own doing
 \(issue #124).  One GET, spent only when a post-fn reported a write,
 leaves the heading's baseline equal to what Canvas holds.  A failed
-read is logged and leaves the stamp alone.  TITLE names the entry in
-the log.  CTX is the run context, whose feature says where the item
-lives (`org-canvas--sync-item-url', issue #344)."
-  (when (and endpoint id (not org-canvas--dry-run))
-    (condition-case err
-        (let* ((url (org-canvas--sync-item-url endpoint id ctx))
-               (updated (alist-get (or field 'updated_at)
-                                   (org-canvas-api-request 'GET url))))
-          (if (not (stringp updated))
-              (org-canvas--log-debug org-canvas--logger
-                "[Finalize] '%s' reports no %s to restamp after its post-sync write"
-                title (or field 'updated_at))
-            (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated)
-            (org-canvas--log-info org-canvas--logger
-              "[Finalize] Baseline for '%s' restamped to %s after its post-sync write"
-              title updated)))
-      (error
-       (org-canvas--log-warning org-canvas--logger
-         "[Finalize] Could not re-read '%s' after its post-sync write (%s); the next drift report may report this push as a change"
-         title (error-message-string err))))))
+read is logged and leaves the stamp alone."
+  (let ((pom (org-canvas--restamp-options-pom restamp))
+        (endpoint (org-canvas--restamp-options-endpoint restamp))
+        (id (org-canvas--restamp-options-id restamp))
+        (field (org-canvas--restamp-options-field restamp))
+        (title (org-canvas--restamp-options-title restamp))
+        (ctx (org-canvas--restamp-options-ctx restamp)))
+    (when (and endpoint id (not org-canvas--dry-run))
+      (condition-case err
+          (let* ((url (org-canvas--sync-item-url endpoint id ctx))
+                 (updated (alist-get (or field 'updated_at)
+                                     (org-canvas-api-request 'GET url))))
+            (if (not (stringp updated))
+                (org-canvas--log-debug org-canvas--logger
+                  "[Finalize] '%s' reports no %s to restamp after its post-sync write"
+                  title (or field 'updated_at))
+              (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated)
+              (org-canvas--log-info org-canvas--logger
+                "[Finalize] Baseline for '%s' restamped to %s after its post-sync write"
+                title updated)))
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           "[Finalize] Could not re-read '%s' after its post-sync write (%s); the next drift report may report this push as a change"
+           title (error-message-string err)))))))
 
-(cl-defun org-canvas--finalize-run-post-fn (post-fn data response
-                                                   &key
-                                                   pom
-                                                   endpoint
-                                                   id
-                                                   field
-                                                   title
-                                                   ctx)
-  "Call POST-FN with DATA, RESPONSE and CTX, then restamp if it wrote to Canvas.
-POM, ENDPOINT, ID, FIELD, TITLE and CTX are passed on to
-`org-canvas--finalize-restamp-updated', which runs only when POST-FN
-called `org-canvas--finalize-note-remote-write' on CTX.  The flag is
-cleared before and after the call, so it means this post-fn and no
-other."
-  (plist-put ctx :remote-touched nil)
-  (funcall post-fn data response ctx)
-  (when (org-canvas--ctx-get ctx :remote-touched)
-    (org-canvas--finalize-restamp-updated pom endpoint id field title ctx))
-  (plist-put ctx :remote-touched nil))
+(defun org-canvas--finalize-run-post-fn (post-fn data response &optional restamp)
+  "Call POST-FN with DATA, RESPONSE and the context, then restamp if it wrote.
+RESTAMP is an `org-canvas--restamp-options' naming what
+`org-canvas--finalize-restamp-updated' re-reads; its CTX, handed to
+POST-FN, says whether the write happened.  The restamp runs only when
+POST-FN called `org-canvas--finalize-note-remote-write' on that CTX.
+The flag is cleared before and after the call, so it means this post-fn
+and no other."
+  (let ((ctx (org-canvas--restamp-options-ctx restamp)))
+    (plist-put ctx :remote-touched nil)
+    (funcall post-fn data response ctx)
+    (when (org-canvas--ctx-get ctx :remote-touched)
+      (org-canvas--finalize-restamp-updated restamp))
+    (plist-put ctx :remote-touched nil)))
 
 ;;;; Push Echo Check
 ;;
@@ -1126,41 +1215,41 @@ at push time, not at the next drift report (issue #349)."
         title (nth 0 m) (nth 1 m) (nth 2 m)))
     mismatches))
 
-(cl-defun org-canvas--finalize-item (data response
-					  &key
-					  id-field
-					  id-property
-					  title-key
-					  updated-field
-					  post-fn
-					  endpoint
-					  ctx)
+(defun org-canvas--finalize-item (data response &optional options)
   "Finalize sync by saving Canvas ID and LAST_SYNCED.
 
 DATA is the parsed entry plist (must contain :pom).
 RESPONSE is the API response alist.
-
-Keyword arguments:
-  ID-FIELD - Alist key for ID in response (default: \\='id).
-  ID-PROPERTY - Org property name to save (default: \"CANVAS_ID\").
-  TITLE-KEY - Key in DATA for title (default: :title).
-  UPDATED-FIELD - Response field stamped into CANVAS_UPDATED_AT
-    (default: \\='updated_at).  Files use \\='modified_at so the baseline
+OPTIONS is an `org-canvas--finalize-options' saying how the entry is
+stamped:
+  ID-FIELD is the alist key for the ID in RESPONSE (default `id').
+  ID-PROPERTY is the Org property to save it in (default \"CANVAS_ID\").
+  TITLE-KEY is the key in DATA for the title (default :title).
+  UPDATED-FIELD is the response field stamped into CANVAS_UPDATED_AT
+    (default \\='updated_at).  Files use \\='modified_at so the baseline
     agrees with what drift detection compares (issue #94).
-  POST-FN - Optional function (DATA RESPONSE) for additional finalization.
-  ENDPOINT - API endpoint suffix the item lives under.  Only consulted
-    when POST-FN calls `org-canvas--finalize-note-remote-write': the
-    item is then re-read from it and CANVAS_UPDATED_AT restamped, so a
-    push that associates a rubric does not report itself as drift
-    afterwards (issue #124).
-  CTX - The run context, handed to POST-FN as its third argument.  A
+  POST-FN is an optional function (DATA RESPONSE CTX) for additional
+    finalization.
+  ENDPOINT is the API endpoint suffix the item lives under.  Only
+    consulted when POST-FN calls
+    `org-canvas--finalize-note-remote-write': the item is then re-read
+    from it and CANVAS_UPDATED_AT restamped, so a push that associates
+    a rubric does not report itself as drift afterwards (issue #124).
+  CTX is the run context, handed to POST-FN as its third argument.  A
     caller outside any run may omit it; a fresh one is made so the
     post-fn still has somewhere to note a remote write.
 
 Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
-  (let* ((id-field (or id-field 'id))
-         (id-property (or id-property "CANVAS_ID"))
-         (title-key (or title-key :title))
+  (let* ((options (or options (org-canvas--finalize-options)))
+         (id-field (or (org-canvas--finalize-options-id-field options) 'id))
+         (id-property (or (org-canvas--finalize-options-id-property options)
+                          "CANVAS_ID"))
+         (title-key (or (org-canvas--finalize-options-title-key options) :title))
+         (updated-field (org-canvas--finalize-options-updated-field options))
+         (post-fn (org-canvas--finalize-options-post-fn options))
+         (endpoint (org-canvas--finalize-options-endpoint options))
+         (ctx (or (org-canvas--finalize-options-ctx options)
+                  (org-canvas--sync-make-ctx)))
          (id (alist-get id-field response))
          (pom (plist-get data :pom))
          (title (plist-get data title-key)))
@@ -1182,8 +1271,9 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
           (when post-fn
             (org-canvas--finalize-run-post-fn
              post-fn data response
-             :pom pom :endpoint endpoint :id id :field updated-field
-             :title title :ctx (or ctx (org-canvas--sync-make-ctx))))
+             (org-canvas--restamp-options
+              :pom pom :endpoint endpoint :id id :field updated-field
+              :title title :ctx ctx)))
           (org-canvas--log-info org-canvas--logger "[Finalize] Complete for '%s'" title))
       (org-canvas--log-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
       (org-canvas--signal 'org-canvas-api-error
