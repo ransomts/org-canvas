@@ -134,6 +134,7 @@
 (require 'org-canvas-publish)
 (require 'org-canvas-adopt)
 (require 'org-canvas-drift)
+(require 'org-canvas-quiz-regrade)
 (require 'org-canvas-announcements-verify)
 (require 'org-canvas-heading-verify)
 (require 'org-canvas-orphans)

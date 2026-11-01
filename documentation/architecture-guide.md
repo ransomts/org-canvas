@@ -86,6 +86,7 @@ lisp/
 ├── org-canvas-pages.el             # Wiki pages
 ├── org-canvas-people.el            # Pull-only roster
 ├── org-canvas-quiz-accommodations.el # Per-student quiz accommodations (custom loop)
+├── org-canvas-quiz-regrade.el      # Give every attempt that drew one question a score (#540)
 ├── org-canvas-quiz-results.el      # Pull-only classic quiz item analyses
 ├── org-canvas-quizzes.el           # Classic quizzes with questions
 ├── org-canvas-rubric-results.el    # Pull-only rubric criterion results
