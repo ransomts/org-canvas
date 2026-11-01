@@ -228,6 +228,9 @@ copy silently.  Return the credentials file loaded, or nil."
      "Scan for Canvas items no heading claims; --yes deletes them (#554).")
     ("extend" org-canvas-batch--cmd-extend 3 4 "ASSIGNMENT STUDENT DUE [LOCK]"
      "Give one student a new deadline, sending that override alone (#526).")
+    ("quiz-regrade" org-canvas-batch--cmd-quiz-regrade 2 nil
+     "[--score full|N] [--dry-run] QUIZ QUESTION-TEXT"
+     "Give one quiz question's score to every attempt that drew it (#540).")
     ("diff" org-canvas-batch--cmd-diff 0 0 ""
      "Print the drift report; exit 1 on drift." json)
     ("adopt" org-canvas-batch--cmd-adopt 1 nil
@@ -941,6 +944,52 @@ people.org title, or #USER_ID), DUE and an optional LOCK, as
                                  (plist-get parsed :dry-run))))
     (if (apply #'org-canvas-extend-student-named (plist-get parsed :args))
         0 1)))
+
+(defun org-canvas-batch--quiz-regrade-args (args)
+  "Read quiz-regrade ARGS into (QUIZ FRAGMENT SCORE DRY-RUN).
+QUIZ and FRAGMENT are the two words that are not options; SCORE is
+`full' unless --score N or --score=N names a number; DRY-RUN is
+non-nil for --dry-run or -n anywhere among ARGS.  Anything else is a
+usage error."
+  (let ((usage (nth 4 (assoc "quiz-regrade" org-canvas-batch--commands)))
+        (words nil) (score "full") (dry-run nil))
+    (while args
+      (let ((arg (car args)))
+        (cond
+         ((member arg '("-n" "--dry-run"))
+          (setq dry-run t)
+          (setq args (cdr args)))
+         ((equal arg "--score")
+          (unless (cdr args)
+            (org-canvas-batch--usage "quiz-regrade takes %s" usage))
+          (setq score (cadr args))
+          (setq args (cddr args)))
+         ((string-prefix-p "--score=" arg)
+          (setq score (substring arg 8))
+          (setq args (cdr args)))
+         ((string-prefix-p "-" arg)
+          (org-canvas-batch--usage "quiz-regrade takes %s" usage))
+         (t (push arg words)
+            (setq args (cdr args))))))
+    (setq words (nreverse words))
+    (unless (= (length words) 2)
+      (org-canvas-batch--usage "quiz-regrade takes %s" usage))
+    (list (nth 0 words) (nth 1 words) score dry-run)))
+
+(defun org-canvas-batch--cmd-quiz-regrade (parsed)
+  "Regrade the quiz question PARSED names, for every attempt that drew it.
+QUIZ is an id, #ID or exact title; QUESTION-TEXT a piece of the
+question's text; --score `full' (the default) or a number; --dry-run
+names the attempts and sends nothing.  Return 1 when an attempt failed
+to send or did not read back at the score (#540)."
+  (let* ((args (org-canvas-batch--quiz-regrade-args (plist-get parsed :args)))
+         (org-canvas--dry-run (or org-canvas--dry-run (nth 3 args)
+                                  (plist-get parsed :dry-run)))
+         (result (org-canvas-quiz-regrade (nth 0 args) (nth 1 args)
+                                          (nth 2 args)))
+         (unread (cl-remove-if (lambda (v) (plist-get v :ok))
+                               (plist-get result :verified))))
+    (if (or (plist-get result :failed) unread) 1 0)))
 
 (defun org-canvas-batch--cmd-diff (parsed)
   "Print the drift report; return 1 if anything drifted.

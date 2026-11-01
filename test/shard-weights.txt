@@ -58,6 +58,7 @@
 2.0 test/org-canvas-property-registry-test.el
 2.0 test/org-canvas-question-banks-test.el
 3.0 test/org-canvas-quiz-accommodations-test.el
+1.6 test/org-canvas-quiz-regrade-test.el
 2.3 test/org-canvas-quiz-results-test.el
 2.1 test/org-canvas-quiz-submissions-test.el
 5.0 test/org-canvas-quizzes-test.el

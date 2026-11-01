@@ -1,0 +1,14 @@
+* Added
+- #540 =org-canvas-quiz-regrade= gives every attempt that drew one
+  quiz question a score, and the =quiz-regrade= batch subcommand runs
+  it headless: =org-canvas-batch quiz-regrade "Quiz One" "Which term"
+  --score full=.  Every attempt is read through the quiz's shadow
+  assignment, so a question drawn from a question bank -- which
+  Canvas's own regrade skips -- is found the way a typed-in one is.
+  Each attempt scoring under the score is sent and then read back, the
+  report names every attempt, every one kept back and every one that
+  did not read back at the score, and the batch command exits 1 when
+  any send fails or any attempt reads back at another score.  A dry
+  run names the attempts it would change and sends nothing.  Nothing
+  is written to Org, and the allowlist word is =submissions=, since
+  this is a grade.
