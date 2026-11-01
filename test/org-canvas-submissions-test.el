@@ -282,20 +282,19 @@
         (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
         (delete-directory dir t))))
   (it "runs after a successful push"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
-                      ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) "Renamed"))
-                      ((symbol-function 'org-canvas--submissions-assignments-file)
-                       (lambda () (expand-file-name "../assignments.org" dir))))
-              (org-canvas-submissions-push-grades)))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")
-          (expect (buffer-string) :to-match "::\\*Renamed\\]")
-          (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
-          (expect (buffer-modified-p) :to-be nil))))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (let ((org-canvas-submissions-check-conflicts nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                    ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) "Renamed"))
+                    ((symbol-function 'org-canvas--submissions-assignments-file)
+                     (lambda () (expand-file-name "../assignments.org" dir))))
+            (org-canvas-submissions-push-grades)))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
+        (expect (buffer-string) :to-match "::\\*Renamed\\]")
+        (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+        (expect (buffer-modified-p) :to-be nil)))))
 
 ;;;; Rubric Link and Criteria
 
@@ -335,10 +334,9 @@
 
 (describe "org-canvas--submissions-fetch-assignment"
   (it "GETs the assignment"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--submissions-fetch-assignment "1001")
-        (expect-api-called 'GET "assignments/1001"))))
+    (with-test-api
+      (org-canvas--submissions-fetch-assignment "1001")
+      (expect-api-called 'GET "assignments/1001")))
   (it "is nil when the request fails"
     (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) (error "down"))))
       (expect (org-canvas--submissions-fetch-assignment "1001") :to-be nil)))

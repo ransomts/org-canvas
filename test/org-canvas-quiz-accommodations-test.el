@@ -40,26 +40,19 @@
    (t (error "Unexpected request: %s %s" method url))))
 
 (defmacro test-accommodations--with-course (submissions &rest body)
-  "Run BODY with the fake API serving SUBMISSIONS and temp quiz and people files."
+  "Run BODY with the fake API serving SUBMISSIONS.
+The course's quizzes.org is empty and its people.org holds two
+students, both in `with-test-course''s temp directory."
   (declare (indent 1))
-  `(let* ((dir (make-temp-file "accommodations-" t))
-          (org-canvas-quizzes-file (expand-file-name "quizzes.org" dir))
-          (org-canvas-people-file (expand-file-name "people.org" dir))
-          (test-accommodations--submissions ,submissions)
-          (test-accommodations--posts nil))
-     (with-temp-file org-canvas-people-file
-       (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n"
-               "** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n:END:\n"))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request) #'test-accommodations--api)
-                     ((symbol-function 'message) #'ignore)
-                     ((symbol-function 'display-buffer) #'ignore))
-             ,@body))
-       (dolist (f (list org-canvas-quizzes-file org-canvas-people-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("quizzes.org" . nil)
+                                   ("people.org" . "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n:END:\n")))
+     (let ((test-accommodations--submissions ,submissions)
+           (test-accommodations--posts nil))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request) #'test-accommodations--api)
+                   ((symbol-function 'message) #'ignore)
+                   ((symbol-function 'display-buffer) #'ignore))
+           ,@body)))))
 
 (defconst test-accommodations--quiz
   "* Syllabus Quiz

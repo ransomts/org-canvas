@@ -209,47 +209,45 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
 
 (describe "org-canvas--push-at-point-runtime write scope"
   (it "refuses a push at point in a file the allowlist does not name"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-            "* Test Page
+    (with-test-api
+      (with-temp-org-buffer
+          "* Test Page
 :PROPERTIES:
 :CANVAS_ID: 99
 :END:
 "
-          (org-back-to-heading t)
-          (let ((org-canvas-write-allowlist '("assignments.org")))
-            (expect (org-canvas--push-at-point-runtime
-                     (list :feature "test"
-                           :parse (lambda () (list :title "Test" :canvas-id "99"
-                                                   :pom (point)))
-                           :build (lambda (_data) '((title . "Test")))
-                           :push (lambda (&rest _) '((id . 99)))
-                           :finalize (lambda (&rest _) nil)))
-                    :to-throw 'org-canvas-write-scope-error))))))
+        (org-back-to-heading t)
+        (let ((org-canvas-write-allowlist '("assignments.org")))
+          (expect (org-canvas--push-at-point-runtime
+                   (list :feature "test"
+                         :parse (lambda () (list :title "Test" :canvas-id "99"
+                                                 :pom (point)))
+                         :build (lambda (_data) '((title . "Test")))
+                         :push (lambda (&rest _) '((id . 99)))
+                         :finalize (lambda (&rest _) nil)))
+                  :to-throw 'org-canvas-write-scope-error)))))
 
   (it "pushes at point in a file the allowlist names"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (test-write-scope--with-course-file
-            "pages.org"
-            "* Test Page
+    (with-test-api
+      (test-write-scope--with-course-file
+          "pages.org"
+          "* Test Page
 :PROPERTIES:
 :CANVAS_ID: 99
 :END:
 "
-          (org-back-to-heading t)
-          (let ((org-canvas-write-allowlist '("pages.org"))
-                (pushed nil))
-            (with-sync-test-env
-              (org-canvas--push-at-point-runtime
-               (list :feature "test"
-                     :parse (lambda () (list :title "Test" :canvas-id "99"
-                                             :pom (point)))
-                     :build (lambda (_data) '((title . "Test")))
-                     :push (lambda (&rest _) (setq pushed t) '((id . 99)))
-                     :finalize (lambda (&rest _) nil))))
-            (expect pushed :to-be t)))))))
+        (org-back-to-heading t)
+        (let ((org-canvas-write-allowlist '("pages.org"))
+              (pushed nil))
+          (with-sync-test-env
+            (org-canvas--push-at-point-runtime
+             (list :feature "test"
+                   :parse (lambda () (list :title "Test" :canvas-id "99"
+                                           :pom (point)))
+                   :build (lambda (_data) '((title . "Test")))
+                   :push (lambda (&rest _) (setq pushed t) '((id . 99)))
+                   :finalize (lambda (&rest _) nil))))
+          (expect pushed :to-be t))))))
 
 ;;;; The custom-loop sync commands
 

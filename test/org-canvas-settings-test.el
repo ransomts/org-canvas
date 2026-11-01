@@ -353,11 +353,10 @@ Welcome to the course.
 
 (describe "org-canvas--settings-push"
   (it "calls PUT on the course endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Course")))
-          (org-canvas--settings-push data '((course . ((name . "Course")))))
-          (expect-api-called 'PUT "courses/99999/$")))))
+    (with-test-api
+      (let ((data '(:title "Course")))
+        (org-canvas--settings-push data '((course . ((name . "Course")))))
+        (expect-api-called 'PUT "courses/99999/$"))))
 
   (it "returns dry-run response in dry-run mode"
     (with-org-canvas-test-config
@@ -866,23 +865,21 @@ Old syllabus.
 
 (describe "org-canvas--settings-push-late-policy"
   (it "calls PATCH on late_policy endpoint (PUT is not routed — issue #13)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((payload (make-hash-table :test 'equal))
-              (lp (make-hash-table :test 'equal)))
-          (puthash "late_submission_deduction" 10 lp)
-          (puthash "late_policy" lp payload)
-          (org-canvas--settings-push-late-policy payload)
-          (expect-api-called 'PATCH "late_policy")
-          (expect (test-org-canvas-api-called-p 'PUT "late_policy") :to-be nil)
-          (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil)))))
+    (with-test-api
+      (let ((payload (make-hash-table :test 'equal))
+            (lp (make-hash-table :test 'equal)))
+        (puthash "late_submission_deduction" 10 lp)
+        (puthash "late_policy" lp payload)
+        (org-canvas--settings-push-late-policy payload)
+        (expect-api-called 'PATCH "late_policy")
+        (expect (test-org-canvas-api-called-p 'PUT "late_policy") :to-be nil)
+        (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil))))
 
   (it "does nothing when payload is nil"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--settings-push-late-policy nil)
-        (expect (test-org-canvas-api-called-p 'PATCH "late_policy") :to-be nil)
-        (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil))))
+    (with-test-api
+      (org-canvas--settings-push-late-policy nil)
+      (expect (test-org-canvas-api-called-p 'PATCH "late_policy") :to-be nil)
+      (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil)))
 
   (it "falls back to POST when PATCH returns 404 (no policy yet)"
     (with-org-canvas-test-config
@@ -1185,13 +1182,12 @@ Syllabus text.
   (it "matches against the vector the push side is handed"
     ;; cl-find-if takes any sequence, so the push side was already safe;
     ;; this pins that down rather than leaving it to inspection.
-    (with-org-canvas-test-config
-      (with-mock-api
-        (expect (org-canvas--settings-sync-single-tab
-                 '(:label "Modules" :hidden t :position 3)
-                 (vector '((id . "modules") (label . "Modules")
-                           (hidden . :json-false) (position . 2))))
-                :to-be-truthy)))))
+    (with-test-api
+      (expect (org-canvas--settings-sync-single-tab
+               '(:label "Modules" :hidden t :position 3)
+               (vector '((id . "modules") (label . "Modules")
+                         (hidden . :json-false) (position . 2))))
+              :to-be-truthy))))
 
 (describe "org-canvas--settings-pull-tabs"
   (it "formats tabs as numbered Org list with strikethrough"

@@ -68,23 +68,18 @@ that and must never reach the file."
 
 (defmacro test-quiz-results--with-course (quizzes statistics &rest body)
   "Run BODY with the fake API serving QUIZZES and STATISTICS.
-The results and quizzes files live in a temp directory."
+The results and quizzes files live in `with-test-course''s directory,
+DIR, which BODY may use."
   (declare (indent 2))
-  `(let* ((dir (make-temp-file "quiz-results-" t))
-          (org-canvas-quiz-results-file (expand-file-name "quiz-results.org" dir))
-          (org-canvas-quizzes-file (expand-file-name "quizzes.org" dir))
-          (test-quiz-results--quizzes ,quizzes)
-          (test-quiz-results--statistics ,statistics))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-quiz-results--list)
-                     ((symbol-function 'org-canvas-api-request) #'test-quiz-results--one)
-                     ((symbol-function 'message) #'ignore))
-             ,@body))
-       (dolist (f (list org-canvas-quiz-results-file org-canvas-quizzes-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("quizzes.org" . nil)
+                                   ("quiz-results.org" . nil)))
+     (let ((test-quiz-results--quizzes ,quizzes)
+           (test-quiz-results--statistics ,statistics))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-quiz-results--list)
+                   ((symbol-function 'org-canvas-api-request) #'test-quiz-results--one)
+                   ((symbol-function 'message) #'ignore))
+           ,@body)))))
 
 (defun test-quiz-results--file ()
   "Return quiz-results.org's text."

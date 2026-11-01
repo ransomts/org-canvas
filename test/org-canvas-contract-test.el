@@ -256,16 +256,15 @@ stage-1/2 functions."
       (expect (alist-get "operationId" delete nil nil #'string=)
               :to-equal "delete_submission_comment")
       (expect (alist-get "fields" delete nil nil #'string=) :to-be nil)
-      (with-org-canvas-test-config
-        (with-mock-api
-          (org-canvas--submissions-send-comment-edit "1001" edit)
-          (org-canvas--submissions-send-comment-edit "1001" (plist-put (copy-sequence edit) :delete t))
-          (let ((put (test-org-canvas-find-api-call 'PUT "comments"))
-                (del (test-org-canvas-find-api-call 'DELETE "comments")))
-            (expect (nth 1 put) :to-match (concat want "\\'"))
-            (expect (nth 1 del) :to-match (concat want "\\'"))
-            (org-canvas-contract--check-payload "submission-comments" (nth 2 put))
-            (expect (nth 2 del) :to-be nil)))))))
+      (with-test-api
+        (org-canvas--submissions-send-comment-edit "1001" edit)
+        (org-canvas--submissions-send-comment-edit "1001" (plist-put (copy-sequence edit) :delete t))
+        (let ((put (test-org-canvas-find-api-call 'PUT "comments"))
+              (del (test-org-canvas-find-api-call 'DELETE "comments")))
+          (expect (nth 1 put) :to-match (concat want "\\'"))
+          (expect (nth 1 del) :to-match (concat want "\\'"))
+          (org-canvas-contract--check-payload "submission-comments" (nth 2 put))
+          (expect (nth 2 del) :to-be nil))))))
 
 ;;;; Pull-side contract
 ;;

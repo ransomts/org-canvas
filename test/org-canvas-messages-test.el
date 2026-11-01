@@ -82,35 +82,24 @@
 (defmacro test-messages--with-course (messages &rest body)
   "Run BODY with MESSAGES as messages.org beside a roster, a section and a group."
   (declare (indent 1))
-  `(let* ((dir (make-temp-file "messages-" t))
-          (org-canvas-messages-file (expand-file-name "messages.org" dir))
-          (org-canvas-people-file (expand-file-name "people.org" dir))
-          (org-canvas-sections-file (expand-file-name "sections.org" dir))
-          (org-canvas-groups-file (expand-file-name "groups.org" dir))
-          (test-messages--posts nil)
-          (test-messages--reply (vector '((id . 5001)) '((id . 5002))))
-          (test-messages--self-calls 0)
-          (test-messages--inbox nil)
-          (test-messages--details nil)
-          (test-messages--conversation-calls nil)
-          ;; Pin the zone every stamp and heading is written in, so the
-          ;; dates the specs pin hold wherever the suite runs.
-          (org-canvas--pull-tz-cache "UTC0"))
-     (with-temp-file org-canvas-messages-file (insert ,messages))
-     (with-temp-file org-canvas-people-file (insert test-messages--people))
-     (with-temp-file org-canvas-sections-file (insert test-messages--sections))
-     (with-temp-file org-canvas-groups-file (insert test-messages--groups))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request) #'test-messages--api)
-                     ((symbol-function 'message) #'ignore)
-                     ((symbol-function 'display-buffer) #'ignore))
-             ,@body))
-       (dolist (f (list org-canvas-messages-file org-canvas-people-file
-                        org-canvas-sections-file org-canvas-groups-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files (list (cons "messages.org" ,messages)
+                                      (cons "people.org" test-messages--people)
+                                      (cons "sections.org" test-messages--sections)
+                                      (cons "groups.org" test-messages--groups)))
+     (let ((test-messages--posts nil)
+           (test-messages--reply (vector '((id . 5001)) '((id . 5002))))
+           (test-messages--self-calls 0)
+           (test-messages--inbox nil)
+           (test-messages--details nil)
+           (test-messages--conversation-calls nil)
+           ;; Pin the zone every stamp and heading is written in, so the
+           ;; dates the specs pin hold wherever the suite runs.
+           (org-canvas--pull-tz-cache "UTC0"))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request) #'test-messages--api)
+                   ((symbol-function 'message) #'ignore)
+                   ((symbol-function 'display-buffer) #'ignore))
+           ,@body)))))
 
 (defun test-messages--file ()
   "Return messages.org's text."

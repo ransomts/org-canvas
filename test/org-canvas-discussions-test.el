@@ -469,22 +469,20 @@ Content.
 
 (describe "discussion push-to-api (mocked)"
   (it "uses POST for new discussions"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New" :canvas-id nil))
-              (payload '((title . "New"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options :endpoint "discussion_topics"))
-          (expect-api-called 'POST "discussion_topics")))))
+    (with-test-api
+      (let ((data '(:title "New" :canvas-id nil))
+            (payload '((title . "New"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options :endpoint "discussion_topics"))
+        (expect-api-called 'POST "discussion_topics"))))
 
   (it "uses PUT for existing discussions"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "456"))
-              (payload '((title . "Existing"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options :endpoint "discussion_topics"))
-          (expect-api-called 'PUT "discussion_topics/456")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "456"))
+            (payload '((title . "Existing"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options :endpoint "discussion_topics"))
+        (expect-api-called 'PUT "discussion_topics/456"))))
 
   (it "sends a payload whose body reflects the org input"
     (let ((temp-dir (make-temp-file "discussions-test" t)))
@@ -721,21 +719,20 @@ Content.
 
 (describe "org-canvas-delete-discussion-at-point"
   (it "deletes discussion and clears properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test
 :PROPERTIES:
 :CANVAS_ID: 42
 :LAST_SYNCED: [2024-01-01 Mon]
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas-delete-discussion-at-point)
-           (expect-api-called 'DELETE "discussion_topics/42")
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas-delete-discussion-at-point)
+         (expect-api-called 'DELETE "discussion_topics/42")
+         (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+         (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
   (it "errors when no CANVAS_ID"
     (with-temp-org-buffer
@@ -747,18 +744,17 @@ Content.
      (expect (org-canvas-delete-discussion-at-point) :to-throw 'user-error)))
 
   (it "aborts when user says no"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test
 :PROPERTIES:
 :CANVAS_ID: 42
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-           (org-canvas-delete-discussion-at-point)
-           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+         (org-canvas-delete-discussion-at-point)
+         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))))
 
 ;;;; The at-point push consults the search (issue #179)
 

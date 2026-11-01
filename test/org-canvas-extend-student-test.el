@@ -49,31 +49,17 @@ EXTRA is spliced into the drawer."
 (defmacro test-extend--with-course (assignment &rest body)
   "Run BODY in assignments.org holding ASSIGNMENT, point at its start.
 people.org holds `test-extend--people' and sections.org Section A
-\(CANVAS_ID 100).  Everything is deleted afterwards."
+\(CANVAS_ID 100), both in `with-test-course''s directory, DIR."
   (declare (indent 1))
-  `(let* ((dir (file-truename (make-temp-file "extend-" t)))
-          (org-canvas-people-file (expand-file-name "people.org" dir))
-          (org-canvas-sections-file (expand-file-name "sections.org" dir))
-          (org-canvas-assignments-file (expand-file-name "assignments.org" dir)))
-     (with-temp-file org-canvas-people-file (insert test-extend--people))
-     (with-temp-file org-canvas-sections-file
-       (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
-     (with-temp-file org-canvas-assignments-file (insert ,assignment))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (with-sync-test-env
-             (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
-               (with-current-buffer (org-canvas--find-file-noselect
-                                     org-canvas-assignments-file)
-                 (goto-char (point-min))
-                 ,@body))))
-       (dolist (f (list org-canvas-people-file org-canvas-sections-file
-                        org-canvas-assignments-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf
-             (with-current-buffer buf (set-buffer-modified-p nil))
-             (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files (list (cons "people.org" test-extend--people)
+                                      (cons "sections.org" "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n")
+                                      (cons "assignments.org" ,assignment)))
+     (with-test-sync
+       (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+         (with-current-buffer (org-canvas--find-file-noselect
+                               org-canvas-assignments-file)
+           (goto-char (point-min))
+           ,@body)))))
 
 (defvar test-extend--calls nil
   "The (METHOD URL DATA) requests the stand-in API saw, latest first.")

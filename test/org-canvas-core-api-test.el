@@ -74,72 +74,63 @@
 
 (describe "org-canvas-api-request (mocked)"
   (it "records API calls"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'GET "https://example.com/api")
-        (expect (test-org-canvas-api-call-count) :to-equal 1))))
+    (with-test-api
+      (org-canvas-api-request 'GET "https://example.com/api")
+      (expect (test-org-canvas-api-call-count) :to-equal 1)))
 
   (it "returns mock response"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((response (org-canvas-api-request 'GET "https://example.com/api")))
-          (expect (alist-get 'id response) :to-equal 12345)))))
+    (with-test-api
+      (let ((response (org-canvas-api-request 'GET "https://example.com/api")))
+        (expect (alist-get 'id response) :to-equal 12345))))
 
   (it "tracks POST calls correctly"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'POST "https://example.com/pages"
-                                :data '((title . "Test")))
-        (expect-api-called 'POST "pages"))))
+    (with-test-api
+      (org-canvas-api-request 'POST "https://example.com/pages"
+                              :data '((title . "Test")))
+      (expect-api-called 'POST "pages")))
 
   (it "handles multiple API calls"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'GET "https://example.com/pages")
-        (org-canvas-api-request 'POST "https://example.com/assignments")
-        (org-canvas-api-request 'PUT "https://example.com/quizzes")
-        (expect (test-org-canvas-api-call-count) :to-equal 3)))))
+    (with-test-api
+      (org-canvas-api-request 'GET "https://example.com/pages")
+      (org-canvas-api-request 'POST "https://example.com/assignments")
+      (org-canvas-api-request 'PUT "https://example.com/quizzes")
+      (expect (test-org-canvas-api-call-count) :to-equal 3))))
 
 ;;;; 14. API Request Error Handling
 
 (describe "org-canvas-api-request error handling (mocked)"
   (it "handles GET request with params"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'GET "https://example.com/api"
-                                :params '(("per_page" . "50")))
-        (expect (test-org-canvas-api-call-count) :to-equal 1))))
+    (with-test-api
+      (org-canvas-api-request 'GET "https://example.com/api"
+                              :params '(("per_page" . "50")))
+      (expect (test-org-canvas-api-call-count) :to-equal 1)))
 
   (it "encodes data as JSON for POST"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'POST "https://example.com/api"
-                                :data '((name . "Test") (value . 42)))
-        (expect-api-called 'POST "api")))))
+    (with-test-api
+      (org-canvas-api-request 'POST "https://example.com/api"
+                              :data '((name . "Test") (value . 42)))
+      (expect-api-called 'POST "api"))))
 
 ;;;; 15. Additional API Request Tests
 
 (describe "org-canvas-api-request edge cases (mocked)"
   (it "handles timeout parameter"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'GET "https://example.com/api" :timeout 30)
-        (expect (test-org-canvas-api-call-count) :to-equal 1))))
+    (with-test-api
+      (org-canvas-api-request 'GET "https://example.com/api" :timeout 30)
+      (expect (test-org-canvas-api-call-count) :to-equal 1)))
 
   (it "encodes hash-table data as JSON"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data (make-hash-table)))
-          (puthash 'name "Test" data)
-          (org-canvas-api-request 'POST "https://example.com/api" :data data)
-          (expect-api-called 'POST "api")))))
+    (with-test-api
+      (let ((data (make-hash-table)))
+        (puthash 'name "Test" data)
+        (org-canvas-api-request 'POST "https://example.com/api" :data data)
+        (expect-api-called 'POST "api"))))
 
   (it "passes string data as-is"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas-api-request 'POST "https://example.com/api"
-                                :data "{\"already\":\"json\"}")
-        (expect-api-called 'POST "api")))))
+    (with-test-api
+      (org-canvas-api-request 'POST "https://example.com/api"
+                              :data "{\"already\":\"json\"}")
+      (expect-api-called 'POST "api"))))
 
 ;;;; 24. org-canvas-api-request internals (mock plz directly)
 
@@ -1080,16 +1071,15 @@ search), so a spec can script which login carries the token."
 
 (describe "org-canvas--associate-rubric flags (#118)"
   (it "adds use_for_grading and hide_score_total only when given"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--associate-rubric "42" "99" "Discussion")
-        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
-          (expect (gethash "use_for_grading" assoc 'absent) :to-equal 'absent)
-          (expect (gethash "association_type" assoc) :to-equal "Discussion"))
-        (org-canvas--associate-rubric "42" "99" "Assignment" '(:use-for-grading :json-false))
-        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
-          (expect (gethash "use_for_grading" assoc) :to-equal :json-false)
-          (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent))))))
+    (with-test-api
+      (org-canvas--associate-rubric "42" "99" "Discussion")
+      (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+        (expect (gethash "use_for_grading" assoc 'absent) :to-equal 'absent)
+        (expect (gethash "association_type" assoc) :to-equal "Discussion"))
+      (org-canvas--associate-rubric "42" "99" "Assignment" '(:use-for-grading :json-false))
+      (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+        (expect (gethash "use_for_grading" assoc) :to-equal :json-false)
+        (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent)))))
 
 (describe "org-canvas--associate-rubric failure message"
   (it "shows warning in echo area on failure"
@@ -1117,9 +1107,8 @@ search), so a spec can script which login carries the token."
 
 (describe "org-canvas--associate-rubric return value (issue #124)"
   (it "answers t when the association was written"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (expect (org-canvas--associate-rubric "42" "99" "Assignment") :to-be t)))))
+    (with-test-api
+      (expect (org-canvas--associate-rubric "42" "99" "Assignment") :to-be t))))
 
 (describe "org-canvas--upload-file"
   (it "errors when Canvas returns no upload_url"

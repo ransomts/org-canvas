@@ -115,30 +115,18 @@
   "Run BODY in a course whose files hold the fixtures.
 DIR is bound to the course directory, the API mocked with
 `test-hver--responses', the zone UTC and the preflight check and echo
-stubbed.  The buffers are killed and the directory deleted afterwards."
+stubbed."
   (declare (indent 0))
-  `(let* ((dir (file-name-as-directory (make-temp-file "hver-" t)))
-          (org-canvas-time-zone "UTC")
-          (org-canvas-assignments-file (expand-file-name "assignments.org" dir))
-          (org-canvas-rubrics-file (expand-file-name "rubrics.org" dir))
-          (org-canvas-modules-file (expand-file-name "modules.org" dir))
-          (org-canvas-files-file (expand-file-name "files.org" dir)))
-     (unwind-protect
-         (progn
-           (with-temp-file org-canvas-assignments-file (insert test-hver--assignments))
-           (with-temp-file org-canvas-rubrics-file (insert test-hver--rubrics))
-           (with-temp-file org-canvas-modules-file (insert test-hver--modules))
-           (with-temp-file org-canvas-files-file (insert test-hver--files))
-           (with-org-canvas-test-config
-             (with-mock-api
-               (setq test-org-canvas-api-responses (test-hver--responses))
-               (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
-                         ((symbol-function 'org-canvas--user-message) #'ignore))
-                 ,@body))))
-       (dolist (f (list org-canvas-assignments-file org-canvas-rubrics-file
-                        org-canvas-modules-file org-canvas-files-file))
-         (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files (list (cons "assignments.org" test-hver--assignments)
+                                      (cons "rubrics.org" test-hver--rubrics)
+                                      (cons "modules.org" test-hver--modules)
+                                      (cons "files.org" test-hver--files)))
+     (let ((org-canvas-time-zone "UTC"))
+       (with-test-api
+         (setq test-org-canvas-api-responses (test-hver--responses))
+         (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                   ((symbol-function 'org-canvas--user-message) #'ignore))
+           ,@body)))))
 
 (defun test-hver--verify (&rest entries)
   "Verify ENTRIES, (FEATURE . TITLE) pairs; return (RESULTS . PRINTED-TEXT)."

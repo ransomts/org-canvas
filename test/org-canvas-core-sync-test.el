@@ -238,25 +238,24 @@ Hello world.
     (delete-directory temp-dir t))
 
   (it "saves PAYLOAD_HASH property after first sync"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let* ((parse-called 0)
-               (push-called 0)
-               ;; Define a test sync using the internal macro structure
-               ;; We call the pattern manually instead of using the macro
-               (sync-file temp-file))
-          ;; Simulate one iteration of the sync pipeline
-          (with-current-buffer (find-file-noselect sync-file)
-            (goto-char (point-min))
-            (org-back-to-heading)
-            (let* ((data (list :title "Item One" :canvas-id nil :pom (point)))
-                   (payload '((title . "Item One")))
-                   (payload-hash (md5 (json-encode payload))))
-              ;; Before sync, no hash
-              (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
-              ;; Simulate saving the hash
-              (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
-              (expect (org-entry-get (point) "PAYLOAD_HASH") :to-equal payload-hash)))))))
+    (with-test-api
+      (let* ((parse-called 0)
+             (push-called 0)
+             ;; Define a test sync using the internal macro structure
+             ;; We call the pattern manually instead of using the macro
+             (sync-file temp-file))
+        ;; Simulate one iteration of the sync pipeline
+        (with-current-buffer (find-file-noselect sync-file)
+          (goto-char (point-min))
+          (org-back-to-heading)
+          (let* ((data (list :title "Item One" :canvas-id nil :pom (point)))
+                 (payload '((title . "Item One")))
+                 (payload-hash (md5 (json-encode payload))))
+            ;; Before sync, no hash
+            (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
+            ;; Simulate saving the hash
+            (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+            (expect (org-entry-get (point) "PAYLOAD_HASH") :to-equal payload-hash))))))
 
   (it "PAYLOAD_HASH is cleared by org-canvas-clear-sync-properties"
     (with-temp-org-buffer

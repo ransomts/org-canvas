@@ -200,24 +200,22 @@
 
 (describe "assignment-group push-to-api (mocked)"
   (it "uses POST for new groups"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:name "New" :canvas-id nil))
-              (payload '((name . "New"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "assignment_groups" :title-key :name))
-          (expect-api-called 'POST "assignment_groups$")))))
+    (with-test-api
+      (let ((data '(:name "New" :canvas-id nil))
+            (payload '((name . "New"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "assignment_groups" :title-key :name))
+        (expect-api-called 'POST "assignment_groups$"))))
 
   (it "uses PUT for existing groups"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:name "Existing" :canvas-id "321"))
-              (payload '((name . "Existing"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "assignment_groups" :title-key :name))
-          (expect-api-called 'PUT "assignment_groups/321")))))
+    (with-test-api
+      (let ((data '(:name "Existing" :canvas-id "321"))
+            (payload '((name . "Existing"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "assignment_groups" :title-key :name))
+        (expect-api-called 'PUT "assignment_groups/321"))))
 
   (it "sends a POST body reflecting the org input (real pipeline)"
     (let ((temp-dir (make-temp-file "ag-test" t)))
@@ -424,21 +422,20 @@
 
 (describe "org-canvas-delete-assignment-group-at-point"
   (it "deletes assignment group and clears properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test
 :PROPERTIES:
 :CANVAS_ID: 42
 :LAST_SYNCED: [2024-01-01 Mon]
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas-delete-assignment-group-at-point)
-           (expect-api-called 'DELETE "assignment_groups/42")
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas-delete-assignment-group-at-point)
+         (expect-api-called 'DELETE "assignment_groups/42")
+         (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+         (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
   (it "errors when no CANVAS_ID"
     (with-temp-org-buffer

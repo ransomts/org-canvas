@@ -58,23 +58,16 @@ By default it is published, posted in 2026 and locked."
 (defmacro test-aver--with-course (&rest body)
   "Run BODY with the announcements file holding `test-aver--file'.
 FILE is bound to its path, the API mocked with `test-aver--topics' as
-its responses, the zone UTC and the preflight check and echo stubbed.
-The buffer is killed and the file deleted afterwards."
+its responses, the zone UTC and the preflight check and echo stubbed."
   (declare (indent 0))
-  `(let ((file (make-temp-file "aver-" nil ".org"))
-         (org-canvas-time-zone "UTC"))
-     (unwind-protect
-         (progn
-           (with-temp-file file (insert test-aver--file))
-           (let ((org-canvas-announcements-file file))
-             (with-org-canvas-test-config
-               (with-mock-api
-                 (setq test-org-canvas-api-responses (test-aver--topics))
-                 (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
-                           ((symbol-function 'org-canvas--user-message) #'ignore))
-                   ,@body)))))
-       (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
-       (delete-file file))))
+  `(with-test-course (dir :files (list (cons "announcements.org" test-aver--file)))
+     (let ((file org-canvas-announcements-file)
+           (org-canvas-time-zone "UTC"))
+       (with-test-api
+         (setq test-org-canvas-api-responses (test-aver--topics))
+         (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                   ((symbol-function 'org-canvas--user-message) #'ignore))
+           ,@body)))))
 
 (defun test-aver--verify (&rest titles)
   "Verify the headings TITLES name; return (RESULTS . PRINTED-TEXT)."

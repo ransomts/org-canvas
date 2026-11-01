@@ -1217,24 +1217,10 @@ Returns the final message string."
 Group `Team A' has CANVAS_ID 55; `Adams, Alice' has USER_ID 1 and
 `Beta, Bob' USER_ID 2.  The sections file holds `Section A' as 100."
   (declare (indent 0))
-  `(let* ((temp-dir (make-temp-file "override-kinds-" t))
-          (org-canvas-groups-file (expand-file-name "groups.org" temp-dir))
-          (org-canvas-people-file (expand-file-name "people.org" temp-dir))
-          (org-canvas-sections-file (expand-file-name "sections.org" temp-dir)))
-     (with-temp-file org-canvas-groups-file
-       (insert "* Project Teams\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"
-               "** Team A\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"))
-     (with-temp-file org-canvas-people-file
-       (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n"
-               "** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n:END:\n"))
-     (with-temp-file org-canvas-sections-file
-       (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
-     (unwind-protect
-         (progn ,@body)
-       (dolist (f (list org-canvas-groups-file org-canvas-people-file org-canvas-sections-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (kill-buffer buf))))
-       (delete-directory temp-dir t))))
+  `(with-test-course (temp-dir :files '(("groups.org" . "* Project Teams\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n** Team A\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n")
+                                        ("people.org" . "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n:END:\n")
+                                        ("sections.org" . "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n")))
+     ,@body))
 
 (describe "org-canvas--override-parse-target (issue #224)"
   (it "resolves a group by its groups.org title, or a literal #id"
@@ -1537,12 +1523,11 @@ would rename them at nine call sites and clarify none (issue #599)."
               :to-equal nil)))
 
   (it "leaves a heading with no stamp of its own unread and unstamped"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n"
-          (expect (org-canvas--override-baseline-clean-p (point) "456" "A")
-                  :to-be nil)
-          (expect test-org-canvas-api-calls :to-equal nil)))))
+    (with-test-api
+      (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n"
+        (expect (org-canvas--override-baseline-clean-p (point) "456" "A")
+                :to-be nil)
+        (expect test-org-canvas-api-calls :to-equal nil))))
 
   (it "answers nil and warns when the assignment read fails"
     (let ((warned nil))
@@ -1555,16 +1540,15 @@ would rename them at nine call sites and clarify none (issue #599)."
           (expect warned :to-be t)))))
 
   (it "reads the course endpoint when no assignments feature is registered"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (cl-letf (((symbol-function 'org-canvas--registry-find-feature)
-                   (lambda (_) nil)))
-          (setq test-org-canvas-api-responses
-                '(("assignments/456" . ((updated_at . "2026-01-01T00:00:00Z")))))
-          (expect (org-canvas--override-read-assignment "456")
-                  :to-equal "2026-01-01T00:00:00Z")
-          (expect (plist-get (nth 3 (car test-org-canvas-api-calls)) :params)
-                  :to-be nil)))))
+    (with-test-api
+      (cl-letf (((symbol-function 'org-canvas--registry-find-feature)
+                 (lambda (_) nil)))
+        (setq test-org-canvas-api-responses
+              '(("assignments/456" . ((updated_at . "2026-01-01T00:00:00Z")))))
+        (expect (org-canvas--override-read-assignment "456")
+                :to-equal "2026-01-01T00:00:00Z")
+        (expect (plist-get (nth 3 (car test-org-canvas-api-calls)) :params)
+                :to-be nil))))
 
   (it "warns instead of signalling when the stamp cannot be written"
     (let ((warned nil))
@@ -1587,18 +1571,17 @@ would rename them at nine call sites and clarify none (issue #599)."
   "Return what the next push's conflict check of TEXT's heading answers.
 TEXT is the assignments file after the override sync; Canvas reports
 the assignment as AFTER, with the unlock date of `test-ovr478-unlock'."
-  (with-org-canvas-test-config
-    (with-mock-api
-      (setq test-org-canvas-api-responses
-            `(("assignments/456\\'"
-               . ((id . 456) (updated_at . ,after) ,@test-ovr478-unlock))))
-      (with-temp-org-buffer text
-        (goto-char (point-min))
-        (org-canvas--conflict-check
-         (org-canvas--conflict-request-from
-          "assignments" "456" (point) "Assignment 1" nil nil nil
-          (org-canvas--feature-scheduled-dates-fn
-           (org-canvas--registry-find-feature "Assignments"))))))))
+  (with-test-api
+    (setq test-org-canvas-api-responses
+          `(("assignments/456\\'"
+             . ((id . 456) (updated_at . ,after) ,@test-ovr478-unlock))))
+    (with-temp-org-buffer text
+      (goto-char (point-min))
+      (org-canvas--conflict-check
+       (org-canvas--conflict-request-from
+        "assignments" "456" (point) "Assignment 1" nil nil nil
+        (org-canvas--feature-scheduled-dates-fn
+         (org-canvas--registry-find-feature "Assignments")))))))
 
 (describe "org-canvas-sync-overrides allows a scheduled bump (issue #478)"
   (it "restamps a heading whose newer stamp the passed unlock date explains"
@@ -1772,23 +1755,22 @@ the assignment as AFTER, with the unlock date of `test-ovr478-unlock'."
 
 (describe "org-canvas--override-sync-for-assignment skips unchanged (issue #380)"
   (it "sends no PUT for a claimed override that already carries the row's dates"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments/456/overrides" .
-                 [((id . 10) (course_section_id . 100)
-                   (due_at . "2026-09-28T18:20:00Z"))
-                  ((id . 20) (course_section_id . 200)
-                   (due_at . "2026-09-28T18:15:00Z"))])))
-        (let ((counts (org-canvas--override-sync-for-assignment
-                       "456"
-                       '((:section-id "100" :due-at "2026-09-28T14:20:00-04:00")
-                         (:section-id "200" :due-at "2026-09-28T18:20:00Z")))))
-          (expect counts :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
-          (expect (test-org-canvas-api-called-p 'PUT "overrides/10\\'") :to-be nil)
-          (expect (test-org-canvas-api-called-p 'PUT "overrides/20\\'") :to-be-truthy)
-          ;; The unchanged override is still claimed, so it is not deleted.
-          (expect (test-org-canvas-api-called-p 'DELETE "overrides") :to-be nil))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments/456/overrides" .
+               [((id . 10) (course_section_id . 100)
+                 (due_at . "2026-09-28T18:20:00Z"))
+                ((id . 20) (course_section_id . 200)
+                 (due_at . "2026-09-28T18:15:00Z"))])))
+      (let ((counts (org-canvas--override-sync-for-assignment
+                     "456"
+                     '((:section-id "100" :due-at "2026-09-28T14:20:00-04:00")
+                       (:section-id "200" :due-at "2026-09-28T18:20:00Z")))))
+        (expect counts :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
+        (expect (test-org-canvas-api-called-p 'PUT "overrides/10\\'") :to-be nil)
+        (expect (test-org-canvas-api-called-p 'PUT "overrides/20\\'") :to-be-truthy)
+        ;; The unchanged override is still claimed, so it is not deleted.
+        (expect (test-org-canvas-api-called-p 'DELETE "overrides") :to-be nil)))))
 
 (defconst test-ovr380-file
   (concat "* Attendance 02\n:PROPERTIES:\n:CANVAS_ID: 456\n"
@@ -1832,33 +1814,31 @@ A sections.org beside it names Section A, id 777.  Return FN's value."
 
 (describe "org-canvas--override-sync-entry (issue #380)"
   (it "reconciles only the heading it is given"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments/456/overrides" .
-                 [((id . 10) (course_section_id . 777)
-                   (due_at . "2026-09-28T18:15:00Z"))])
-                ("assignments/456\\'" .
-                 ((id . 456) (updated_at . "2026-09-28T10:00:00Z")))))
-        (expect (test-ovr380-call-in-file
-                 "Attendance 02"
-                 (lambda () (org-canvas--override-sync-entry (point-marker))))
-                :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
-        (progn
-          (expect (test-org-canvas-api-called-p 'PUT "assignments/456/overrides/10")
-                  :to-be-truthy)
-          (expect (test-org-canvas-api-called-p 'GET "assignments/457")
-                  :to-be nil)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments/456/overrides" .
+               [((id . 10) (course_section_id . 777)
+                 (due_at . "2026-09-28T18:15:00Z"))])
+              ("assignments/456\\'" .
+               ((id . 456) (updated_at . "2026-09-28T10:00:00Z")))))
+      (expect (test-ovr380-call-in-file
+               "Attendance 02"
+               (lambda () (org-canvas--override-sync-entry (point-marker))))
+              :to-equal '(:created 0 :updated 1 :deleted 0 :kept 0))
+      (progn
+        (expect (test-org-canvas-api-called-p 'PUT "assignments/456/overrides/10")
+                :to-be-truthy)
+        (expect (test-org-canvas-api-called-p 'GET "assignments/457")
+                :to-be nil))))
 
   (it "answers nil with no request for a heading without a table or a stamp"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (dolist (heading '("No table" "Not pushed yet"))
-          (expect (test-ovr380-call-in-file
-                   heading
-                   (lambda () (org-canvas--override-sync-entry (point-marker))))
-                  :to-be nil))
-        (expect test-org-canvas-api-calls :to-equal nil)))))
+    (with-test-api
+      (dolist (heading '("No table" "Not pushed yet"))
+        (expect (test-ovr380-call-in-file
+                 heading
+                 (lambda () (org-canvas--override-sync-entry (point-marker))))
+                :to-be nil))
+      (expect test-org-canvas-api-calls :to-equal nil))))
 
 ;;;; An Override-Only Drift Restamps the Heading (issue #410)
 
@@ -1991,19 +1971,18 @@ noninteractive instead.  DRY-RUN binds `org-canvas--dry-run', PRUNE
 `org-canvas--override-prune'.  Return (RESULT ASKED CALLS): what the
 step returned, the prompt it asked or nil, and the API calls made."
   (let ((asked nil))
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((org-canvas--dry-run dry-run)
-              (org-canvas--override-prune prune)
-              (noninteractive (eq answer 'batch)))
-          (cl-letf (((symbol-function 'y-or-n-p)
-                     (lambda (prompt) (setq asked prompt) answer))
-                    ((symbol-function 'org-canvas--log-warning) #'ignore))
-            (list (org-canvas--override-delete-removed
-                   "https://test.canvas.example.com/api/v1/courses/1/assignments/456/overrides"
-                   test-ovr411-existing '(10) confirm)
-                  asked
-                  test-org-canvas-api-calls)))))))
+    (with-test-api
+      (let ((org-canvas--dry-run dry-run)
+            (org-canvas--override-prune prune)
+            (noninteractive (eq answer 'batch)))
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (prompt) (setq asked prompt) answer))
+                  ((symbol-function 'org-canvas--log-warning) #'ignore))
+          (list (org-canvas--override-delete-removed
+                 "https://test.canvas.example.com/api/v1/courses/1/assignments/456/overrides"
+                 test-ovr411-existing '(10) confirm)
+                asked
+                test-org-canvas-api-calls))))))
 
 (describe "org-canvas--override-delete-removed asks before deleting (issue #411)"
   (it "deletes without asking when no one asked it to confirm"
@@ -2061,37 +2040,34 @@ step returned, the prompt it asked or nil, and the API calls made."
       (expect (nth 2 run) :to-equal nil)))
 
   (it "asks nothing when every override is claimed"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((noninteractive nil) (asked nil))
-          (cl-letf (((symbol-function 'y-or-n-p)
-                     (lambda (prompt) (setq asked prompt) nil)))
-            (expect (org-canvas--override-delete-removed
-                     "https://test.canvas.example.com/api/v1/courses/1/assignments/456/overrides"
-                     test-ovr411-existing '(10 11) t)
-                    :to-equal '(0 . 0))
-            (expect asked :to-be nil))))))
+    (with-test-api
+      (let ((noninteractive nil) (asked nil))
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (prompt) (setq asked prompt) nil)))
+          (expect (org-canvas--override-delete-removed
+                   "https://test.canvas.example.com/api/v1/courses/1/assignments/456/overrides"
+                   test-ovr411-existing '(10 11) t)
+                  :to-equal '(0 . 0))
+          (expect asked :to-be nil)))))
 
   (it "reports the kept count as the reconcile's fourth number"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              `(("assignments/456/overrides" . ,(vconcat test-ovr411-existing))))
-        (let ((noninteractive nil))
-          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-            (expect (org-canvas--override-sync-for-assignment
-                     "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
-                    :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1)))))))
-
-  (it "counts a dry run's kept overrides as kept, not deleted (#566)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              `(("assignments/456/overrides" . ,(vconcat test-ovr411-existing))))
-        (let ((org-canvas--dry-run t) (noninteractive t))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            `(("assignments/456/overrides" . ,(vconcat test-ovr411-existing))))
+      (let ((noninteractive nil))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
           (expect (org-canvas--override-sync-for-assignment
                    "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
-                  :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1)))))))
+                  :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1))))))
+
+  (it "counts a dry run's kept overrides as kept, not deleted (#566)"
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            `(("assignments/456/overrides" . ,(vconcat test-ovr411-existing))))
+      (let ((org-canvas--dry-run t) (noninteractive t))
+        (expect (org-canvas--override-sync-for-assignment
+                 "456" '((:section-id "777" :due-at "2026-09-28T18:15:00Z")) t)
+                :to-equal '(:created 0 :updated 0 :deleted 0 :kept 1))))))
 
 (describe "org-canvas--override-match-accepts (issue #538)"
   (it "pairs a group or students row by whom it names, in any order"

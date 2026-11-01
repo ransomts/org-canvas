@@ -38,66 +38,62 @@
               :to-be-truthy)))
 
   (it "dispatches single change to PUT"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-buffer
-          (org-mode)
-          (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
-          (setq-local org-canvas-submissions--current-view 'detail)
-          (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
-          (setq-local org-canvas-submissions--assignment-id "1001")
-          (setq-local org-canvas-submissions--data nil)
-          (org-canvas-submissions-mode 1)
-          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")))))
+    (with-test-api
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
+        (setq-local org-canvas-submissions--assignment-id "1001")
+        (setq-local org-canvas-submissions--data nil)
+        (org-canvas-submissions-mode 1)
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001"))))
 
   (it "dispatches multiple changes to bulk POST"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-buffer
-          (org-mode)
-          (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:END:\n")
-          (setq-local org-canvas-submissions--current-view 'detail)
-          (setq-local org-canvas-submissions--original-scores
-                      '((5001 . "92") (5002 . "75")))
-          (setq-local org-canvas-submissions--assignment-id "1001")
-          (setq-local org-canvas-submissions--data nil)
-          (org-canvas-submissions-mode 1)
-          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect-api-called 'POST "assignments/1001/submissions/update_grades")))))
+    (with-test-api
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:END:\n")
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (setq-local org-canvas-submissions--original-scores
+                    '((5001 . "92") (5002 . "75")))
+        (setq-local org-canvas-submissions--assignment-id "1001")
+        (setq-local org-canvas-submissions--data nil)
+        (org-canvas-submissions-mode 1)
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect-api-called 'POST "assignments/1001/submissions/update_grades"))))
 
   (it "respects confirmation prompt denial"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-buffer
-          (org-mode)
-          (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
-          (setq-local org-canvas-submissions--current-view 'detail)
-          (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
-          (setq-local org-canvas-submissions--assignment-id "1001")
-          (setq-local org-canvas-submissions--data nil)
-          (org-canvas-submissions-mode 1)
-          (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil)))
-            (org-canvas-submissions-push-grades))
-          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+    (with-test-api
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
+        (setq-local org-canvas-submissions--assignment-id "1001")
+        (setq-local org-canvas-submissions--data nil)
+        (org-canvas-submissions-mode 1)
+        (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil)))
+          (org-canvas-submissions-push-grades))
+        (expect (test-org-canvas-api-call-count) :to-equal 0))))
 
   (it "updates original-scores after push"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-buffer
-          (org-mode)
-          (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
-          (setq-local org-canvas-submissions--current-view 'detail)
-          (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
-          (setq-local org-canvas-submissions--assignment-id "1001")
-          (setq-local org-canvas-submissions--data nil)
-          (org-canvas-submissions-mode 1)
-          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect (alist-get 5001 org-canvas-submissions--original-scores)
-                  :to-equal "95")))))
+    (with-test-api
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
+        (setq-local org-canvas-submissions--assignment-id "1001")
+        (setq-local org-canvas-submissions--data nil)
+        (org-canvas-submissions-mode 1)
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect (alist-get 5001 org-canvas-submissions--original-scores)
+                :to-equal "95"))))
 
   (it "handles API error gracefully"
     (with-org-canvas-test-config
@@ -119,144 +115,135 @@
 
 (describe "detail edit → push integration"
   (it "full flow: render, edit score, push"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((subs (list (test-org-canvas-make-submission '((score . 92))))))
-          (with-temp-buffer
-            (org-mode)
-            (org-canvas--submissions-render-detail "HW" "1001" subs)
-            (setq-local org-canvas-submissions--assignment-name "HW")
-            (setq-local org-canvas-submissions--assignment-id "1001")
-            (setq-local org-canvas-submissions--data subs)
-            (setq-local org-canvas-submissions--current-view 'detail)
-            (setq-local org-canvas-submissions--original-scores
-                        (org-canvas--submissions-snapshot-scores subs))
-            (org-canvas-submissions-mode 1)
-            ;; Edit the score
-            (goto-char (point-min))
-            (search-forward ":SCORE: 92")
-            (replace-match ":SCORE: 98")
-            ;; Push
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-              (org-canvas-submissions-push-grades))
-            (expect-api-called 'PUT "assignments/1001/submissions/5001")
-            ;; Verify snapshot updated
-            (expect (alist-get 5001 org-canvas-submissions--original-scores)
-                    :to-equal "98")))))))
+    (with-test-api
+      (let ((subs (list (test-org-canvas-make-submission '((score . 92))))))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "HW" "1001" subs)
+          (setq-local org-canvas-submissions--assignment-name "HW")
+          (setq-local org-canvas-submissions--assignment-id "1001")
+          (setq-local org-canvas-submissions--data subs)
+          (setq-local org-canvas-submissions--current-view 'detail)
+          (setq-local org-canvas-submissions--original-scores
+                      (org-canvas--submissions-snapshot-scores subs))
+          (org-canvas-submissions-mode 1)
+          ;; Edit the score
+          (goto-char (point-min))
+          (search-forward ":SCORE: 92")
+          (replace-match ":SCORE: 98")
+          ;; Push
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          ;; Verify snapshot updated
+          (expect (alist-get 5001 org-canvas-submissions--original-scores)
+                  :to-equal "98"))))))
 
 ;;;; Integration — Refresh Resets Scores
 
 (describe "pushing from a reopened grading file"
   (it "recovers the assignment id, pushes, updates CANVAS_SCORE, and saves"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-              (org-canvas-submissions-push-grades)))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")
-          (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
-          (expect (buffer-modified-p) :to-be nil)
-          (expect (with-temp-buffer (insert-file-contents file) (buffer-string))
-                  :to-match ":CANVAS_SCORE: 95")))))
-  (it "pushes nothing when the file needs no push"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n")
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (let ((org-canvas-submissions-check-conflicts nil))
           (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+            (org-canvas-submissions-push-grades)))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
+        (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+        (expect (buffer-modified-p) :to-be nil)
+        (expect (with-temp-buffer (insert-file-contents file) (buffer-string))
+                :to-match ":CANVAS_SCORE: 95"))))
+  (it "pushes nothing when the file needs no push"
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n")
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect (test-org-canvas-api-call-count) :to-equal 0)))))
 
 (describe "conflict handling on push"
   (it "skips and marks a heading Canvas has since regraded"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
-          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("93" 1 nil)))))
-                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect (test-org-canvas-api-call-count) :to-equal 0)
-          (goto-char (point-min))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 93")
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                   (lambda (_id) '((5001 . ("93" 1 nil)))))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect (test-org-canvas-api-call-count) :to-equal 0)
+        (goto-char (point-min))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 93")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92"))))
   (it "skips a student who resubmitted since the pull"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:END:\n")
-          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("92" 2 nil)))))
-                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect (test-org-canvas-api-call-count) :to-equal 0)
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: Canvas has 2")))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:END:\n")
+        (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                   (lambda (_id) '((5001 . ("92" 2 nil)))))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect (test-org-canvas-api-call-count) :to-equal 0)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: Canvas has 2"))))
   (it "holds back a heading already marked CONFLICT and pushes the clean ones (issue #440)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
-          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("92" nil nil)) (5002 . ("75" nil nil)))))
-                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect-api-called 'PUT "assignments/1001/submissions/5002")
-          (expect (test-org-canvas-api-call-count) :to-equal 1)
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-equal "stale")
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")
-          (org-canvas--submissions-goto-user 5002)
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
+        (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                   (lambda (_id) '((5001 . ("92" nil nil)) (5002 . ("75" nil nil)))))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect-api-called 'PUT "assignments/1001/submissions/5002")
+        (expect (test-org-canvas-api-call-count) :to-equal 1)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "stale")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80"))))
   (it "does not consult Canvas for an ephemeral buffer"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-buffer
-          (org-mode)
-          (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
-          (setq-local org-canvas-submissions--current-view 'detail)
-          (setq-local org-canvas-submissions--assignment-id "1001")
-          (org-canvas-submissions-mode 1)
-          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) (error "should not be called")))
-                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001"))))))
+    (with-test-api
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (setq-local org-canvas-submissions--assignment-id "1001")
+        (org-canvas-submissions-mode 1)
+        (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                   (lambda (_id) (error "should not be called")))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")))))
 
 (describe "pushing drafted comments"
   (it "posts each draft by user id, records it under Comments, and resets the draft"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\n"
-                                   org-canvas-submissions-comment-template "\nStrong opening.\n")
-          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")
-          (let ((data (nth 2 (test-org-canvas-last-api-call))))
-            (expect (alist-get 'text_comment (alist-get 'comment data)) :to-equal "Strong opening."))
-          (expect (buffer-string) :to-match "^\\*\\* Comments\n- \\*You\\* <[^>]+> :: Strong opening\\.\n")
-          (expect (string-match "\\*\\* Comments" (buffer-string))
-                  :to-be-less-than (string-match "\\*\\* Comment to post" (buffer-string)))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-canvas--submissions-comment-draft) :to-be nil)
-          (expect (buffer-modified-p) :to-be nil)))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\n"
+                                 org-canvas-submissions-comment-template "\nStrong opening.\n")
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
+        (let ((data (nth 2 (test-org-canvas-last-api-call))))
+          (expect (alist-get 'text_comment (alist-get 'comment data)) :to-equal "Strong opening."))
+        (expect (buffer-string) :to-match "^\\*\\* Comments\n- \\*You\\* <[^>]+> :: Strong opening\\.\n")
+        (expect (string-match "\\*\\* Comments" (buffer-string))
+                :to-be-less-than (string-match "\\*\\* Comment to post" (buffer-string)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-canvas--submissions-comment-draft) :to-be nil)
+        (expect (buffer-modified-p) :to-be nil))))
   (it "posts grades and comments in one confirmation"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\nNice.\n")
-          (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
-            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t)))
-              (org-canvas-submissions-push-grades))
-            (expect prompt :to-match "1 grade change(s) and 1 comment(s)")
-            (expect (test-org-canvas-api-call-count) :to-equal 2)
-            (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
-            (expect (buffer-string) :to-match ":: Nice\\."))))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\nNice.\n")
+        (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t)))
+            (org-canvas-submissions-push-grades))
+          (expect prompt :to-match "1 grade change(s) and 1 comment(s)")
+          (expect (test-org-canvas-api-call-count) :to-equal 2)
+          (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+          (expect (buffer-string) :to-match ":: Nice\\.")))))
   (it "carries a draft across a refresh instead of asking about it"
     (with-org-canvas-test-config
       (with-grading-file (concat test-grading-file-header
@@ -283,112 +270,106 @@
       (expect (org-canvas-submissions-push-grades) :to-throw 'user-error)))
 
   (it "names the skipped conflicts in the confirmation prompt"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file
-            (concat test-grading-file-header
-                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n\n"
-                    "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
-          (let ((org-canvas-submissions-check-conflicts t)
-                (prompt nil))
-            (setq-local org-canvas-submissions--current-view 'detail)
-            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                       (lambda (_id) '((5001 . ("92" 1 nil)) (5002 . ("70" 1 nil)))))
-                      ((symbol-function 'org-canvas--confirm)
-                       (lambda (p) (setq prompt p) nil)))
-              (org-canvas-submissions-push-grades))
-            (expect prompt :to-match "skipping 1 conflict")
-            (expect (test-org-canvas-api-call-count) :to-equal 0)
-            ;; The way out lives in the message, not in the property (issue #264).
-            (org-canvas--submissions-goto-user 5001)
-            (expect (org-entry-get (point) "CONFLICT") :to-be nil)
-            (org-canvas--submissions-goto-user 5002)
-            (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 70"))))))
+    (with-test-api
+      (with-grading-file
+          (concat test-grading-file-header
+                  "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n\n"
+                  "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
+        (let ((org-canvas-submissions-check-conflicts t)
+              (prompt nil))
+          (setq-local org-canvas-submissions--current-view 'detail)
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("92" 1 nil)) (5002 . ("70" 1 nil)))))
+                    ((symbol-function 'org-canvas--confirm)
+                     (lambda (p) (setq prompt p) nil)))
+            (org-canvas-submissions-push-grades))
+          (expect prompt :to-match "skipping 1 conflict")
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          ;; The way out lives in the message, not in the property (issue #264).
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+          (org-canvas--submissions-goto-user 5002)
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 70")))))
   (it "says how to clear a marked conflict when there is nothing else to push"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file
-            (concat test-grading-file-header
-                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
-          (let ((org-canvas-submissions-check-conflicts t) (messages nil))
-            (setq-local org-canvas-submissions--current-view 'detail)
-            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                       (lambda (_id) '((5001 . ("93" 1 nil)))))
-                      ((symbol-function 'message)
-                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
-              (org-canvas-submissions-push-grades))
-            (expect (car messages)
-                    :to-equal "Nothing to push; 1 conflict(s) not sent (Adams, Alice): resolve each with t (take Canvas's) or k (keep mine)")))))))
+    (with-test-api
+      (with-grading-file
+          (concat test-grading-file-header
+                  "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (let ((org-canvas-submissions-check-conflicts t) (messages nil))
+          (setq-local org-canvas-submissions--current-view 'detail)
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("93" 1 nil)))))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+            (org-canvas-submissions-push-grades))
+          (expect (car messages)
+                  :to-equal "Nothing to push; 1 conflict(s) not sent (Adams, Alice): resolve each with t (take Canvas's) or k (keep mine)"))))))
 
 (describe "pushing rubric assessments with S"
   (it "sends the rows with the derived grade in one PUT and records the baselines"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-rubric-file (concat test-rubric-file-header
-                                   (test-rubric-entry "Adams, Alice" 5001 ""
-                                                      '(("_7104" "Thesis" 2 2 "Sharp.\n\nWhere to look: deck 02.")
-                                                        ("_7105" "Evidence" 3 1.5 nil)
-                                                        ("_7106" "Style" 1 nil nil))))
-          (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
-            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t)))
-              (org-canvas-submissions-push-grades))
-            (expect prompt :to-match "1 grade change(s) (1 with rubric, 1 partly scored)"))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")
-          (let ((data (nth 2 (test-org-canvas-last-api-call))))
-            (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "3.5")
-            (expect (alist-get 'rubric_assessment data)
-                    :to-equal '((_7104 . ((points . 2) (comments . "Sharp.\n\nWhere to look: deck 02.")))
-                                (_7105 . ((points . 1.5))))))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "SCORE") :to-equal "3.5")
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3.5")
-          (expect (org-entry-get (point) "CANVAS_RUBRIC")
-                  :to-equal (org-canvas--submissions-rubric-digest
-                             '(("_7104" "2" "Sharp.\n\nWhere to look: deck 02.") ("_7105" "1.5" nil))))
-          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+    (with-test-api
+      (with-rubric-file (concat test-rubric-file-header
+                                 (test-rubric-entry "Adams, Alice" 5001 ""
+                                                    '(("_7104" "Thesis" 2 2 "Sharp.\n\nWhere to look: deck 02.")
+                                                      ("_7105" "Evidence" 3 1.5 nil)
+                                                      ("_7106" "Style" 1 nil nil))))
+        (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t)))
+            (org-canvas-submissions-push-grades))
+          (expect prompt :to-match "1 grade change(s) (1 with rubric, 1 partly scored)"))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
+        (let ((data (nth 2 (test-org-canvas-last-api-call))))
+          (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "3.5")
+          (expect (alist-get 'rubric_assessment data)
+                  :to-equal '((_7104 . ((points . 2) (comments . "Sharp.\n\nWhere to look: deck 02.")))
+                              (_7105 . ((points . 1.5))))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "3.5")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3.5")
+        (expect (org-entry-get (point) "CANVAS_RUBRIC")
+                :to-equal (org-canvas--submissions-rubric-digest
+                           '(("_7104" "2" "Sharp.\n\nWhere to look: deck 02.") ("_7105" "1.5" nil))))
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
   (it "sends several students through the bulk endpoint, each with its own fields"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-rubric-file (concat test-rubric-file-header
-                                   (test-rubric-entry "Adams, Alice" 5001 ""
-                                                      '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil)
-                                                        ("_7106" "Style" 1 1 nil)))
-                                   "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-              (org-canvas-submissions-push-grades)))
-          (expect-api-called 'POST "assignments/1001/submissions/update_grades")
-          (let* ((data (nth 2 (test-org-canvas-last-api-call)))
-                 (grade-data (alist-get 'grade_data data))
-                 (alice (alist-get "5001" grade-data nil nil #'equal))
-                 (bob (alist-get "5002" grade-data nil nil #'equal)))
-            (expect (alist-get 'posted_grade alice) :to-equal "6")
-            (expect (length (alist-get 'rubric_assessment alice)) :to-equal 3)
-            (expect (alist-get 'posted_grade bob) :to-equal "4")
-            (expect (assq 'rubric_assessment bob) :to-be nil))))))
+    (with-test-api
+      (with-rubric-file (concat test-rubric-file-header
+                                 (test-rubric-entry "Adams, Alice" 5001 ""
+                                                    '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil)
+                                                      ("_7106" "Style" 1 1 nil)))
+                                 "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
+        (let ((org-canvas-submissions-check-conflicts nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades)))
+        (expect-api-called 'POST "assignments/1001/submissions/update_grades")
+        (let* ((data (nth 2 (test-org-canvas-last-api-call)))
+               (grade-data (alist-get 'grade_data data))
+               (alice (alist-get "5001" grade-data nil nil #'equal))
+               (bob (alist-get "5002" grade-data nil nil #'equal)))
+          (expect (alist-get 'posted_grade alice) :to-equal "6")
+          (expect (length (alist-get 'rubric_assessment alice)) :to-equal 3)
+          (expect (alist-get 'posted_grade bob) :to-equal "4")
+          (expect (assq 'rubric_assessment bob) :to-be nil)))))
   (it "skips and marks a student whose rubric was assessed on Canvas since the pull"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-rubric-file (concat test-rubric-file-header
-                                   (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 2\n:CANVAS_SCORE: 2\n"
-                                                      '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil))))
-          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("2" 1 "canvas-digest")))))
-                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect (test-org-canvas-api-call-count) :to-equal 0)
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-equal "rubric: assessed on Canvas since the pull")))))
+    (with-test-api
+      (with-rubric-file (concat test-rubric-file-header
+                                 (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 2\n:CANVAS_SCORE: 2\n"
+                                                    '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil))))
+        (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                   (lambda (_id) '((5001 . ("2" 1 "canvas-digest")))))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect (test-org-canvas-api-call-count) :to-equal 0)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "rubric: assessed on Canvas since the pull"))))
   (it "does not hold a score-only change against a rubric that moved"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 5\n:CANVAS_SCORE: 2\n:END:\n")
-          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("2" 1 "canvas-digest")))))
-                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-submissions-push-grades))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001"))))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 5\n:CANVAS_SCORE: 2\n:END:\n")
+        (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                   (lambda (_id) '((5001 . ("2" 1 "canvas-digest")))))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-submissions-push-grades))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")))))
 
 (defun test-dry-push--file ()
   "Return a grading file holding every kind of change, and a conflicted row."
@@ -529,26 +510,25 @@ Return the requests made, as (METHOD URL)."
         (expect (org-canvas--submissions-comment-draft) :to-equal "Late, minus two."))))
 
   (it "names the held heading beside those the push's own check finds"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   (test-refresh--student "Adams, Alice" 5001
-                                                          ":SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n")
-                                   (test-refresh--student "Beta, Bob" 5002
-                                                          ":SCORE: 80\n:CANVAS_SCORE: 75\n"))
-          (let ((said nil))
-            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                       (lambda (_id) '((5002 . ("77" nil nil)))))
-                      ((symbol-function 'message)
-                       (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-              (let ((result (org-canvas--submissions-push-current nil)))
-                (expect (plist-get result :conflicts) :to-equal 2)
-                (expect (plist-get result :conflict-names) :to-equal '("Adams, Alice" "Beta, Bob"))))
-            (expect said :to-equal
-                    "Nothing to push; 2 conflict(s) not sent (Adams, Alice; Beta, Bob): resolve each with t (take Canvas's) or k (keep mine)")
-            (expect (test-org-canvas-api-call-count) :to-equal 0)
-            (org-canvas--submissions-goto-user 5002)
-            (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 77"))))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Adams, Alice" 5001
+                                                        ":SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n")
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":SCORE: 80\n:CANVAS_SCORE: 75\n"))
+        (let ((said nil))
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5002 . ("77" nil nil)))))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+            (let ((result (org-canvas--submissions-push-current nil)))
+              (expect (plist-get result :conflicts) :to-equal 2)
+              (expect (plist-get result :conflict-names) :to-equal '("Adams, Alice" "Beta, Bob"))))
+          (expect said :to-equal
+                  "Nothing to push; 2 conflict(s) not sent (Adams, Alice; Beta, Bob): resolve each with t (take Canvas's) or k (keep mine)")
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          (org-canvas--submissions-goto-user 5002)
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 77")))))
 
   (it "takes Canvas's grade with t, keeping what was typed under Notes"
     (with-org-canvas-test-config

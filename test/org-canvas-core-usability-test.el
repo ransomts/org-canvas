@@ -188,10 +188,9 @@
             (with-temp-file temp-file
               (insert "* Test Page\n:PROPERTIES:\n:PUBLISHED: true\n:END:\nBody.\n"))
             (spy-on 'message :and-call-through)
-            (with-org-canvas-test-config
-              (with-mock-api
-                (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-sync-pages))))
+            (with-test-api
+              (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-sync-pages)))
             ;; Check that a progress message was emitted
             (expect 'message :to-have-been-called))
         (ignore-errors (kill-buffer (get-file-buffer temp-file)))
@@ -205,16 +204,14 @@
             (with-temp-file temp-file
               (insert "* Test Announcement\n:PROPERTIES:\n:CANVAS_ID: 12345\n:PAYLOAD_HASH: dummy\n:PUBLISHED: true\n:ALLOW_COMMENTS: true\n:END:\nBody.\n"))
             ;; First sync sets PAYLOAD_HASH to real value
-            (with-org-canvas-test-config
-              (with-mock-api
-                (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-sync-announcements))))
+            (with-test-api
+              (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-sync-announcements)))
             ;; Second sync should skip (hash now matches)
             (spy-on 'message :and-call-through)
-            (with-org-canvas-test-config
-              (with-mock-api
-                (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-sync-announcements))))
+            (with-test-api
+              (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-sync-announcements)))
             ;; Should have received a skip message
             (let ((skip-called nil))
               (dolist (call (spy-calls-all 'message))
