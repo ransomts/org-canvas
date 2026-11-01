@@ -26,7 +26,7 @@ eldev complexity     # Target: 0 functions above 15
 eldev clean all      # Mandatory after editing a macro
 ```
 
-- **Lint under Emacs 30.1, not a newer local Emacs.** Its checkdoc rejects a third-person verb such as "holds" anywhere in a docstring's first line, and any docstring line over 80 columns. The pre-push hook lints under the pinned Emacs 30; setup.md has the details.
+- **Lint under Emacs 30.2, not a newer local Emacs.** Its checkdoc rejects a third-person verb such as "holds" anywhere in a docstring's first line, and any docstring line over 80 columns. The pre-push hook lints under the pinned Emacs 30; setup.md has the details.
 - **Changelog: one fragment per PR, never CHANGELOG.org.** Add `changelog.d/<issue>.org` (a `* Added`/`* Changed`/`* Fixed` heading, then `- #<issue> ...` items; `changelog.d/README.org`), checked by `scripts/changelog-collect.py --check`.
 - **codecov/patch gates every PR:** each `lisp/` line a PR adds must run under a test (`python3 scripts/patch-coverage.py`, testing guide).
 

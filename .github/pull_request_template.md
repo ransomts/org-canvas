@@ -7,7 +7,7 @@ Closes #
 ## Checklist
 
 - [ ] `eldev test` is green
-- [ ] `eldev lint` has no warnings. CI lints on Emacs 30.1, whose checkdoc rejects a third-person verb ("holds") in a docstring's first line even when a newer local Emacs accepts it
+- [ ] `eldev lint` has no warnings. CI lints on Emacs 30.2, whose checkdoc rejects a third-person verb ("holds") in a docstring's first line even when a newer local Emacs accepts it
 - [ ] `eldev complexity` reports 0 functions above 15
 - [ ] Coverage stays at 99% or above (`eldev test -u "on,codecov,dontsend" -U coverage/coverage.json`)
 - [ ] A changelog fragment `changelog.d/<issue>.org` names the issue (`changelog.d/README.org`); `CHANGELOG.org` itself is not edited
