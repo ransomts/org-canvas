@@ -11,7 +11,7 @@
 # the test files failed in isolation on 2026-09-12 while the suite was
 # green — modules another file had required, a logger a spec had
 # silenced, a temp file another spec had left behind (issue #260).
-# CI runs this as the isolation job, split in three shards on Emacs 30.1.
+# CI runs this as the isolation job, split in three shards on Emacs 30.2.
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 2

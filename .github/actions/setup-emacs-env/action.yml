@@ -14,7 +14,7 @@ inputs:
       purpose installs its own packages into .eldev, so each gets its
       own cache: one shared key was saved by whichever job finished
       first, and the complexity job, done in seconds, left a near-empty
-      30.1 cache that sent every other 30.1 job to ELPA.
+      30.2 cache that sent every other 30.2 job to ELPA.
     required: true
   pandoc:
     description: Install pandoc ("true" or "false")
