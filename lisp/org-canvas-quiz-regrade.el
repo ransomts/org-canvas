@@ -116,7 +116,7 @@ practice quiz is: its attempts have no submission history to read."
     (append (alist-get 'question_statistics quiz-stats) nil)))
 
 (defun org-canvas--quiz-regrade-question (record fragment)
-  "Return the one question of RECORD whose text holds FRAGMENT.
+  "Return the one question of RECORD with FRAGMENT in its text.
 The result is a plist (:id :text :points), the question's own points
 unless the statistics leave them out, when the quiz's stand in.
 Signals unless exactly one question matches, naming those that do."
@@ -264,7 +264,7 @@ Return `sent', or the error's text when the send failed."
     (error (error-message-string err))))
 
 (defun org-canvas--quiz-regrade-verify (record question-id score changes)
-  "Read the SCORE of each of CHANGES back from RECORD.
+  "Read each attempt's SCORE back from RECORD.
 CHANGES are the attempts just sent for QUESTION-ID.  Each result is a
 plist (:name :attempt :points :ok), :points what Canvas held when read
 back."
