@@ -85,18 +85,17 @@ so no pull-item reaches the network guard."
 
   (it "page pull with body is idempotent (no body duplication on re-pull)"
     ;; Pages fetch detail and insert the body — the classic duplication risk.
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages/welcome" . ((page_id . 5)
-                                     (body . "<p>Hello class.</p>")))))
-        (let* ((initial (concat "* Welcome\n:PROPERTIES:\n"
-                                ":CANVAS_URL: welcome\n:END:\n"))
-               (response '((url . "welcome") (page_id . 5) (title . "Welcome")))
-               (r (org-canvas-roundtrip--pull-twice
-                   initial #'org-canvas--page-pull-item response)))
-          (expect (car r) :to-match "Hello class\\.")
-          (expect (cdr r) :to-equal (car r)))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("pages/welcome" . ((page_id . 5)
+                                   (body . "<p>Hello class.</p>")))))
+      (let* ((initial (concat "* Welcome\n:PROPERTIES:\n"
+                              ":CANVAS_URL: welcome\n:END:\n"))
+             (response '((url . "welcome") (page_id . 5) (title . "Welcome")))
+             (r (org-canvas-roundtrip--pull-twice
+                 initial #'org-canvas--page-pull-item response)))
+        (expect (car r) :to-match "Hello class\\.")
+        (expect (cdr r) :to-equal (car r))))))
 
 ;;;; Registry round trip (issue #137)
 ;;
@@ -310,13 +309,12 @@ value round-trips, else (ORG-PROP EXPECTED PARSED)."
     (dolist (row (org-canvas-roundtrip--features local-file))
       (let ((row row))
         (it (car row)
-          (with-org-canvas-test-config
-            (with-mock-api
-              (setq test-org-canvas-api-responses
-                    '(("pages/p" . ((page_id . 5) (body . "<p>x</p>")))))
-              (let ((result (org-canvas-roundtrip--check row)))
-                (expect (car result) :to-be-greater-than 0)
-                (expect (cdr result) :to-equal nil)))))))))
+          (with-test-api
+            (setq test-org-canvas-api-responses
+                  '(("pages/p" . ((page_id . 5) (body . "<p>x</p>")))))
+            (let ((result (org-canvas-roundtrip--check row)))
+              (expect (car result) :to-be-greater-than 0)
+              (expect (cdr result) :to-equal nil))))))))
 
 (provide 'org-canvas-roundtrip-test)
 ;;; org-canvas-roundtrip-test.el ends here

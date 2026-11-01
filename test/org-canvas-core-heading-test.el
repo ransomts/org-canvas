@@ -20,17 +20,16 @@
 
 (describe "org-canvas--push-at-point-runtime"
   (it "hands the pull-item-fn to the push through the run context"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test Page
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test Page
 :PROPERTIES:
 :CANVAS_ID: 99
 :END:
 "
-         (org-back-to-heading)
-         (let ((captured-pull-fn nil))
-           (cl-letf (((symbol-function 'display-buffer) #'ignore))
+       (org-back-to-heading)
+       (let ((captured-pull-fn nil))
+         (cl-letf (((symbol-function 'display-buffer) #'ignore))
 		    (org-canvas--push-at-point-runtime (list
 							:feature "test"
 							:parse (lambda () (list :title "Test" :canvas-id "99" :pom (point)))
@@ -41,7 +40,7 @@
 							:finalize (lambda (_data _response &optional _ctx) nil)
 							:title-key :title
 							:pull-item-fn #'my-pull-fn)))
-           (expect captured-pull-fn :to-equal #'my-pull-fn)))))))
+         (expect captured-pull-fn :to-equal #'my-pull-fn))))))
 
 (describe "org-canvas--push-at-point-runtime"
   (it "skips sync when payload hash matches"

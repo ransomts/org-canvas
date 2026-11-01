@@ -220,44 +220,40 @@ Content.
 
 (describe "page push-to-api (mocked)"
   (it "uses POST for new pages"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New" :canvas-url nil))
-              (payload (make-hash-table)))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "pages" :id-key :canvas-url
-                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
-          (expect-api-called 'POST "pages$")))))
+    (with-test-api
+      (let ((data '(:title "New" :canvas-url nil))
+            (payload (make-hash-table)))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "pages" :id-key :canvas-url
+                                  :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
+        (expect-api-called 'POST "pages$"))))
 
   (it "uses PUT for existing pages"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-url "existing-page"))
-              (payload (make-hash-table)))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "pages" :id-key :canvas-url
-                                    :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
-          (expect-api-called 'PUT "pages/existing-page"))))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-url "existing-page"))
+            (payload (make-hash-table)))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "pages" :id-key :canvas-url
+                                  :find-fn (lambda (title) (org-canvas--search-item "pages" title))))
+        (expect-api-called 'PUT "pages/existing-page")))))
 
 (describe "page search (mocked)"
   (it "searches pages endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages" . [((url . "test-page") (title . "Test Page"))])))
-        (org-canvas--search-item "pages" "Test Page")
-        (expect-api-called 'GET "pages"))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("pages" . [((url . "test-page") (title . "Test Page"))])))
+      (org-canvas--search-item "pages" "Test Page")
+      (expect-api-called 'GET "pages")))
 
   (it "returns matching page"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages" . [((url . "syllabus") (title . "Syllabus"))
-                            ((url . "other") (title . "Other"))])))
-        (let ((result (org-canvas--search-item "pages" "Syllabus")))
-          (expect (alist-get 'url result) :to-equal "syllabus"))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("pages" . [((url . "syllabus") (title . "Syllabus"))
+                          ((url . "other") (title . "Other"))])))
+      (let ((result (org-canvas--search-item "pages" "Syllabus")))
+        (expect (alist-get 'url result) :to-equal "syllabus")))))
 
 ;;;; Stage 4: Finalize
 
@@ -428,12 +424,11 @@ This is *bold* text.
 
 (describe "page search (mocked)"
   (it "returns nil when no match"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages" . [((url . "other") (title . "Other Page"))])))
-        (let ((result (org-canvas--search-item "pages" "Nonexistent")))
-          (expect result :to-be nil)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("pages" . [((url . "other") (title . "Other Page"))])))
+      (let ((result (org-canvas--search-item "pages" "Nonexistent")))
+        (expect result :to-be nil))))
 
   (it "returns nil on API error"
     (with-org-canvas-test-config
@@ -464,21 +459,20 @@ This is *bold* text.
 
 (describe "org-canvas-delete-page-at-point (mocked)"
   (it "deletes page and clears properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test Page
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test Page
 :PROPERTIES:
 :CANVAS_URL: test-page-url
 :LAST_SYNCED: [2024-01-01 Mon]
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas-delete-page-at-point)
-           (expect-api-called 'DELETE "pages/test-page-url")
-           (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
-           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas-delete-page-at-point)
+         (expect-api-called 'DELETE "pages/test-page-url")
+         (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
+         (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
   (it "errors when no CANVAS_URL present"
     (with-temp-org-buffer
@@ -508,22 +502,21 @@ This is *bold* text.
          (expect (org-entry-get (point) "CANVAS_URL") :to-equal "some-page")))))
 
   (it "aborts when user says no"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Page
+    (with-test-api
+      (with-temp-org-buffer
+       "* Page
 :PROPERTIES:
 :CANVAS_URL: my-page
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-           (org-canvas-delete-page-at-point)
-           ;; Should NOT have called DELETE
-           (expect (test-org-canvas-api-called-p 'DELETE "pages/my-page")
-                   :to-be nil)
-           ;; Properties should still exist
-           (expect (org-entry-get (point) "CANVAS_URL") :to-equal "my-page")))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+         (org-canvas-delete-page-at-point)
+         ;; Should NOT have called DELETE
+         (expect (test-org-canvas-api-called-p 'DELETE "pages/my-page")
+                 :to-be nil)
+         ;; Properties should still exist
+         (expect (org-entry-get (point) "CANVAS_URL") :to-equal "my-page"))))))
 
 ;;;; Sync Pages Pipeline
 

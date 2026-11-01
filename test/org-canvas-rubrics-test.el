@@ -331,37 +331,34 @@ This is a longer description of the criterion.
 
 (describe "org-canvas--rubric-push-to-api (mocked)"
   (it "uses POST to create rubric"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Rubric"))
-              (payload (make-hash-table)))
-          (org-canvas--rubric-push-to-api data payload)
-          (expect-api-called 'POST "rubrics")))))
+    (with-test-api
+      (let ((data '(:title "New Rubric"))
+            (payload (make-hash-table)))
+        (org-canvas--rubric-push-to-api data payload)
+        (expect-api-called 'POST "rubrics"))))
 
   (it "updates a known rubric in place, without deleting anything (issue #123)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing Rubric" :canvas-id "133477"))
-              (payload (make-hash-table))
-              (org-canvas-detect-conflicts nil))
-          (org-canvas--rubric-push-to-api data payload)
-          (expect-api-called 'PUT "rubrics/133477")
-          (expect (test-org-canvas-api-called-p 'DELETE "rubrics/133477")
-                  :to-be nil)))))
+    (with-test-api
+      (let ((data '(:title "Existing Rubric" :canvas-id "133477"))
+            (payload (make-hash-table))
+            (org-canvas-detect-conflicts nil))
+        (org-canvas--rubric-push-to-api data payload)
+        (expect-api-called 'PUT "rubrics/133477")
+        (expect (test-org-canvas-api-called-p 'DELETE "rubrics/133477")
+                :to-be nil))))
 
   (it "does not delete a rubric Canvas already holds under the same title"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("rubrics$" . [((id . 555) (title . "Duplicate Rubric"))])))
-        ;; No :pom, so the duplicate guard stays out of it; what matters
-        ;; is that nothing is destroyed on the way to the create.
-        (let ((data '(:title "Duplicate Rubric"))
-              (payload (make-hash-table)))
-          (org-canvas--rubric-push-to-api data payload)
-          (expect (test-org-canvas-api-called-p 'DELETE "rubrics/555")
-                  :to-be nil)
-          (expect-api-called 'POST "rubrics")))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("rubrics$" . [((id . 555) (title . "Duplicate Rubric"))])))
+      ;; No :pom, so the duplicate guard stays out of it; what matters
+      ;; is that nothing is destroyed on the way to the create.
+      (let ((data '(:title "Duplicate Rubric"))
+            (payload (make-hash-table)))
+        (org-canvas--rubric-push-to-api data payload)
+        (expect (test-org-canvas-api-called-p 'DELETE "rubrics/555")
+                :to-be nil)
+        (expect-api-called 'POST "rubrics"))))
 
   (it "retries a stale id as a create"
     (with-org-canvas-test-config
@@ -878,18 +875,17 @@ first, for BODY to inspect."
           (expect (car (last warnings)) :to-match "Could not read rubric 138462")))))
 
   (it "creates without reading anything first"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (pcase-let ((`(,data . ,payload)
-                     (test-rubric--payload-for
-                      "* New Rubric
+    (with-test-api
+      (pcase-let ((`(,data . ,payload)
+                   (test-rubric--payload-for
+                    "* New Rubric
 ** Thesis :3pt:
 | Rating | Points | Description |
 |--------+--------+-------------|
 | Full Marks | 3 | |
 ")))
-          (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
-          (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(POST)))))))
+        (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+        (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(POST))))))
 
 ;;;; Assignment Baselines After a Rubric Update (issue #470)
 
@@ -1051,12 +1047,11 @@ back.  Return (FILE-TEXT . CALLS)."
                     :to-be nil))))))
 
   (it "leaves a heading with no stamp of its own unread"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 5001\n:END:\n"
-          (expect (org-canvas--assignment-stamp-current-p (point) 5001 "A")
-                  :to-be nil)
-          (expect test-org-canvas-api-calls :to-equal nil))))))
+    (with-test-api
+      (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 5001\n:END:\n"
+        (expect (org-canvas--assignment-stamp-current-p (point) 5001 "A")
+                :to-be nil)
+        (expect test-org-canvas-api-calls :to-equal nil)))))
 
 (describe "org-canvas--rubric-warn-points-moved (issue #255)"
   (it "warns when the total changed and an assignment grades with the rubric"
@@ -1134,21 +1129,19 @@ back.  Return (FILE-TEXT . CALLS)."
 
 (describe "rubric search (mocked)"
   (it "searches rubrics endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("rubrics" . [((id . 100) (title . "Essay Rubric"))])))
-        (org-canvas--search-item "rubrics" "Essay Rubric" :params nil)
-        (expect-api-called 'GET "rubrics"))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("rubrics" . [((id . 100) (title . "Essay Rubric"))])))
+      (org-canvas--search-item "rubrics" "Essay Rubric" :params nil)
+      (expect-api-called 'GET "rubrics")))
 
   (it "returns matching rubric"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("rubrics" . [((id . 100) (title . "Rubric A"))
-                              ((id . 101) (title . "Rubric B"))])))
-        (let ((result (org-canvas--search-item "rubrics" "Rubric A" :params nil)))
-          (expect (alist-get 'id result) :to-equal 100))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("rubrics" . [((id . 100) (title . "Rubric A"))
+                            ((id . 101) (title . "Rubric B"))])))
+      (let ((result (org-canvas--search-item "rubrics" "Rubric A" :params nil)))
+        (expect (alist-get 'id result) :to-equal 100)))))
 
 ;;;; Rubric Dissociation
 
@@ -1760,19 +1753,18 @@ Keep this body
                   :to-equal '((nil nil nil) (nil nil "51479") (nil nil nil)))))))
 
   (it "clears CANVAS_CRITERION_ID under a rubric deleted at point"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-current-buffer (org-canvas--find-file-noselect org-file)
-          (goto-char (point-min))
-          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-            (org-canvas-delete-rubric-at-point))
-          (expect-api-called 'DELETE "rubrics/111")
-          (expect (org-map-entries
-                   (lambda ()
-                     (list (org-entry-get (point) "CANVAS_ID")
-                           (org-entry-get (point) "CANVAS_CRITERION_ID")))
-                   nil 'file)
-                  :to-equal '((nil nil) (nil nil) (nil nil))))))))
+    (with-test-api
+      (with-current-buffer (org-canvas--find-file-noselect org-file)
+        (goto-char (point-min))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-delete-rubric-at-point))
+        (expect-api-called 'DELETE "rubrics/111")
+        (expect (org-map-entries
+                 (lambda ()
+                   (list (org-entry-get (point) "CANVAS_ID")
+                         (org-entry-get (point) "CANVAS_CRITERION_ID")))
+                 nil 'file)
+                :to-equal '((nil nil) (nil nil) (nil nil)))))))
 
 (describe "org-canvas-delete-all-rubrics confirmation"
   (it "aborts when user declines"
@@ -2127,21 +2119,20 @@ Keep this body
 
 (describe "org-canvas-delete-rubric-at-point"
   (it "deletes rubric and clears properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test
 :PROPERTIES:
 :CANVAS_ID: 42
 :LAST_SYNCED: [2024-01-01 Mon]
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas-delete-rubric-at-point)
-           (expect-api-called 'DELETE "rubrics/42")
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas-delete-rubric-at-point)
+         (expect-api-called 'DELETE "rubrics/42")
+         (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+         (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
   (it "errors when no CANVAS_ID"
     (with-temp-org-buffer

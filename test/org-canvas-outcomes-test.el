@@ -11,20 +11,18 @@
 
 (describe "org-canvas--outcome-get-root-group-id (mocked)"
   (it "returns root group id from API"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("root_outcome_group" . ((id . 12345) (title . "Root")))))
-        (let ((result (org-canvas--outcome-get-root-group-id)))
-          (expect result :to-equal 12345)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("root_outcome_group" . ((id . 12345) (title . "Root")))))
+      (let ((result (org-canvas--outcome-get-root-group-id)))
+        (expect result :to-equal 12345))))
 
   (it "calls the correct endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("root_outcome_group" . ((id . 99)))))
-        (org-canvas--outcome-get-root-group-id)
-        (expect-api-called 'GET "root_outcome_group")))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("root_outcome_group" . ((id . 99)))))
+      (org-canvas--outcome-get-root-group-id)
+      (expect-api-called 'GET "root_outcome_group"))))
 
 (describe "org-canvas--outcome-parse-ratings"
   (it "parses rating list items"
@@ -566,30 +564,27 @@ Content.
 
 (describe "org-canvas--outcome-group-search-by-title (mocked)"
   (it "searches subgroups endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups/100/subgroups" . [((id . 200) (title . "Skills"))
-                                                   ((id . 201) (title . "Knowledge"))])))
-        (org-canvas--outcome-group-search-by-title "Skills" 100)
-        (expect-api-called 'GET "outcome_groups/100/subgroups"))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups/100/subgroups" . [((id . 200) (title . "Skills"))
+                                                 ((id . 201) (title . "Knowledge"))])))
+      (org-canvas--outcome-group-search-by-title "Skills" 100)
+      (expect-api-called 'GET "outcome_groups/100/subgroups")))
 
   (it "returns matching group"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . [((id . 200) (title . "Skills"))
-                                     ((id . 201) (title . "Knowledge"))])))
-        (let ((result (org-canvas--outcome-group-search-by-title "Skills" 100)))
-          (expect (alist-get 'id result) :to-equal 200)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . [((id . 200) (title . "Skills"))
+                                   ((id . 201) (title . "Knowledge"))])))
+      (let ((result (org-canvas--outcome-group-search-by-title "Skills" 100)))
+        (expect (alist-get 'id result) :to-equal 200))))
 
   (it "returns nil when not found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . [((id . 200) (title . "Other"))])))
-        (let ((result (org-canvas--outcome-group-search-by-title "Missing" 100)))
-          (expect result :to-be nil)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . [((id . 200) (title . "Other"))])))
+      (let ((result (org-canvas--outcome-group-search-by-title "Missing" 100)))
+        (expect result :to-be nil))))
 
   (it "returns nil on API error"
     (with-org-canvas-test-config
@@ -601,29 +596,26 @@ Content.
 
 (describe "org-canvas--outcome-search-by-title (mocked)"
   (it "searches outcomes in group"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups/100/outcomes" . [((outcome . ((id . 300) (title . "Writing"))))])))
-        (org-canvas--outcome-search-by-title "Writing" 100)
-        (expect-api-called 'GET "outcome_groups/100/outcomes"))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups/100/outcomes" . [((outcome . ((id . 300) (title . "Writing"))))])))
+      (org-canvas--outcome-search-by-title "Writing" 100)
+      (expect-api-called 'GET "outcome_groups/100/outcomes")))
 
   (it "returns matching outcome"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . [((outcome . ((id . 300) (title . "Writing"))))
-                                     ((outcome . ((id . 301) (title . "Reading"))))])))
-        (let ((result (org-canvas--outcome-search-by-title "Writing" 100)))
-          (expect (alist-get 'id result) :to-equal 300)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . [((outcome . ((id . 300) (title . "Writing"))))
+                                   ((outcome . ((id . 301) (title . "Reading"))))])))
+      (let ((result (org-canvas--outcome-search-by-title "Writing" 100)))
+        (expect (alist-get 'id result) :to-equal 300))))
 
   (it "returns nil when not found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . [])))
-        (let ((result (org-canvas--outcome-search-by-title "Missing" 100)))
-          (expect result :to-be nil)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . [])))
+      (let ((result (org-canvas--outcome-search-by-title "Missing" 100)))
+        (expect result :to-be nil))))
 
   (it "returns nil on API error"
     (with-org-canvas-test-config
@@ -637,18 +629,16 @@ Content.
 
 (describe "org-canvas--outcome-group-push-to-api (mocked)"
   (it "uses PUT for existing groups"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "555")))
-          (org-canvas--outcome-group-push-to-api data 1)
-          (expect-api-called 'PUT "outcome_groups/555")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "555")))
+        (org-canvas--outcome-group-push-to-api data 1)
+        (expect-api-called 'PUT "outcome_groups/555"))))
 
   (it "uses POST for new groups"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Group" :canvas-id nil)))
-          (org-canvas--outcome-group-push-to-api data 100)
-          (expect-api-called 'POST "outcome_groups/100/subgroups")))))
+    (with-test-api
+      (let ((data '(:title "New Group" :canvas-id nil)))
+        (org-canvas--outcome-group-push-to-api data 100)
+        (expect-api-called 'POST "outcome_groups/100/subgroups"))))
 
   (it "retries as POST when PUT returns 404"
     (with-org-canvas-test-config
@@ -682,19 +672,17 @@ Content.
 
 (describe "org-canvas--outcome-push-to-api (mocked)"
   (it "uses PUT for existing outcomes"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "666" :parent-group-id 100)))
-          (org-canvas--outcome-push-to-api data)
-          (expect-api-called 'PUT "outcomes/666")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "666" :parent-group-id 100)))
+        (org-canvas--outcome-push-to-api data)
+        (expect-api-called 'PUT "outcomes/666"))))
 
   (it "uses POST for new outcomes"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Outcome" :canvas-id nil :parent-group-id 100
-                      :description "Desc" :calculation_method "highest")))
-          (org-canvas--outcome-push-to-api data)
-          (expect-api-called 'POST "outcome_groups/100/outcomes")))))
+    (with-test-api
+      (let ((data '(:title "New Outcome" :canvas-id nil :parent-group-id 100
+                    :description "Desc" :calculation_method "highest")))
+        (org-canvas--outcome-push-to-api data)
+        (expect-api-called 'POST "outcome_groups/100/outcomes"))))
 
   (it "errors when no parent-group-id"
     (let ((data '(:title "Orphan" :canvas-id nil :parent-group-id nil)))
@@ -733,20 +721,18 @@ Content.
 
 (describe "org-canvas--outcome-group-create (mocked)"
   (it "posts to subgroups endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Group")))
-          (org-canvas--outcome-group-create data 100)
-          (expect-api-called 'POST "outcome_groups/100/subgroups")))))
+    (with-test-api
+      (let ((data '(:title "New Group")))
+        (org-canvas--outcome-group-create data 100)
+        (expect-api-called 'POST "outcome_groups/100/subgroups"))))
 
   (it "returns created group"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . ((id . 555) (title . "Created Group")))))
-        (let ((data '(:title "Created Group")))
-          (let ((result (org-canvas--outcome-group-create data 100)))
-            (expect (alist-get 'id result) :to-equal 555))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . ((id . 555) (title . "Created Group")))))
+      (let ((data '(:title "Created Group")))
+        (let ((result (org-canvas--outcome-group-create data 100)))
+          (expect (alist-get 'id result) :to-equal 555)))))
 
   (it "searches for group on error"
     (with-org-canvas-test-config
@@ -768,29 +754,26 @@ Content.
 
 (describe "org-canvas--outcome-create (mocked)"
   (it "posts to outcomes endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Outcome" :description "Desc" :calculation_method "highest")))
-          (org-canvas--outcome-create data 100)
-          (expect-api-called 'POST "outcome_groups/100/outcomes")))))
+    (with-test-api
+      (let ((data '(:title "New Outcome" :description "Desc" :calculation_method "highest")))
+        (org-canvas--outcome-create data 100)
+        (expect-api-called 'POST "outcome_groups/100/outcomes"))))
 
   (it "extracts outcome from response"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . ((outcome . ((id . 666) (title . "Created")))))))
-        (let ((data '(:title "Created" :description "" :calculation_method "highest")))
-          (let ((result (org-canvas--outcome-create data 100)))
-            (expect (alist-get 'id result) :to-equal 666))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . ((outcome . ((id . 666) (title . "Created")))))))
+      (let ((data '(:title "Created" :description "" :calculation_method "highest")))
+        (let ((result (org-canvas--outcome-create data 100)))
+          (expect (alist-get 'id result) :to-equal 666)))))
 
   (it "returns response directly if no outcome key"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups" . ((id . 777) (title . "Direct")))))
-        (let ((data '(:title "Direct" :description "" :calculation_method "highest")))
-          (let ((result (org-canvas--outcome-create data 100)))
-            (expect (alist-get 'id result) :to-equal 777))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups" . ((id . 777) (title . "Direct")))))
+      (let ((data '(:title "Direct" :description "" :calculation_method "highest")))
+        (let ((result (org-canvas--outcome-create data 100)))
+          (expect (alist-get 'id result) :to-equal 777)))))
 
   (it "searches for outcome on error"
     (with-org-canvas-test-config
@@ -1038,13 +1021,12 @@ Just description, no ratings.
 
 (describe "org-canvas--outcome-group-push-to-api update path"
   (it "updates existing group with PUT"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups/555" . ((id . 555) (title . "Updated")))))
-        (let ((data '(:title "Existing" :canvas-id "555")))
-          (let ((result (org-canvas--outcome-group-push-to-api data 1000)))
-            (expect-api-called 'PUT "outcome_groups/555")))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups/555" . ((id . 555) (title . "Updated")))))
+      (let ((data '(:title "Existing" :canvas-id "555")))
+        (let ((result (org-canvas--outcome-group-push-to-api data 1000)))
+          (expect-api-called 'PUT "outcome_groups/555"))))))
 
 ;;;; Outcome Push with Recovery
 
@@ -1109,13 +1091,12 @@ Just description, no ratings.
 
 (describe "org-canvas--outcome-create response handling"
   (it "extracts outcome from nested response"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("outcome_groups/100/outcomes" . ((outcome . ((id . 123) (title . "Nested")))))))
-        (let ((data '(:title "Nested" :description "" :calculation_method "highest")))
-          (let ((result (org-canvas--outcome-create data 100)))
-            (expect (alist-get 'id result) :to-equal 123)))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("outcome_groups/100/outcomes" . ((outcome . ((id . 123) (title . "Nested")))))))
+      (let ((data '(:title "Nested" :description "" :calculation_method "highest")))
+        (let ((result (org-canvas--outcome-create data 100)))
+          (expect (alist-get 'id result) :to-equal 123))))))
 
 ;;;; Sync Outcomes Integration Tests
 

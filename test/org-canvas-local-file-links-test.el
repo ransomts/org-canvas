@@ -36,23 +36,13 @@
 files.org holds `test-local-files-org'; pages live one level down in
 DIR/pages, so a body's relative paths differ from files.org's."
   (declare (indent 0))
-  `(let* ((dir (file-name-as-directory
-                (file-truename (make-temp-file "org-local-files-" t))))
-          (org-canvas-files-file (expand-file-name "files.org" dir))
-          (org-canvas--local-file-id-cache nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (make-directory (expand-file-name "pages" dir))
-           (make-directory (expand-file-name "content" dir))
-           (with-temp-file org-canvas-files-file
-             (insert test-local-files-org))
-           ,@body)
-       (dolist (buf (buffer-list))
-         (let ((file (buffer-file-name buf)))
-           (when (and file (string-prefix-p dir (file-truename file)))
-             (with-current-buffer buf (set-buffer-modified-p nil))
-             (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files (list (cons "files.org" test-local-files-org)
+                                      '("pages/" . nil)
+                                      '("content/" . nil)))
+     (let ((dir (file-name-as-directory dir))
+           (org-canvas--local-file-id-cache nil))
+       (with-org-canvas-test-config
+         ,@body))))
 
 (defun test-local-files-resolve (text dir)
   "Return TEXT after `org-canvas--resolve-file-links' from DIR.

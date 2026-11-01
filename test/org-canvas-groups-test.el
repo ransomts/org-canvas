@@ -42,21 +42,12 @@
   "Run BODY with a temp course directory, a groups file inside it, and the fake API.
 FILE is bound to the groups file path and DIR to the directory."
   (declare (indent 0))
-  `(let* ((dir (make-temp-file "groups-test-" t))
-          (file (expand-file-name "groups.org" dir))
-          (org-canvas-groups-file file)
-          (org-canvas-group-categories-file (expand-file-name "group-categories.org" dir)))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-groups--api)
-                     ((symbol-function 'display-buffer) (lambda (&rest _) nil)))
-             ,@body))
-       (dolist (f (list file org-canvas-group-categories-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf
-             (with-current-buffer buf (set-buffer-modified-p nil))
-             (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("groups.org" . nil)))
+     (let ((file (expand-file-name "groups.org" dir)))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-groups--api)
+                   ((symbol-function 'display-buffer) (lambda (&rest _) nil)))
+           ,@body)))))
 
 (defun test-groups--file-text (file)
   "Return FILE's text as saved on disk."

@@ -52,25 +52,17 @@
 DIR is the course directory; `org-canvas-assignments-file' holds
 `test-drift--file' as assignments.org and `org-canvas-rubrics-file'
 `test-drift--rubrics' as rubrics.org, so a link between them resolves.
-FILE and RUBRICS-FILE are bound to their paths.  The buffers are killed
-and the directory deleted afterwards.  The clean-heading check is
-stubbed to say no, so no spec hashes a heading unless it asks to."
+FILE and RUBRICS-FILE are bound to their paths.  The clean-heading
+check is stubbed to say no, so no spec hashes a heading unless it asks
+to."
   (declare (indent 0))
-  `(let* ((dir (file-name-as-directory (make-temp-file "drift-" t)))
-          (file (expand-file-name "assignments.org" dir))
-          (rubrics-file (expand-file-name "rubrics.org" dir)))
-     (unwind-protect
-         (progn
-           (with-temp-file file (insert test-drift--file))
-           (with-temp-file rubrics-file (insert test-drift--rubrics))
-           (let ((org-canvas-assignments-file file)
-                 (org-canvas-rubrics-file rubrics-file))
-             (cl-letf (((symbol-function 'org-canvas--publish-heading-clean-p)
-                        (lambda (_spec) nil)))
-               ,@body)))
-       (dolist (f (list file rubrics-file))
-         (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files (list (cons "assignments.org" test-drift--file)
+                                      (cons "rubrics.org" test-drift--rubrics)))
+     (let ((file (expand-file-name "assignments.org" dir))
+           (rubrics-file (expand-file-name "rubrics.org" dir)))
+       (cl-letf (((symbol-function 'org-canvas--publish-heading-clean-p)
+                  (lambda (_spec) nil)))
+         ,@body))))
 
 (defun test-drift--text (file)
   "Return FILE's text, read from disk."

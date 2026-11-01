@@ -84,26 +84,22 @@ when the token's role may see it, and omits it otherwise."
     n))
 
 (defmacro test-people--with-course (enrollments sections &rest body)
-  "Run BODY with the fake API serving ENROLLMENTS and SECTIONS into a temp people.org."
+  "Run BODY with the fake API serving ENROLLMENTS and SECTIONS.
+The course's people.org and sections.org are empty files in
+`with-test-course''s temp directory, which BODY may use as DIR."
   (declare (indent 2))
-  `(let* ((dir (make-temp-file "people-" t))
-          (org-canvas-people-file (expand-file-name "people.org" dir))
-          (org-canvas-sections-file (expand-file-name "sections.org" dir))
-          (test-people--enrollments ,enrollments)
-          (test-people--sections ,sections)
-          (test-people--users nil)
-          (test-people--history nil)
-          (test-people--user-reads nil)
-          (test-people--reads nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-people--api)
-                     ((symbol-function 'message) #'ignore))
-             ,@body))
-       (dolist (f (list org-canvas-people-file org-canvas-sections-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("people.org" . nil)
+                                   ("sections.org" . nil)))
+     (let ((test-people--enrollments ,enrollments)
+           (test-people--sections ,sections)
+           (test-people--users nil)
+           (test-people--history nil)
+           (test-people--user-reads nil)
+           (test-people--reads nil))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-people--api)
+                   ((symbol-function 'message) #'ignore))
+           ,@body)))))
 
 (defun test-people--file ()
   "Return people.org's text."

@@ -60,22 +60,17 @@ the submission was never assessed."
 
 (defmacro test-rubric-results--with-course (assignments submissions &rest body)
   "Run BODY with the fake API serving ASSIGNMENTS and SUBMISSIONS.
-The results and assignments files live in a temp directory."
+The results and assignments files live in `with-test-course''s
+directory, DIR, which BODY may use."
   (declare (indent 2))
-  `(let* ((dir (make-temp-file "rubric-results-" t))
-          (org-canvas-rubric-results-file (expand-file-name "rubric-results.org" dir))
-          (org-canvas-assignments-file (expand-file-name "assignments.org" dir))
-          (test-rubric-results--assignments ,assignments)
-          (test-rubric-results--submissions ,submissions))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-rubric-results--api)
-                     ((symbol-function 'message) #'ignore))
-             ,@body))
-       (dolist (f (list org-canvas-rubric-results-file org-canvas-assignments-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("rubric-results.org" . nil)
+                                   ("assignments.org" . nil)))
+     (let ((test-rubric-results--assignments ,assignments)
+           (test-rubric-results--submissions ,submissions))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-rubric-results--api)
+                   ((symbol-function 'message) #'ignore))
+           ,@body)))))
 
 (defun test-rubric-results--file ()
   "Return rubric-results.org's text."

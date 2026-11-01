@@ -13,20 +13,19 @@
 
 (describe "org-canvas-submissions-add-comment"
   (it "posts comment via interactive flow"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SUBMISSION_ID: 50001\n:END:\n"
-         (org-back-to-heading)
-         (setq-local org-canvas-submissions--assignment-id "1001")
-         (setq-local org-canvas-submissions--current-view 'detail)
-         (org-canvas-submissions-mode 1)
-         (cl-letf (((symbol-function 'read-string) (lambda (_) "Nice!"))
-                   ((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas-submissions-add-comment))
-         ;; Canvas addresses the submission by the student's user id (#125)
-         (expect-api-called 'PUT "assignments/1001/submissions/5001")
-         (expect (buffer-string) :to-match "Nice!")))))
+    (with-test-api
+      (with-temp-org-buffer
+       "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SUBMISSION_ID: 50001\n:END:\n"
+       (org-back-to-heading)
+       (setq-local org-canvas-submissions--assignment-id "1001")
+       (setq-local org-canvas-submissions--current-view 'detail)
+       (org-canvas-submissions-mode 1)
+       (cl-letf (((symbol-function 'read-string) (lambda (_) "Nice!"))
+                 ((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas-submissions-add-comment))
+       ;; Canvas addresses the submission by the student's user id (#125)
+       (expect-api-called 'PUT "assignments/1001/submissions/5001")
+       (expect (buffer-string) :to-match "Nice!"))))
 
   (it "errors when not in detail view"
     (with-temp-buffer
@@ -57,14 +56,13 @@
 
 (describe "org-canvas--submissions-post-comment"
   (it "sends PUT request with comment data, addressed by user id"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--submissions-post-comment "1001" "5001" "Great job!")
-        (expect-api-called 'PUT "assignments/1001/submissions/5001")
-        (let* ((call (test-org-canvas-last-api-call))
-               (data (nth 2 call)))
-          (expect (alist-get 'text_comment (alist-get 'comment data))
-                  :to-equal "Great job!"))))))
+    (with-test-api
+      (org-canvas--submissions-post-comment "1001" "5001" "Great job!")
+      (expect-api-called 'PUT "assignments/1001/submissions/5001")
+      (let* ((call (test-org-canvas-last-api-call))
+             (data (nth 2 call)))
+        (expect (alist-get 'text_comment (alist-get 'comment data))
+                :to-equal "Great job!")))))
 
 (describe "org-canvas--submissions-append-comment-to-buffer"
   (it "appends comment after existing comments"

@@ -25,39 +25,30 @@
 (defmacro test-replies--with-course (topics entries replies &rest body)
   "Run BODY with a temp course whose API answers TOPICS, ENTRIES and REPLIES.
 TOPICS is the topic list; ENTRIES an alist of topic id to entry list;
-REPLIES an alist of entry id to reply list.  The replies file is bound
-to a fresh path under a temp directory, DIR, which BODY may use."
+REPLIES an alist of entry id to reply list.  The replies file lives
+under `with-test-course''s temp directory, DIR, which BODY may use."
   (declare (indent 3))
-  `(let* ((dir (make-temp-file "replies-" t))
-          (org-canvas-directory dir)
-          (org-canvas-discussion-replies-file (expand-file-name "discussion-replies.org" dir))
-          (org-canvas-discussions-file (expand-file-name "discussions.org" dir))
-          (test-replies--calls nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (with-html-to-org-identity
-             (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil))
-                       ((symbol-function 'org-canvas-api-request)
-                        (lambda (method url &rest _)
-                          (push (cons method url) test-replies--calls)
-                          (cond
-                           ((string-match "/entries/\\([0-9]+\\)/replies" url)
-                            (vconcat (alist-get (string-to-number (match-string 1 url)) ,replies)))
-                           ((string-match "/discussion_topics/\\([0-9]+\\)/entries" url)
-                            (let ((topic-id (string-to-number (match-string 1 url))))
-                              (when (eq (alist-get topic-id ,entries 'absent) 'forbidden)
-                                (signal 'org-canvas-permission-error
-                                        (list "Permission denied (HTTP 403)")))
-                              (vconcat (alist-get topic-id ,entries))))
-                           ((string-match "/discussion_topics" url) (vconcat ,topics))
-                           (t nil)))))
-               ,@body)))
-       (dolist (f (list org-canvas-discussion-replies-file org-canvas-discussions-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf
-             (with-current-buffer buf (set-buffer-modified-p nil))
-             (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("discussion-replies.org" . nil)
+                                   ("discussions.org" . nil)))
+     (let ((test-replies--calls nil))
+       (with-org-canvas-test-config
+         (with-html-to-org-identity
+           (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                     ((symbol-function 'org-canvas-api-request)
+                      (lambda (method url &rest _)
+                        (push (cons method url) test-replies--calls)
+                        (cond
+                         ((string-match "/entries/\\([0-9]+\\)/replies" url)
+                          (vconcat (alist-get (string-to-number (match-string 1 url)) ,replies)))
+                         ((string-match "/discussion_topics/\\([0-9]+\\)/entries" url)
+                          (let ((topic-id (string-to-number (match-string 1 url))))
+                            (when (eq (alist-get topic-id ,entries 'absent) 'forbidden)
+                              (signal 'org-canvas-permission-error
+                                      (list "Permission denied (HTTP 403)")))
+                            (vconcat (alist-get topic-id ,entries))))
+                         ((string-match "/discussion_topics" url) (vconcat ,topics))
+                         (t nil)))))
+             ,@body))))))
 
 (defun test-replies--file-text ()
   "Return the replies file's text as saved on disk."

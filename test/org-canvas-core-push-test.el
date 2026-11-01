@@ -22,30 +22,27 @@
 
 (describe "org-canvas--search-item (mocked)"
   (it "returns matching item by title"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments" . [((id . 100) (title . "Assignment 1"))
-                                  ((id . 101) (title . "Assignment 2"))])))
-        (let ((result (org-canvas--search-item "assignments" "Assignment 1")))
-          (expect (alist-get 'id result) :to-equal 100)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments" . [((id . 100) (title . "Assignment 1"))
+                                ((id . 101) (title . "Assignment 2"))])))
+      (let ((result (org-canvas--search-item "assignments" "Assignment 1")))
+        (expect (alist-get 'id result) :to-equal 100))))
 
   (it "returns nil when no match found"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages" . [((url . "page-1") (title . "Page 1"))])))
-        (let ((result (org-canvas--search-item "pages" "Nonexistent")))
-          (expect result :to-be nil)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("pages" . [((url . "page-1") (title . "Page 1"))])))
+      (let ((result (org-canvas--search-item "pages" "Nonexistent")))
+        (expect result :to-be nil))))
 
   (it "uses custom match-field"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments" . [((id . 200) (name . "Test Assignment"))])))
-        (let ((result (org-canvas--search-item "assignments" "Test Assignment"
-                                               :match-field 'name)))
-          (expect (alist-get 'id result) :to-equal 200)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments" . [((id . 200) (name . "Test Assignment"))])))
+      (let ((result (org-canvas--search-item "assignments" "Test Assignment"
+                                             :match-field 'name)))
+        (expect (alist-get 'id result) :to-equal 200))))
 
   (it "returns nil on API error"
     (with-org-canvas-test-config
@@ -57,22 +54,20 @@
 
 (describe "org-canvas--push-to-api (mocked)"
   (it "sends POST when no canvas-id (new item)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New Item" :canvas-id nil))
-              (payload '((title . "New Item"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options :endpoint "assignments"))
-          (expect-api-called 'POST "assignments$")))))
+    (with-test-api
+      (let ((data '(:title "New Item" :canvas-id nil))
+            (payload '((title . "New Item"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options :endpoint "assignments"))
+        (expect-api-called 'POST "assignments$"))))
 
   (it "sends PUT when canvas-id present (update)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "123"))
-              (payload '((title . "Existing"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options :endpoint "assignments"))
-          (expect-api-called 'PUT "assignments/123")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "123"))
+            (payload '((title . "Existing"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options :endpoint "assignments"))
+        (expect-api-called 'PUT "assignments/123"))))
 
   (it "retries as POST on 404"
     (with-org-canvas-test-config
@@ -123,15 +118,14 @@
                     :to-throw 'error))))))
 
   (it "uses custom id-key"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Page" :canvas-url "my-page"))
-              (payload '((title . "Page"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "pages"
-                                    :id-key :canvas-url))
-          (expect-api-called 'PUT "pages/my-page"))))))
+    (with-test-api
+      (let ((data '(:title "Page" :canvas-url "my-page"))
+            (payload '((title . "Page"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "pages"
+                                  :id-key :canvas-url))
+        (expect-api-called 'PUT "pages/my-page")))))
 
 (describe "org-canvas--finalize-item"
   (it "saves CANVAS_ID from response"
@@ -214,15 +208,14 @@
 
 (describe "org-canvas--push-to-api edge cases (mocked)"
   (it "uses custom title-key"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:name "My Item" :canvas-id nil))
-              (payload '((name . "My Item"))))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "items"
-                                    :title-key :name))
-          (expect-api-called 'POST "items$")))))
+    (with-test-api
+      (let ((data '(:name "My Item" :canvas-id nil))
+            (payload '((name . "My Item"))))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "items"
+                                  :title-key :name))
+        (expect-api-called 'POST "items$"))))
 
   (it "handles nested timeout recovery for POST retry after 404"
     (with-org-canvas-test-config
@@ -258,23 +251,21 @@
 
 (describe "org-canvas--search-item edge cases (mocked)"
   (it "uses custom params when provided"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [((id . 1) (title . "Test"))])))
-        (org-canvas--search-item "items" "Test"
-                                 :params '(("custom_param" . "value")))
-        (expect-api-called 'GET "items"))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("items" . [((id . 1) (title . "Test"))])))
+      (org-canvas--search-item "items" "Test"
+                               :params '(("custom_param" . "value")))
+      (expect-api-called 'GET "items")))
 
   (it "returns first exact match only"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [((id . 1) (title . "Similar"))
-                            ((id . 2) (title . "Test"))
-                            ((id . 3) (title . "Test"))])))  ; Duplicate
-        (let ((result (org-canvas--search-item "items" "Test")))
-          (expect (alist-get 'id result) :to-equal 2))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("items" . [((id . 1) (title . "Similar"))
+                          ((id . 2) (title . "Test"))
+                          ((id . 3) (title . "Test"))])))  ; Duplicate
+      (let ((result (org-canvas--search-item "items" "Test")))
+        (expect (alist-get 'id result) :to-equal 2)))))
 
 (describe "org-canvas--finalize-item edge cases"
   (it "uses custom title-key for logging"
@@ -711,15 +702,14 @@
                      :to-equal 'conflict)))))))
 
   (it "skips conflict check for POST (new items)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((org-canvas-detect-conflicts t)
-              (data '(:title "New Item" :canvas-id nil))
-              (payload '((title . "New Item"))))
-          ;; POST should proceed without conflict check
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options :endpoint "items"))
-          (expect-api-called 'POST "items$")))))
+    (with-test-api
+      (let ((org-canvas-detect-conflicts t)
+            (data '(:title "New Item" :canvas-id nil))
+            (payload '((title . "New Item"))))
+        ;; POST should proceed without conflict check
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options :endpoint "items"))
+        (expect-api-called 'POST "items$"))))
 
   (it "skips conflict check (no GET) when detect-conflicts is nil"
     ;; LAST_SYNCED + pom are present, so if the conflict gate were wrongly
@@ -1593,68 +1583,64 @@ Returns (RESULT . WARNINGS)."
 
 (describe "org-canvas--push-to-api duplicate guard (issue #85)"
   (it "returns duplicate instead of POSTing when the heading is skipped"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer "* R11\n"
-          (org-back-to-heading)
-          (let ((titles (make-hash-table :test 'equal)))
-            (puthash "R11" '(((id . 2563810) (name . "R11"))) titles)
-            (let* ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
-                   (org-canvas-duplicate-title-strategy 'skip)
-                   (data (list :title "R11" :canvas-id nil :pom (point-marker)))
-                   (result (org-canvas--push-to-api data '((name . "R11"))
-                                                    (org-canvas--push-options
-                                                     :endpoint "assignments" :ctx ctx))))
-              (expect result :to-equal 'duplicate)
-              (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be nil)))))))
+    (with-test-api
+      (with-temp-org-buffer "* R11\n"
+        (org-back-to-heading)
+        (let ((titles (make-hash-table :test 'equal)))
+          (puthash "R11" '(((id . 2563810) (name . "R11"))) titles)
+          (let* ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
+                 (org-canvas-duplicate-title-strategy 'skip)
+                 (data (list :title "R11" :canvas-id nil :pom (point-marker)))
+                 (result (org-canvas--push-to-api data '((name . "R11"))
+                                                  (org-canvas--push-options
+                                                   :endpoint "assignments" :ctx ctx))))
+            (expect result :to-equal 'duplicate)
+            (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be nil))))))
 
   (it "adopts the existing item and updates it in place"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer "* R11\n"
-          (org-back-to-heading)
-          (let ((titles (make-hash-table :test 'equal)))
-            (puthash "R11" '(((id . 2563810) (name . "R11")
-                              (updated_at . "2026-08-28T10:00:00Z")))
-                     titles)
-            (let* ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
-                   (org-canvas-duplicate-title-strategy 'adopt)
-                   (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-              (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-                (org-canvas--push-to-api data '((name . "R11"))
-                                         (org-canvas--push-options :endpoint "assignments" :ctx ctx)))
-              (expect (test-org-canvas-api-called-p 'PUT "assignments/2563810") :to-be-truthy)
-              (expect (test-org-canvas-api-called-p 'POST "assignments$") :to-be nil)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810")))))))
+    (with-test-api
+      (with-temp-org-buffer "* R11\n"
+        (org-back-to-heading)
+        (let ((titles (make-hash-table :test 'equal)))
+          (puthash "R11" '(((id . 2563810) (name . "R11")
+                            (updated_at . "2026-08-28T10:00:00Z")))
+                   titles)
+          (let* ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
+                 (org-canvas-duplicate-title-strategy 'adopt)
+                 (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+            (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+              (org-canvas--push-to-api data '((name . "R11"))
+                                       (org-canvas--push-options :endpoint "assignments" :ctx ctx)))
+            (expect (test-org-canvas-api-called-p 'PUT "assignments/2563810") :to-be-truthy)
+            (expect (test-org-canvas-api-called-p 'POST "assignments$") :to-be nil)
+            (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810"))))))
 
   (it "creates as before when nothing on Canvas has the title"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer "* R11\n"
-          (org-back-to-heading)
-          (let* ((ctx (org-canvas--sync-make-ctx :remote-titles (make-hash-table :test 'equal)))
-                 (org-canvas-duplicate-title-strategy nil)
-                 (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-            (org-canvas--push-to-api data '((name . "R11"))
-                                     (org-canvas--push-options :endpoint "assignments" :ctx ctx))
-            (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be-truthy))))))
+    (with-test-api
+      (with-temp-org-buffer "* R11\n"
+        (org-back-to-heading)
+        (let* ((ctx (org-canvas--sync-make-ctx :remote-titles (make-hash-table :test 'equal)))
+               (org-canvas-duplicate-title-strategy nil)
+               (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+          (org-canvas--push-to-api data '((name . "R11"))
+                                   (org-canvas--push-options :endpoint "assignments" :ctx ctx))
+          (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be-truthy)))))
 
   (it "leaves a dry run alone"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer "* R11\n"
-          (org-back-to-heading)
-          (let ((titles (make-hash-table :test 'equal)))
-            (puthash "R11" '(((id . 2563810))) titles)
-            (let* ((org-canvas--dry-run t)
-                   (ctx (org-canvas--sync-make-ctx :remote-titles titles))
-                   (org-canvas-duplicate-title-strategy 'adopt)
-                   (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-              (expect (org-canvas--push-to-api data '((name . "R11"))
-                                               (org-canvas--push-options :endpoint "assignments" :ctx ctx))
-                      :to-equal org-canvas--dry-run-response)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-              (expect (test-org-canvas-api-call-count) :to-equal 0))))))))
+    (with-test-api
+      (with-temp-org-buffer "* R11\n"
+        (org-back-to-heading)
+        (let ((titles (make-hash-table :test 'equal)))
+          (puthash "R11" '(((id . 2563810))) titles)
+          (let* ((org-canvas--dry-run t)
+                 (ctx (org-canvas--sync-make-ctx :remote-titles titles))
+                 (org-canvas-duplicate-title-strategy 'adopt)
+                 (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+            (expect (org-canvas--push-to-api data '((name . "R11"))
+                                             (org-canvas--push-options :endpoint "assignments" :ctx ctx))
+                    :to-equal org-canvas--dry-run-response)
+            (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+            (expect (test-org-canvas-api-call-count) :to-equal 0)))))))
 
 (describe "org-canvas--sync-remote-updated-index modified field (issue #94)"
   (it "reads the declared field instead of updated_at"

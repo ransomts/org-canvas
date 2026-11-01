@@ -399,32 +399,30 @@ ran alone (issue #260)."
 
 (describe "org-canvas-test-connection (mocked)"
   (it "calls API and logs result"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("courses/99999" . ((name . "Canvas 101")))))
-        ;; Just ensure it doesn't error
-        (org-canvas-test-connection)
-        (expect-api-called 'GET "courses/99999")
-        (expect-api-called 'GET "/api/v1/users/self\\'")))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("courses/99999" . ((name . "Canvas 101")))))
+      ;; Just ensure it doesn't error
+      (org-canvas-test-connection)
+      (expect-api-called 'GET "courses/99999")
+      (expect-api-called 'GET "/api/v1/users/self\\'"))))
 
 (describe "org-canvas-connection-info (issue #532)"
   (it "reads users/self and the course, and names the read-only flag"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("/users/self\\'" . ((id . 7) (name . "Tim Ransom")))
-                ("courses/99999/\\'" . ((name . "Ethics") (course_code . "CPSC 3300")))))
-        (let ((org-canvas-base-url "https://test.canvas.example.com/")
-              (org-canvas-read-only 'yes))
-          (expect (org-canvas-connection-info)
-                  :to-equal '(:instance "https://test.canvas.example.com"
-                              :user "Tim Ransom" :course "Ethics"
-                              :course-code "CPSC 3300" :read-only t)))
-        (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(GET GET))
-        (expect (mapcar #'cadr test-org-canvas-api-calls)
-                :to-equal '("https://test.canvas.example.com/api/v1/courses/99999/"
-                            "https://test.canvas.example.com/api/v1/users/self"))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("/users/self\\'" . ((id . 7) (name . "Tim Ransom")))
+              ("courses/99999/\\'" . ((name . "Ethics") (course_code . "CPSC 3300")))))
+      (let ((org-canvas-base-url "https://test.canvas.example.com/")
+            (org-canvas-read-only 'yes))
+        (expect (org-canvas-connection-info)
+                :to-equal '(:instance "https://test.canvas.example.com"
+                            :user "Tim Ransom" :course "Ethics"
+                            :course-code "CPSC 3300" :read-only t)))
+      (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(GET GET))
+      (expect (mapcar #'cadr test-org-canvas-api-calls)
+              :to-equal '("https://test.canvas.example.com/api/v1/courses/99999/"
+                          "https://test.canvas.example.com/api/v1/users/self")))))
 
 ;;;; 8. Trace Logging
 

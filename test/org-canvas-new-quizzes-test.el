@@ -608,13 +608,12 @@ Quiz description.
 
 (describe "org-canvas--new-quiz-push-to-api"
   (it "uses POST for new quizzes"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let* ((data (list :title "New Quiz" :canvas-id nil :pom (point-marker)))
-               (payload (make-hash-table :test 'equal)))
-          (puthash "title" "New Quiz" payload)
-          (org-canvas--new-quiz-push-to-api data payload)
-          (expect-api-called 'POST "quizzes")))))
+    (with-test-api
+      (let* ((data (list :title "New Quiz" :canvas-id nil :pom (point-marker)))
+             (payload (make-hash-table :test 'equal)))
+        (puthash "title" "New Quiz" payload)
+        (org-canvas--new-quiz-push-to-api data payload)
+        (expect-api-called 'POST "quizzes"))))
 
   (it "wraps payload under quiz key"
     (with-org-canvas-test-config
@@ -631,13 +630,12 @@ Quiz description.
             (expect (gethash "quiz" sent-data) :to-equal payload))))))
 
   (it "uses PATCH for existing quizzes"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let* ((data (list :title "Existing Quiz" :canvas-id "42" :pom (point-marker)))
-               (payload (make-hash-table :test 'equal)))
-          (puthash "title" "Existing Quiz" payload)
-          (org-canvas--new-quiz-push-to-api data payload)
-          (expect-api-called 'PATCH "quizzes/42")))))
+    (with-test-api
+      (let* ((data (list :title "Existing Quiz" :canvas-id "42" :pom (point-marker)))
+             (payload (make-hash-table :test 'equal)))
+        (puthash "title" "Existing Quiz" payload)
+        (org-canvas--new-quiz-push-to-api data payload)
+        (expect-api-called 'PATCH "quizzes/42"))))
 
   (it "returns dry-run response when dry-run active"
     (let ((org-canvas--dry-run t))
@@ -1743,22 +1741,20 @@ Click the heart.
 
 (describe "org-canvas--new-quiz-item-push-to-api"
   (it "uses POST for new items"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data (list :title "New Item" :canvas-id nil
-                          :quiz-assignment-id "42" :pom (point-marker))))
-          (org-canvas--new-quiz-item-push-to-api
-           data (make-hash-table :test 'equal))
-          (expect-api-called 'POST "quizzes/42/items")))))
+    (with-test-api
+      (let ((data (list :title "New Item" :canvas-id nil
+                        :quiz-assignment-id "42" :pom (point-marker))))
+        (org-canvas--new-quiz-item-push-to-api
+         data (make-hash-table :test 'equal))
+        (expect-api-called 'POST "quizzes/42/items"))))
 
   (it "uses PATCH for existing items"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data (list :title "Existing Item" :canvas-id "item-99"
-                          :quiz-assignment-id "42" :pom (point-marker))))
-          (org-canvas--new-quiz-item-push-to-api
-           data (make-hash-table :test 'equal))
-          (expect-api-called 'PATCH "quizzes/42/items/item-99")))))
+    (with-test-api
+      (let ((data (list :title "Existing Item" :canvas-id "item-99"
+                        :quiz-assignment-id "42" :pom (point-marker))))
+        (org-canvas--new-quiz-item-push-to-api
+         data (make-hash-table :test 'equal))
+        (expect-api-called 'PATCH "quizzes/42/items/item-99"))))
 
   (it "retries as POST on 404 for PATCH"
     (with-org-canvas-test-config
@@ -1945,11 +1941,10 @@ Click the heart.
 :END:
 "
      (org-back-to-heading)
-     (with-org-canvas-test-config
-       (with-mock-api
-         (let ((results (org-canvas--sync-new-quiz-items (point-marker) "42")))
-           (expect (car results) :to-equal 0)
-           (expect (cdr results) :to-equal 0))))))
+     (with-test-api
+       (let ((results (org-canvas--sync-new-quiz-items (point-marker) "42")))
+         (expect (car results) :to-equal 0)
+         (expect (cdr results) :to-equal 0)))))
 
   (it "skips items not in debug-types list"
     (with-temp-org-buffer

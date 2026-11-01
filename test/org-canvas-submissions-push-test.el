@@ -176,51 +176,48 @@
 
 (describe "org-canvas--submissions-push-single-grade"
   (it "sends PUT with correct payload"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--submissions-push-single-grade
-         "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "95"))
-        (expect-api-called 'PUT "assignments/1001/submissions/5001")
-        (let* ((call (test-org-canvas-last-api-call))
-               (data (nth 2 call)))
-          (expect (alist-get 'posted_grade (alist-get 'submission data))
-                  :to-equal "95")
-          (expect (assq 'rubric_assessment data) :to-be nil)))))
+    (with-test-api
+      (org-canvas--submissions-push-single-grade
+       "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "95"))
+      (expect-api-called 'PUT "assignments/1001/submissions/5001")
+      (let* ((call (test-org-canvas-last-api-call))
+             (data (nth 2 call)))
+        (expect (alist-get 'posted_grade (alist-get 'submission data))
+                :to-equal "95")
+        (expect (assq 'rubric_assessment data) :to-be nil))))
   (it "sends the rubric assessment beside the grade, and alone when only it moved"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--submissions-push-single-grade
-         "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "4"
-                      :score-derived t
-                      :triples '(("_7104" "2" "Sharp") ("_7105" "2" nil) ("_7106" nil nil))))
-        (let ((data (nth 2 (test-org-canvas-last-api-call))))
-          (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "4")
-          (expect (alist-get 'rubric_assessment data)
-                  :to-equal '((_7104 . ((points . 2) (comments . "Sharp")))
-                              (_7105 . ((points . 2))))))
-        (org-canvas--submissions-push-single-grade
-         "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "90"
-                      :triples '(("_7104" nil "Late but fine"))))
-        (let ((data (nth 2 (test-org-canvas-last-api-call))))
-          (expect (assq 'submission data) :to-be nil)
-          (expect (alist-get 'rubric_assessment data)
-                  :to-equal '((_7104 . ((comments . "Late but fine"))))))))))
+    (with-test-api
+      (org-canvas--submissions-push-single-grade
+       "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "4"
+                    :score-derived t
+                    :triples '(("_7104" "2" "Sharp") ("_7105" "2" nil) ("_7106" nil nil))))
+      (let ((data (nth 2 (test-org-canvas-last-api-call))))
+        (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "4")
+        (expect (alist-get 'rubric_assessment data)
+                :to-equal '((_7104 . ((points . 2) (comments . "Sharp")))
+                            (_7105 . ((points . 2))))))
+      (org-canvas--submissions-push-single-grade
+       "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "90"
+                    :triples '(("_7104" nil "Late but fine"))))
+      (let ((data (nth 2 (test-org-canvas-last-api-call))))
+        (expect (assq 'submission data) :to-be nil)
+        (expect (alist-get 'rubric_assessment data)
+                :to-equal '((_7104 . ((comments . "Late but fine")))))))))
 
 (describe "org-canvas--submissions-push-bulk-grades"
   (it "sends POST with grade_data payload"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((changes (list (list :user-id 5001 :name "A" :old-score "90" :new-score "95")
-                             (list :user-id 5002 :name "B" :old-score "80" :new-score "85"))))
-          (org-canvas--submissions-push-bulk-grades "1001" changes)
-          (expect-api-called 'POST "assignments/1001/submissions/update_grades")
-          (let* ((call (test-org-canvas-last-api-call))
-                 (data (nth 2 call))
-                 (grade-data (alist-get 'grade_data data)))
-            (expect (alist-get 'posted_grade (alist-get "5001" grade-data nil nil #'equal))
-                    :to-equal "95")
-            (expect (alist-get 'posted_grade (alist-get "5002" grade-data nil nil #'equal))
-                    :to-equal "85")))))))
+    (with-test-api
+      (let ((changes (list (list :user-id 5001 :name "A" :old-score "90" :new-score "95")
+                           (list :user-id 5002 :name "B" :old-score "80" :new-score "85"))))
+        (org-canvas--submissions-push-bulk-grades "1001" changes)
+        (expect-api-called 'POST "assignments/1001/submissions/update_grades")
+        (let* ((call (test-org-canvas-last-api-call))
+               (data (nth 2 call))
+               (grade-data (alist-get 'grade_data data)))
+          (expect (alist-get 'posted_grade (alist-get "5001" grade-data nil nil #'equal))
+                  :to-equal "95")
+          (expect (alist-get 'posted_grade (alist-get "5002" grade-data nil nil #'equal))
+                  :to-equal "85"))))))
 
 ;;;; Push Command
 
@@ -299,20 +296,19 @@
     (expect (org-canvas--submissions-typed-score "9O" "92" "A") :to-throw 'user-error))
 
   (it "pushes the empty grade and takes SCORE and CANVAS_SCORE away"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-              (org-canvas-submissions-push-grades)))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")
-          (let ((data (nth 2 (test-org-canvas-last-api-call))))
-            (expect (alist-get 'submission data) :to-equal '((posted_grade . ""))))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
-          (expect (org-entry-get (point) "SCORE") :to-be nil)
-          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
+        (let ((org-canvas-submissions-check-conflicts nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades)))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
+        (let ((data (nth 2 (test-org-canvas-last-api-call))))
+          (expect (alist-get 'submission data) :to-equal '((posted_grade . ""))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
+        (expect (org-entry-get (point) "SCORE") :to-be nil)
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
 
   (it "leaves a grade alone when SCORE is absent or blank"
     (with-grading-file (concat test-grading-file-header
@@ -337,32 +333,31 @@
 
   (it "sends a clear through update_grades beside a score, and names it"
     (let ((asked nil))
-      (with-org-canvas-test-config
-        (with-mock-api
-          (setq test-org-canvas-api-responses
-                '(("update_grades" . ((id . 77) (workflow_state . "completed")))))
-          (with-grading-file (concat test-grading-file-header
-                                     (test-clear--entry "Adams, Alice" 5001 ":SCORE: -\n:CANVAS_SCORE: 92\n")
-                                     (test-clear--entry "Beta, Bob" 5002 ":SCORE: 85\n:CANVAS_SCORE: 80\n"))
-            (let ((org-canvas-submissions-check-conflicts nil)
-                  (org-canvas-assume-yes nil)
-                  (noninteractive nil))
-              (cl-letf (((symbol-function 'y-or-n-p)
-                         (lambda (q) (if asked (error "Asked twice: %s" q) (setq asked q)) t))
-                        ((symbol-function 'yes-or-no-p)
-                         (lambda (q) (if asked (error "Asked twice: %s" q) (setq asked q)) t)))
-                (org-canvas--submissions-push-current t)))
-            (let* ((call (test-org-canvas-find-api-call 'POST "update_grades"))
-                   (grade-data (alist-get 'grade_data (nth 2 call))))
-              (expect (alist-get "5001" grade-data nil nil #'equal)
-                      :to-equal '((posted_grade . "")))
-              (expect (alist-get "5002" grade-data nil nil #'equal)
-                      :to-equal '((posted_grade . "85"))))
-            (org-canvas--submissions-goto-user 5001)
-            (expect (org-entry-get (point) "SCORE") :to-be nil)
-            (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
-            (org-canvas--submissions-goto-user 5002)
-            (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "85"))))
+      (with-test-api
+        (setq test-org-canvas-api-responses
+              '(("update_grades" . ((id . 77) (workflow_state . "completed")))))
+        (with-grading-file (concat test-grading-file-header
+                                   (test-clear--entry "Adams, Alice" 5001 ":SCORE: -\n:CANVAS_SCORE: 92\n")
+                                   (test-clear--entry "Beta, Bob" 5002 ":SCORE: 85\n:CANVAS_SCORE: 80\n"))
+          (let ((org-canvas-submissions-check-conflicts nil)
+                (org-canvas-assume-yes nil)
+                (noninteractive nil))
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (q) (if asked (error "Asked twice: %s" q) (setq asked q)) t))
+                      ((symbol-function 'yes-or-no-p)
+                       (lambda (q) (if asked (error "Asked twice: %s" q) (setq asked q)) t)))
+              (org-canvas--submissions-push-current t)))
+          (let* ((call (test-org-canvas-find-api-call 'POST "update_grades"))
+                 (grade-data (alist-get 'grade_data (nth 2 call))))
+            (expect (alist-get "5001" grade-data nil nil #'equal)
+                    :to-equal '((posted_grade . "")))
+            (expect (alist-get "5002" grade-data nil nil #'equal)
+                    :to-equal '((posted_grade . "85"))))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "SCORE") :to-be nil)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
+          (org-canvas--submissions-goto-user 5002)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "85")))
       (expect asked :to-match "2 grade change(s) (1 clearing a grade)")))
 
   (it "shows a clear as clear in the list of changes"
@@ -371,18 +366,17 @@
             :to-equal "  Adams, Alice: 92 → clear"))
 
   (it "sends nothing under a dry run and records nothing"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
-          (let ((org-canvas-submissions-check-conflicts nil)
-                (org-canvas--dry-run t))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-              (org-canvas-submissions-push-grades)))
-          (expect (test-org-canvas-api-call-count) :to-equal 0)
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "SCORE") :to-equal "none")
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
+        (let ((org-canvas-submissions-check-conflicts nil)
+              (org-canvas--dry-run t))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades)))
+        (expect (test-org-canvas-api-call-count) :to-equal 0)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "none")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92"))))
 
   (it "keeps a typed clear over a re-pull until Canvas holds no grade"
     (with-org-canvas-test-config
@@ -463,16 +457,15 @@
         (expect (buffer-string) :not :to-match "FINAL_SCORE"))
       (expect (alist-get 5001 (org-canvas--submissions-snapshot-scores (list sub))) :to-equal "EX")))
   (it "push EX as the posted grade"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: ex\n:CANVAS_SCORE: 92\n:END:\n")
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-              (org-canvas-submissions-push-grades)))
-          (let ((data (nth 2 (test-org-canvas-last-api-call))))
-            (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "EX"))
-          (expect (buffer-string) :to-match ":CANVAS_SCORE: EX"))))))
+    (with-test-api
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: ex\n:CANVAS_SCORE: 92\n:END:\n")
+        (let ((org-canvas-submissions-check-conflicts nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades)))
+        (let ((data (nth 2 (test-org-canvas-last-api-call))))
+          (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "EX"))
+        (expect (buffer-string) :to-match ":CANVAS_SCORE: EX")))))
 
 (describe "posting grades (issue #202)"
   (it "records the assignment's effective policy in the file header"
@@ -659,19 +652,18 @@
   "Push the grading file CONTENT with conflicts unchecked; return the calls, oldest first.
 REPLIES is the mock API's response alist."
   (let ((calls nil))
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses replies)
-        (with-rubric-file content
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t)))
-              (org-canvas--submissions-push-current t)))
-          (setq calls (reverse test-org-canvas-api-calls))
-          (org-canvas--submissions-goto-user 5001)
-          (setq calls (list :calls calls
-                            :score (org-entry-get (point) "SCORE")
-                            :baseline (org-entry-get (point) "CANVAS_SCORE")
-                            :rubric (org-entry-get (point) "CANVAS_RUBRIC"))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses replies)
+      (with-rubric-file content
+        (let ((org-canvas-submissions-check-conflicts nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t)))
+            (org-canvas--submissions-push-current t)))
+        (setq calls (reverse test-org-canvas-api-calls))
+        (org-canvas--submissions-goto-user 5001)
+        (setq calls (list :calls calls
+                          :score (org-entry-get (point) "SCORE")
+                          :baseline (org-entry-get (point) "CANVAS_SCORE")
+                          :rubric (org-entry-get (point) "CANVAS_RUBRIC")))))
     calls))
 
 (describe "a grade beside comment-only rubric rows (issue #444)"
@@ -823,30 +815,29 @@ REPLIES is the mock API's response alist."
       (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error)))
 
   (it "clears the rows, then sends the ruled score, and records both"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-rubric-file (concat test-rubric-file-header
-                                   (test-rubric-entry "Adams, Alice" 5001
-                                                      (format ":SCORE: 0\n:CANVAS_SCORE: 16\n:CANVAS_RUBRIC: %s\n"
-                                                              test-clear-rows--digest)
-                                                      '(("_7104" "Thesis" 2 "none" nil)
-                                                        ("_7105" "Evidence" 3 "none" nil)
-                                                        ("_7106" "Style" 1 nil nil))))
-          (let ((org-canvas-submissions-check-conflicts nil))
-            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t)))
-              (org-canvas--submissions-push-current t)))
-          (let ((calls (reverse test-org-canvas-api-calls)))
-            (expect (mapcar #'car calls) :to-equal '(PUT PUT))
-            (expect (nth 2 (nth 0 calls))
-                    :to-equal '((rubric_assessment . ((_7104 . ((points . "") (comments . "")))
-                                                      (_7105 . ((points . "") (comments . "")))))))
-            (expect (nth 2 (nth 1 calls)) :to-equal '((submission . ((posted_grade . "0"))))))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_RUBRIC") :to-be nil)
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "0")
-          (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
-                  :to-equal '(nil nil nil))
-          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+    (with-test-api
+      (with-rubric-file (concat test-rubric-file-header
+                                 (test-rubric-entry "Adams, Alice" 5001
+                                                    (format ":SCORE: 0\n:CANVAS_SCORE: 16\n:CANVAS_RUBRIC: %s\n"
+                                                            test-clear-rows--digest)
+                                                    '(("_7104" "Thesis" 2 "none" nil)
+                                                      ("_7105" "Evidence" 3 "none" nil)
+                                                      ("_7106" "Style" 1 nil nil))))
+        (let ((org-canvas-submissions-check-conflicts nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t)))
+            (org-canvas--submissions-push-current t)))
+        (let ((calls (reverse test-org-canvas-api-calls)))
+          (expect (mapcar #'car calls) :to-equal '(PUT PUT))
+          (expect (nth 2 (nth 0 calls))
+                  :to-equal '((rubric_assessment . ((_7104 . ((points . "") (comments . "")))
+                                                    (_7105 . ((points . "") (comments . "")))))))
+          (expect (nth 2 (nth 1 calls)) :to-equal '((submission . ((posted_grade . "0"))))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_RUBRIC") :to-be nil)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "0")
+        (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+                :to-equal '(nil nil nil))
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
 
   (it "keeps rows emptied or cleared by hand across a refresh"
     (let* ((dir (make-temp-file "org-canvas-subs-" t))
@@ -976,117 +967,109 @@ student's live baseline for the conflict check, nil to skip it."
 
 (describe "pushing a late status with S"
   (it "sends a status-only change through the mutation and nothing over REST"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
-                                               ":DAYS_LATE: 3\n:SCORE: 92\n:CANVAS_SCORE: 92\n"
-                                               ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
-          (test-late--push (test-late--stored "extended" 0))
-          (expect (test-org-canvas-api-call-count) :to-equal 0)
-          (expect (length test-late--mutations) :to-equal 1)
-          (expect (caar test-late--mutations) :to-be org-canvas--submissions-late-status-mutation)
-          (expect (cdar test-late--mutations)
-                  :to-equal '((submissionId . "50001") (status . "extended")))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "extended")
-          (expect (org-entry-get (point) "DAYS_LATE") :to-be nil)
-          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
-          (expect (buffer-modified-p) :to-be nil)))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                             ":DAYS_LATE: 3\n:SCORE: 92\n:CANVAS_SCORE: 92\n"
+                                             ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
+        (test-late--push (test-late--stored "extended" 0))
+        (expect (test-org-canvas-api-call-count) :to-equal 0)
+        (expect (length test-late--mutations) :to-equal 1)
+        (expect (caar test-late--mutations) :to-be org-canvas--submissions-late-status-mutation)
+        (expect (cdar test-late--mutations)
+                :to-equal '((submissionId . "50001") (status . "extended")))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "extended")
+        (expect (org-entry-get (point) "DAYS_LATE") :to-be nil)
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+        (expect (buffer-modified-p) :to-be nil))))
   (it "sends a score and a status together, the grade over REST"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
-                                               ":SCORE: 80\n:CANVAS_SCORE: 92\n:LATE_STATUS: late\n")
-          (let ((prompt nil) (messages nil))
-            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t))
-                      ((symbol-function 'message)
-                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
-                      ((symbol-function 'org-canvas--graphql-mutate)
-                       (lambda (&rest _) (test-late--stored "late" 90000))))
-              (let ((org-canvas-submissions-check-conflicts nil))
-                (org-canvas-submissions-push-grades)))
-            (expect prompt :to-match "1 grade change(s) (1 setting a late status)")
-            (expect (cl-some (lambda (m) (string-match-p "92 → 80 (late status: no status → late)" m))
-                             messages)
-                    :to-be-truthy)
-            (expect (car messages) :to-match "Pushed 1 grade(s), 1 late status(es) and 0 comment(s)"))
-          (expect-api-called 'PUT "assignments/1001/submissions/5001")
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")
-          (expect (org-entry-get (point) "DAYS_LATE") :to-equal "2")))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                             ":SCORE: 80\n:CANVAS_SCORE: 92\n:LATE_STATUS: late\n")
+        (let ((prompt nil) (messages nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
+                    ((symbol-function 'org-canvas--graphql-mutate)
+                     (lambda (&rest _) (test-late--stored "late" 90000))))
+            (let ((org-canvas-submissions-check-conflicts nil))
+              (org-canvas-submissions-push-grades)))
+          (expect prompt :to-match "1 grade change(s) (1 setting a late status)")
+          (expect (cl-some (lambda (m) (string-match-p "92 → 80 (late status: no status → late)" m))
+                           messages)
+                  :to-be-truthy)
+          (expect (car messages) :to-match "Pushed 1 grade(s), 1 late status(es) and 0 comment(s)"))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")
+        (expect (org-entry-get (point) "DAYS_LATE") :to-equal "2"))))
   (it "records what Canvas stored when it is not what was sent, and says so"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: missing\n")
-          (test-late--push (test-late--stored nil))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "LATE_STATUS") :to-be nil)
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
-          (expect test-late--warnings
-                  :to-contain "[Submissions] Adams, Alice: Canvas stored late status no status, not the none sent")))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: missing\n")
+        (test-late--push (test-late--stored nil))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "LATE_STATUS") :to-be nil)
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
+        (expect test-late--warnings
+                :to-contain "[Submissions] Adams, Alice: Canvas stored late status no status, not the none sent"))))
   (it "takes the status sent as stored when the reply names no submission"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":DAYS_LATE: 3\n:LATE_STATUS: missing\n")
-          (test-late--push '((updateSubmissionGradeStatus . ((submission . :null) (errors . :null)))))
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
-          (expect (org-entry-get (point) "DAYS_LATE") :to-equal "3")
-          (expect test-late--warnings :to-be nil)))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":DAYS_LATE: 3\n:LATE_STATUS: missing\n")
+        (test-late--push '((updateSubmissionGradeStatus . ((submission . :null) (errors . :null)))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+        (expect (org-entry-get (point) "DAYS_LATE") :to-equal "3")
+        (expect test-late--warnings :to-be nil))))
   (it "leaves a refused status a change, warns once, and sends the others"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (concat (test-late--heading ":LATE_STATUS: late\n")
-                                   "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SUBMISSION_ID: 50002\n"
-                                   ":LATE_STATUS: missing\n:END:\n")
-          (let ((messages nil))
-            (cl-letf (((symbol-function 'message)
-                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
-              (test-late--push
-               (lambda (variables)
-                 (if (equal (alist-get 'submissionId variables) "50001")
-                     '((updateSubmissionGradeStatus
-                        . ((submission . :null)
-                           (errors . [((attribute . "late_policy_status")
-                                       (message . "is not allowed"))]))))
-                   (test-late--stored "missing")))))
-            (expect (car messages)
-                    :to-match "Pushed 0 grade(s), 1 late status(es) and 0 comment(s); late status not set for Adams, Alice (see the log)"))
-          (expect (length test-late--warnings) :to-equal 1)
-          (expect (car test-late--warnings) :to-match "Adams, Alice not set: .*is not allowed")
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
-          (org-canvas--submissions-goto-user 5002)
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
-          (let ((left (org-canvas--submissions-collect-grade-changes)))
-            (expect (length left) :to-equal 1)
-            (expect (plist-get (car left) :user-id) :to-equal 5001))))))
+    (with-test-api
+      (with-grading-file (concat (test-late--heading ":LATE_STATUS: late\n")
+                                 "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SUBMISSION_ID: 50002\n"
+                                 ":LATE_STATUS: missing\n:END:\n")
+        (let ((messages nil))
+          (cl-letf (((symbol-function 'message)
+                     (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+            (test-late--push
+             (lambda (variables)
+               (if (equal (alist-get 'submissionId variables) "50001")
+                   '((updateSubmissionGradeStatus
+                      . ((submission . :null)
+                         (errors . [((attribute . "late_policy_status")
+                                     (message . "is not allowed"))]))))
+                 (test-late--stored "missing")))))
+          (expect (car messages)
+                  :to-match "Pushed 0 grade(s), 1 late status(es) and 0 comment(s); late status not set for Adams, Alice (see the log)"))
+        (expect (length test-late--warnings) :to-equal 1)
+        (expect (car test-late--warnings) :to-match "Adams, Alice not set: .*is not allowed")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+        (let ((left (org-canvas--submissions-collect-grade-changes)))
+          (expect (length left) :to-equal 1)
+          (expect (plist-get (car left) :user-id) :to-equal 5001)))))
   (it "records nothing under a dry run"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":LATE_STATUS: late\n")
-          (test-late--push org-canvas--dry-run-response)
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
-          (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1)))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":LATE_STATUS: late\n")
+        (test-late--push org-canvas--dry-run-response)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
+        (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1))))
   (it "sends nothing for a value Canvas does not take"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":LATE_STATUS: tardy\n")
-          (expect (test-late--push (test-late--stored "late")) :to-throw 'user-error)
-          (expect test-late--mutations :to-be nil)
-          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":LATE_STATUS: tardy\n")
+        (expect (test-late--push (test-late--stored "late")) :to-throw 'user-error)
+        (expect test-late--mutations :to-be nil)
+        (expect (test-org-canvas-api-call-count) :to-equal 0))))
   (it "skips and marks a row whose status Canvas changed since the pull"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-late--heading ":SCORE: 92\n:CANVAS_SCORE: 92\n"
-                                               ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
-          (test-late--push (test-late--stored "extended") '("92" nil nil "missing"))
-          (expect test-late--mutations :to-be nil)
-          (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-equal "late status: Canvas has missing")
-          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")))))
+    (with-test-api
+      (with-grading-file (test-late--heading ":SCORE: 92\n:CANVAS_SCORE: 92\n"
+                                             ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
+        (test-late--push (test-late--stored "extended") '("92" nil nil "missing"))
+        (expect test-late--mutations :to-be nil)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "late status: Canvas has missing")
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late"))))
   (it "names a status Canvas cleared as no status"
     (expect (org-canvas--submissions-conflict-p
              '(:old-score "92" :late-status "missing" :old-late-status "late")
@@ -1500,170 +1483,159 @@ Progress by default).  No prompt may be asked.  Return a plist:
 
 (describe "pushing only the sent comments (issue #425)"
   (it "sends the comment edit and nothing else the file holds"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent-only--everything-file)
-          (org-canvas--submissions-ensure-context)
-          (expect (org-canvas--submissions-collect-grade-changes) :not :to-be nil)
-          (expect (org-canvas--submissions-collect-comment-drafts) :not :to-be nil)
-          (expect (org-canvas--submissions-bank-pending) :not :to-be nil)
-          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
-            (let* ((mutations nil)
-                   (pushed (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
-                                      (lambda (&rest args) (push args mutations) nil)))
-                             (test-sent-only--push))))
-              (expect (cdr pushed) :to-equal "Push 1 comment edit(s)? ")
-              (expect (car pushed) :to-equal
-                      '(:edited 1 :deleted 0 :refused 0 :failed 0 :dry-run 0 :errored 0))
-              (expect mutations :to-be nil))
-            (expect (mapcar (lambda (c) (list (car c) (cadr c))) test-org-canvas-api-calls)
-                    :to-equal
-                    (list (list 'PUT (org-canvas-api-course-endpoint
-                                      "assignments/%s/submissions/%s/comments/%s" 1001 5001 "22"))))
-            (org-canvas--submissions-goto-user 5001)
-            (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3")
-            (expect (org-entry-get (point) "SCORE") :to-equal "4")
-            (expect (buffer-string) :to-match "^\\*\\* Comment to post\nSee me\\.$")
-            (expect (buffer-string) :to-match "^- Show your units\\.$")
-            (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)
-            (expect (org-canvas--submissions-collect-comment-drafts) :not :to-be nil))))))
+    (with-test-api
+      (with-grading-file (test-sent-only--everything-file)
+        (org-canvas--submissions-ensure-context)
+        (expect (org-canvas--submissions-collect-grade-changes) :not :to-be nil)
+        (expect (org-canvas--submissions-collect-comment-drafts) :not :to-be nil)
+        (expect (org-canvas--submissions-bank-pending) :not :to-be nil)
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (let* ((mutations nil)
+                 (pushed (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                                    (lambda (&rest args) (push args mutations) nil)))
+                           (test-sent-only--push))))
+            (expect (cdr pushed) :to-equal "Push 1 comment edit(s)? ")
+            (expect (car pushed) :to-equal
+                    '(:edited 1 :deleted 0 :refused 0 :failed 0 :dry-run 0 :errored 0))
+            (expect mutations :to-be nil))
+          (expect (mapcar (lambda (c) (list (car c) (cadr c))) test-org-canvas-api-calls)
+                  :to-equal
+                  (list (list 'PUT (org-canvas-api-course-endpoint
+                                    "assignments/%s/submissions/%s/comments/%s" 1001 5001 "22"))))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3")
+          (expect (org-entry-get (point) "SCORE") :to-equal "4")
+          (expect (buffer-string) :to-match "^\\*\\* Comment to post\nSee me\\.$")
+          (expect (buffer-string) :to-match "^- Show your units\\.$")
+          (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)
+          (expect (org-canvas--submissions-collect-comment-drafts) :not :to-be nil)))))
 
   (it "refuses what the full push refuses and counts it"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("21" . "Theirs.") ("22" . "Mine."))
-                                            (concat "- *TA* [21] :: Theirs, rewritten.\n"
-                                                    "- DELETE *Prof* [22] :: Mine.\n"))
-          (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs.")
-                                        (test-sent--comment 22 77 "Mine."))
-            (let* ((pushed nil)
-                   (warnings (test-sent--collecting-warnings
-                              (setq pushed (test-sent-only--push)))))
-              (expect warnings :to-equal
-                      '("[Submissions] Comment 21 on Adams, Alice not changed: not yours; only its author may change it"))
-              (expect (cdr pushed) :to-equal
-                      "Push 1 comment deletion(s), leaving 1 comment change(s) unsent? ")
-              (expect (car pushed) :to-equal
-                      '(:edited 0 :deleted 1 :refused 1 :failed 0 :dry-run 0 :errored 0)))
-            (expect (test-org-canvas-api-call-count) :to-equal 1)
-            (expect (buffer-string) :to-match "\\[21\\] :: Theirs, rewritten\\."))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("21" . "Theirs.") ("22" . "Mine."))
+                                          (concat "- *TA* [21] :: Theirs, rewritten.\n"
+                                                  "- DELETE *Prof* [22] :: Mine.\n"))
+        (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs.")
+                                      (test-sent--comment 22 77 "Mine."))
+          (let* ((pushed nil)
+                 (warnings (test-sent--collecting-warnings
+                            (setq pushed (test-sent-only--push)))))
+            (expect warnings :to-equal
+                    '("[Submissions] Comment 21 on Adams, Alice not changed: not yours; only its author may change it"))
+            (expect (cdr pushed) :to-equal
+                    "Push 1 comment deletion(s), leaving 1 comment change(s) unsent? ")
+            (expect (car pushed) :to-equal
+                    '(:edited 0 :deleted 1 :refused 1 :failed 0 :dry-run 0 :errored 0)))
+          (expect (test-org-canvas-api-call-count) :to-equal 1)
+          (expect (buffer-string) :to-match "\\[21\\] :: Theirs, rewritten\\.")))))
 
   (it "sends nothing and changes nothing under a dry run, even on a read-only course"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
-                                            "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
-          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
-                                        (test-sent--comment 23 77 "Drop."))
-            (let ((org-canvas--dry-run t)
-                  (org-canvas-read-only t)
-                  (before (buffer-string)))
-              (expect (car (test-sent-only--push)) :to-equal
-                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 2 :errored 0))
-              (expect (test-org-canvas-api-call-count) :to-equal 0)
-              (expect (buffer-string) :to-equal before)
-              (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 2)))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                          "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                      (test-sent--comment 23 77 "Drop."))
+          (let ((org-canvas--dry-run t)
+                (org-canvas-read-only t)
+                (before (buffer-string)))
+            (expect (car (test-sent-only--push)) :to-equal
+                    '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 2 :errored 0))
+            (expect (test-org-canvas-api-call-count) :to-equal 0)
+            (expect (buffer-string) :to-equal before)
+            (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 2))))))
 
   (it "refuses a read-only course before anything is sent"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
-          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
-            (let ((org-canvas-read-only t))
-              (expect (test-sent-only--push) :to-throw 'org-canvas-read-only-error))
-            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (let ((org-canvas-read-only t))
+            (expect (test-sent-only--push) :to-throw 'org-canvas-read-only-error))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
 
   (it "sends nothing when the question is declined"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
-          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
-            (let ((noninteractive nil)
-                  (org-canvas-assume-yes nil)
-                  (asked nil))
-              (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq asked p) nil)))
-                (expect (org-canvas-push-submission-comment-edits) :to-be nil))
-              (expect asked :to-equal "Push 1 comment edit(s)? "))
-            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (let ((noninteractive nil)
+                (org-canvas-assume-yes nil)
+                (asked nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq asked p) nil)))
+              (expect (org-canvas-push-submission-comment-edits) :to-be nil))
+            (expect asked :to-equal "Push 1 comment edit(s)? "))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
 
   (it "says when there is nothing to send"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine.\n")
-          (let ((shown nil))
-            (cl-letf (((symbol-function 'message)
-                       (lambda (fmt &rest args) (push (apply #'format fmt args) shown)))
-                      ((symbol-function 'org-canvas--confirm) (lambda (_) (error "must not ask"))))
-              (expect (org-canvas-push-submission-comment-edits) :to-equal
-                      '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 0 :errored 0)))
-            (expect (car shown) :to-equal "No sent comment to change")
-            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine.\n")
+        (let ((shown nil))
+          (cl-letf (((symbol-function 'message)
+                     (lambda (fmt &rest args) (push (apply #'format fmt args) shown)))
+                    ((symbol-function 'org-canvas--confirm) (lambda (_) (error "must not ask"))))
+            (expect (org-canvas-push-submission-comment-edits) :to-equal
+                    '(:edited 0 :deleted 0 :refused 0 :failed 0 :dry-run 0 :errored 0)))
+          (expect (car shown) :to-equal "No sent comment to change")
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
 
   (it "saves the new baseline through the package's save path"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              `(("comments/22" . ,(test-sent--comment 22 77 "Mine, rewritten."))))
-        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
-          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
-            (let ((saves 0)
-                  (save (symbol-function 'org-canvas--save-buffer)))
-              (cl-letf (((symbol-function 'org-canvas--save-buffer)
-                         (lambda () (cl-incf saves) (funcall save))))
-                (test-sent-only--push))
-              (expect saves :to-equal 1))
-            (expect (buffer-modified-p) :to-be nil)
-            (expect (with-temp-buffer
-                      (insert-file-contents file)
-                      (buffer-string))
-                    :to-match (format ":CANVAS_COMMENTS: 22=%s"
-                                      (org-canvas--submissions-comment-digest
-                                       "Mine, rewritten."))))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            `(("comments/22" . ,(test-sent--comment 22 77 "Mine, rewritten."))))
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (let ((saves 0)
+                (save (symbol-function 'org-canvas--save-buffer)))
+            (cl-letf (((symbol-function 'org-canvas--save-buffer)
+                       (lambda () (cl-incf saves) (funcall save))))
+              (test-sent-only--push))
+            (expect saves :to-equal 1))
+          (expect (buffer-modified-p) :to-be nil)
+          (expect (with-temp-buffer
+                    (insert-file-contents file)
+                    (buffer-string))
+                  :to-match (format ":CANVAS_COMMENTS: 22=%s"
+                                    (org-canvas--submissions-comment-digest
+                                     "Mine, rewritten.")))))))
 
   (it "pushes a grading file named from a script, without a prompt"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
-                                            "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
-          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
-                                        (test-sent--comment 23 77 "Drop."))
-            (let ((noninteractive t)
-                  (org-canvas-assume-yes nil)
-                  (grading (current-buffer)))
-              (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (error "must not ask")))
-                        ((symbol-function 'completing-read)
-                         (lambda (&rest _) (error "must not prompt"))))
-                (with-temp-buffer
-                  (expect (org-canvas-push-submission-comment-edits "HW") :to-equal
-                          '(:edited 1 :deleted 1 :refused 0 :failed 0 :dry-run 0 :errored 0))))
-              (expect (buffer-local-value 'org-canvas-submissions--current-view grading)
-                      :to-equal 'detail)
-              (expect (test-org-canvas-api-call-count) :to-equal 2)
-              (expect (buffer-modified-p grading) :to-be nil)))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                          "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                      (test-sent--comment 23 77 "Drop."))
+          (let ((noninteractive t)
+                (org-canvas-assume-yes nil)
+                (grading (current-buffer)))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (error "must not ask")))
+                      ((symbol-function 'completing-read)
+                       (lambda (&rest _) (error "must not prompt"))))
+              (with-temp-buffer
+                (expect (org-canvas-push-submission-comment-edits "HW") :to-equal
+                        '(:edited 1 :deleted 1 :refused 0 :failed 0 :dry-run 0 :errored 0))))
+            (expect (buffer-local-value 'org-canvas-submissions--current-view grading)
+                    :to-equal 'detail)
+            (expect (test-org-canvas-api-call-count) :to-equal 2)
+            (expect (buffer-modified-p grading) :to-be nil))))))
 
   (it "finds a grading file by its assignment id"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("23" . "Drop.")) "- DELETE *Prof* [23] :: Drop.\n")
-          (test-sent--with-canvas (list (test-sent--comment 23 77 "Drop."))
-            (with-temp-buffer
-              (expect (plist-get (car (test-sent-only--push 1001)) :deleted) :to-equal 1)))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("23" . "Drop.")) "- DELETE *Prof* [23] :: Drop.\n")
+        (test-sent--with-canvas (list (test-sent--comment 23 77 "Drop."))
+          (with-temp-buffer
+            (expect (plist-get (car (test-sent-only--push 1001)) :deleted) :to-equal 1))))))
 
   (it "reports the refused count from the full push as well"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file (test-sent--file '(("21" . "Theirs.")) "- *TA* [21] :: Theirs, rewritten.\n")
-          (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs."))
-            (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-              (expect (plist-get (org-canvas-push-submission-grades 1001) :refused)
-                      :to-equal 1)))))))
+    (with-test-api
+      (with-grading-file (test-sent--file '(("21" . "Theirs.")) "- *TA* [21] :: Theirs, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs."))
+          (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+            (expect (plist-get (org-canvas-push-submission-grades 1001) :refused)
+                    :to-equal 1))))))
 
   (it "refuses a buffer that names no assignment"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-grading-file "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"
-          (expect (org-canvas-push-submission-comment-edits) :to-throw 'user-error)
-          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+    (with-test-api
+      (with-grading-file "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"
+        (expect (org-canvas-push-submission-comment-edits) :to-throw 'user-error)
+        (expect (test-org-canvas-api-call-count) :to-equal 0))))
 
   (it "is bound to C in a grading file and in the dispatch menu"
     (expect (lookup-key org-canvas-submissions-mode-map (kbd "C"))

@@ -334,28 +334,26 @@
 
 (describe "org-canvas--delete-item-at-point (mocked)"
   (it "deletes item and clears properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test Item
+    (with-test-api
+      (with-temp-org-buffer
+       "* Test Item
 :PROPERTIES:
 :CANVAS_ID: 555
 :LAST_SYNCED: [2024-01-01 Mon]
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas--delete-item-at-point "item"
-                                             (org-canvas--delete-at-point-options :endpoint "items/%s"))
-           (expect-api-called 'DELETE "items/555")
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas--delete-item-at-point "item"
+                                           (org-canvas--delete-at-point-options :endpoint "items/%s"))
+         (expect-api-called 'DELETE "items/555")
+         (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+         (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
   (it "clears the id stamps of every heading below the deleted one (#331)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Quiz
+    (with-test-api
+      (with-temp-org-buffer
+       "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 555
 :END:
@@ -373,19 +371,19 @@
 :CANVAS_ID: 556
 :END:
 "
-         (goto-char (point-min))
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas--delete-item-at-point "item"
-                                             (org-canvas--delete-at-point-options :endpoint "items/%s")))
-         (expect (org-map-entries
-                  (lambda ()
-                    (list (org-entry-get (point) "CANVAS_ID")
-                          (org-entry-get (point) "CANVAS_ITEM_ID")
-                          (org-entry-get (point) "LAST_SYNCED")
-                          (org-entry-get (point) "CANVAS_CRITERION_ID")))
-                  nil 'file)
-                 :to-equal '((nil nil nil nil) (nil nil nil nil)
-                             (nil nil nil nil) ("556" nil nil nil)))))))
+       (goto-char (point-min))
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas--delete-item-at-point "item"
+                                           (org-canvas--delete-at-point-options :endpoint "items/%s")))
+       (expect (org-map-entries
+                (lambda ()
+                  (list (org-entry-get (point) "CANVAS_ID")
+                        (org-entry-get (point) "CANVAS_ITEM_ID")
+                        (org-entry-get (point) "LAST_SYNCED")
+                        (org-entry-get (point) "CANVAS_CRITERION_ID")))
+                nil 'file)
+               :to-equal '((nil nil nil nil) (nil nil nil nil)
+                           (nil nil nil nil) ("556" nil nil nil))))))
 
   (it "errors when no CANVAS_ID present"
     (with-temp-org-buffer
@@ -399,20 +397,19 @@
              :to-throw 'user-error)))
 
   (it "uses custom id-property"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* My Page
+    (with-test-api
+      (with-temp-org-buffer
+       "* My Page
 :PROPERTIES:
 :CANVAS_URL: my-page-slug
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas--delete-item-at-point "page"
-                                             (org-canvas--delete-at-point-options :endpoint "pages/%s"
-                                                                                  :id-property "CANVAS_URL"))
-           (expect-api-called 'DELETE "pages/my-page-slug")))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (org-canvas--delete-item-at-point "page"
+                                           (org-canvas--delete-at-point-options :endpoint "pages/%s"
+                                                                                :id-property "CANVAS_URL"))
+         (expect-api-called 'DELETE "pages/my-page-slug"))))))
 
 (describe "org-canvas--delete-all-items edge cases (mocked)"
   (it "passes list-params to GET request"
@@ -688,24 +685,23 @@
          (expect (org-entry-get (point) "LAST_SYNCED") :to-equal "[2024-01-01 Mon]")))))
 
   (it "succeeds and clears all sync properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Item
+    (with-test-api
+      (with-temp-org-buffer
+       "* Item
 :PROPERTIES:
 :CANVAS_ID: 555
 :CANVAS_URL: my-url
 :LAST_SYNCED: [2024-01-01 Mon]
 :END:
 "
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (let ((result (org-canvas--delete-item-at-point "item"
-                                                           (org-canvas--delete-at-point-options :endpoint "items/%s"))))
-             (expect result :to-be 'deleted)
-             (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-             (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
-             (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))))
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+         (let ((result (org-canvas--delete-item-at-point "item"
+                                                         (org-canvas--delete-at-point-options :endpoint "items/%s"))))
+           (expect result :to-be 'deleted)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+           (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
+           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))))
 
 (describe "org-canvas--prune-collect-local-ids"
   (it "collects ids from headings at all levels"
@@ -1014,11 +1010,10 @@ The pages file is the same file, so a page spec can name its headings."
           (org-canvas-assignments-file ,var)
           (org-canvas-pages-file ,var))
      (unwind-protect
-         (with-org-canvas-test-config
-           (with-mock-api
-             (cl-letf (((symbol-function 'display-buffer) #'ignore)
-                       ((symbol-function 'message) #'ignore))
-               ,@body)))
+         (with-test-api
+           (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                     ((symbol-function 'message) #'ignore))
+             ,@body))
        (let ((buf (find-buffer-visiting ,var)))
          (when buf
            (with-current-buffer buf (set-buffer-modified-p nil))
@@ -1062,18 +1057,17 @@ The pages file is the same file, so a page spec can name its headings."
 
 (describe "org-canvas--delete-item-at-point post-delete-fn"
   (it "calls the post-delete function at the heading after the delete"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Item\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"
-         (org-back-to-heading)
-         (let ((seen nil) (org-canvas-delete-confirmed t))
-           (cl-letf (((symbol-function 'display-buffer) #'ignore))
-             (expect (org-canvas--delete-item-at-point "item"
-                                                       (org-canvas--delete-at-point-options :endpoint "items/%s"
-                                                                                            :post-delete-fn (lambda (pom) (setq seen pom))))
-                     :to-be 'deleted))
-           (expect seen :to-equal (point))))))))
+    (with-test-api
+      (with-temp-org-buffer
+       "* Item\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"
+       (org-back-to-heading)
+       (let ((seen nil) (org-canvas-delete-confirmed t))
+         (cl-letf (((symbol-function 'display-buffer) #'ignore))
+           (expect (org-canvas--delete-item-at-point "item"
+                                                     (org-canvas--delete-at-point-options :endpoint "items/%s"
+                                                                                          :post-delete-fn (lambda (pom) (setq seen pom))))
+                   :to-be 'deleted))
+         (expect seen :to-equal (point)))))))
 
 (describe "org-canvas--delete-heading-fn-for"
   (it "signals for a deleter whose feature is not registered"

@@ -70,28 +70,23 @@ Each answer is (TEXT . WEIGHT)."
 
 (defmacro test-question-banks--with-course (banks questions &rest body)
   "Run BODY with the fake API serving BANKS and QUESTIONS.
-The banks and quizzes files live in a temp directory."
+The banks and quizzes files live in `with-test-course''s directory,
+DIR, which BODY may use."
   (declare (indent 2))
-  `(let* ((dir (make-temp-file "question-banks-" t))
-          (org-canvas-question-banks-file (expand-file-name "question-banks.org" dir))
-          (org-canvas-quizzes-file (expand-file-name "quizzes.org" dir))
-          (test-question-banks--banks ,banks)
-          (test-question-banks--questions ,questions)
-          (test-question-banks--single nil)
-          (test-question-banks--requests nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (with-html-to-org-identity
-             (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                        #'test-question-banks--list)
-                       ((symbol-function 'org-canvas-api-request) #'test-question-banks--one)
-                       ((symbol-function 'org-canvas--log-warning) #'ignore)
-                       ((symbol-function 'message) #'ignore))
-               ,@body)))
-       (dolist (f (list org-canvas-question-banks-file org-canvas-quizzes-file))
-         (let ((buf (find-buffer-visiting f)))
-           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
-       (delete-directory dir t))))
+  `(with-test-course (dir :files '(("question-banks.org" . nil)
+                                   ("quizzes.org" . nil)))
+     (let ((test-question-banks--banks ,banks)
+           (test-question-banks--questions ,questions)
+           (test-question-banks--single nil)
+           (test-question-banks--requests nil))
+       (with-org-canvas-test-config
+         (with-html-to-org-identity
+           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                      #'test-question-banks--list)
+                     ((symbol-function 'org-canvas-api-request) #'test-question-banks--one)
+                     ((symbol-function 'org-canvas--log-warning) #'ignore)
+                     ((symbol-function 'message) #'ignore))
+             ,@body))))))
 
 (defun test-question-banks--file ()
   "Return question-banks.org's text."

@@ -324,26 +324,24 @@ Content.
 
 (describe "assignment push-to-api (mocked)"
   (it "uses POST for new assignments"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "New" :canvas-id nil))
-              (payload (make-hash-table)))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "assignments"
-                                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
-          (expect-api-called 'POST "assignments$")))))
+    (with-test-api
+      (let ((data '(:title "New" :canvas-id nil))
+            (payload (make-hash-table)))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "assignments"
+                                  :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
+        (expect-api-called 'POST "assignments$"))))
 
   (it "uses PUT for existing assignments"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:title "Existing" :canvas-id "789"))
-              (payload (make-hash-table)))
-          (org-canvas--push-to-api data payload
-                                   (org-canvas--push-options
-                                    :endpoint "assignments"
-                                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
-          (expect-api-called 'PUT "assignments/789")))))
+    (with-test-api
+      (let ((data '(:title "Existing" :canvas-id "789"))
+            (payload (make-hash-table)))
+        (org-canvas--push-to-api data payload
+                                 (org-canvas--push-options
+                                  :endpoint "assignments"
+                                  :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))))
+        (expect-api-called 'PUT "assignments/789"))))
 
   (it "sends a payload whose body reflects the org input"
     (let ((temp-dir (make-temp-file "assignments-test" t)))
@@ -370,21 +368,19 @@ Content.
 
 (describe "assignment search (mocked)"
   (it "searches assignments endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments" . [((id . 100) (name . "Homework 1"))])))
-        (org-canvas--search-item "assignments" "Homework 1" :match-field 'name)
-        (expect-api-called 'GET "assignments"))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments" . [((id . 100) (name . "Homework 1"))])))
+      (org-canvas--search-item "assignments" "Homework 1" :match-field 'name)
+      (expect-api-called 'GET "assignments")))
 
   (it "returns matching assignment"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments" . [((id . 100) (name . "Lab 1"))
-                                  ((id . 101) (name . "Lab 2"))])))
-        (let ((result (org-canvas--search-item "assignments" "Lab 1" :match-field 'name)))
-          (expect (alist-get 'id result) :to-equal 100))))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments" . [((id . 100) (name . "Lab 1"))
+                                ((id . 101) (name . "Lab 2"))])))
+      (let ((result (org-canvas--search-item "assignments" "Lab 1" :match-field 'name)))
+        (expect (alist-get 'id result) :to-equal 100)))))
 
 ;;;; Stage 4: Finalize
 
@@ -917,13 +913,12 @@ Content.
 
 (describe "assignment search (mocked)"
   (it "returns nil when no match"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments" . [((id . 100) (name . "Other"))])))
-        (let ((result (org-canvas--search-item "assignments" "Nonexistent"
-                       :match-field 'name)))
-          (expect result :to-be nil)))))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments" . [((id . 100) (name . "Other"))])))
+      (let ((result (org-canvas--search-item "assignments" "Nonexistent"
+                     :match-field 'name)))
+        (expect result :to-be nil))))
 
   (it "returns nil on API error"
     (with-org-canvas-test-config
@@ -938,28 +933,25 @@ Content.
 
 (describe "org-canvas--assignment-associate-rubric (mocked)"
   (it "creates rubric association"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--assignment-associate-rubric 123 "456")
-        (expect-api-called 'POST "rubric_associations"))))
+    (with-test-api
+      (org-canvas--assignment-associate-rubric 123 "456")
+      (expect-api-called 'POST "rubric_associations")))
 
   (it "sends the grading flags it is given, and only those (#118)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--assignment-associate-rubric 123 "456" '(:use-for-grading t :hide-score-total :json-false))
-        (let* ((call (test-org-canvas-last-api-call))
-               (assoc (gethash "rubric_association" (nth 2 call))))
-          (expect (gethash "use_for_grading" assoc) :to-be t)
-          (expect (gethash "hide_score_total" assoc) :to-equal :json-false)
-          (expect (gethash "purpose" assoc) :to-equal "grading")))))
+    (with-test-api
+      (org-canvas--assignment-associate-rubric 123 "456" '(:use-for-grading t :hide-score-total :json-false))
+      (let* ((call (test-org-canvas-last-api-call))
+             (assoc (gethash "rubric_association" (nth 2 call))))
+        (expect (gethash "use_for_grading" assoc) :to-be t)
+        (expect (gethash "hide_score_total" assoc) :to-equal :json-false)
+        (expect (gethash "purpose" assoc) :to-equal "grading"))))
 
   (it "leaves an unset flag out of the payload so Canvas keeps its value"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--assignment-associate-rubric 123 "456" '(:use-for-grading nil :hide-score-total nil))
-        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
-          (expect (gethash "use_for_grading" assoc 'absent) :to-equal 'absent)
-          (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent)))))
+    (with-test-api
+      (org-canvas--assignment-associate-rubric 123 "456" '(:use-for-grading nil :hide-score-total nil))
+      (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+        (expect (gethash "use_for_grading" assoc 'absent) :to-equal 'absent)
+        (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent))))
 
   (it "handles association error gracefully"
     (with-org-canvas-test-config
@@ -973,44 +965,39 @@ Content.
 
 (describe "org-canvas--assignment-post-finalize"
   (it "associates rubric when rubric-id present"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:rubric-id "789"))
-              (response '((id . 123))))
-          (org-canvas--assignment-post-finalize data response)
-          (expect-api-called 'POST "rubric_associations")))))
+    (with-test-api
+      (let ((data '(:rubric-id "789"))
+            (response '((id . 123))))
+        (org-canvas--assignment-post-finalize data response)
+        (expect-api-called 'POST "rubric_associations"))))
 
   (it "passes RUBRIC_USE_FOR_GRADING through to the association (#118)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:rubric-id "789" :rubric-use-for-grading t))
-              (response '((id . 123))))
-          (org-canvas--assignment-post-finalize data response)
-          (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
-            (expect (gethash "use_for_grading" assoc) :to-be t)
-            (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent))))))
+    (with-test-api
+      (let ((data '(:rubric-id "789" :rubric-use-for-grading t))
+            (response '((id . 123))))
+        (org-canvas--assignment-post-finalize data response)
+        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+          (expect (gethash "use_for_grading" assoc) :to-be t)
+          (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent)))))
 
   (it "skips rubric association when no rubric-id"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((data '(:rubric-id nil))
-              (response '((id . 123))))
-          (org-canvas--assignment-post-finalize data response)
-          (expect (test-org-canvas-api-called-p 'POST "rubric_associations") :to-be nil)))))
+    (with-test-api
+      (let ((data '(:rubric-id nil))
+            (response '((id . 123))))
+        (org-canvas--assignment-post-finalize data response)
+        (expect (test-org-canvas-api-called-p 'POST "rubric_associations") :to-be nil))))
 
   (it "reports the association so the baseline is re-read (issue #124)"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((ctx (org-canvas--sync-make-ctx)))
-          (org-canvas--assignment-post-finalize '(:rubric-id "789") '((id . 123)) ctx)
-          (expect (plist-get ctx :remote-touched) :to-be t)))))
+    (with-test-api
+      (let ((ctx (org-canvas--sync-make-ctx)))
+        (org-canvas--assignment-post-finalize '(:rubric-id "789") '((id . 123)) ctx)
+        (expect (plist-get ctx :remote-touched) :to-be t))))
 
   (it "reports nothing when there was no rubric to associate"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((ctx (org-canvas--sync-make-ctx)))
-          (org-canvas--assignment-post-finalize '(:rubric-id nil) '((id . 123)) ctx)
-          (expect (plist-get ctx :remote-touched) :to-be nil)))))
+    (with-test-api
+      (let ((ctx (org-canvas--sync-make-ctx)))
+        (org-canvas--assignment-post-finalize '(:rubric-id nil) '((id . 123)) ctx)
+        (expect (plist-get ctx :remote-touched) :to-be nil))))
 
   (it "reports nothing when the association failed"
     (with-org-canvas-test-config
@@ -2460,14 +2447,13 @@ Both nil gives a reply with no schedule."
         (expect warned :to-be nil))))
 
   (it "sends nothing under a dry run"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (let ((org-canvas--dry-run t))
-          (org-canvas--assignment-push-post-policy
-           '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
-                    :post_comments_at "2026-11-30T17:00:00Z")
-           70))
-        (expect (test-org-canvas-api-call-count) :to-equal 0))))
+    (with-test-api
+      (let ((org-canvas--dry-run t))
+        (org-canvas--assignment-push-post-policy
+         '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                  :post_comments_at "2026-11-30T17:00:00Z")
+         70))
+      (expect (test-org-canvas-api-call-count) :to-equal 0)))
 
   (it "keeps the schedule Canvas holds when a manual POST_POLICY names none"
     (with-org-canvas-test-config
@@ -2960,33 +2946,25 @@ order, and forgets the processor cache before and after."
 Binds `deleted' to the DELETE URLs sent, `prompts' to the questions
 asked and `logged' to the log lines written."
   (declare (indent 0))
-  `(let* ((temp-dir (make-temp-file "assign-319-" t))
-          (org-file (expand-file-name "assignments.org" temp-dir))
-          (deleted nil) (prompts nil) (logged nil))
-     (unwind-protect
-         (progn
-           (with-temp-file org-file (insert "#+TITLE: Assignments\n"))
-           (let ((org-canvas-assignments-file org-file))
-             (with-org-canvas-test-config
-               (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                          (lambda (&rest _) test-319--remote))
-                         ((symbol-function 'org-canvas-api-request)
-                          (lambda (method url &rest _)
-                            (when (eq method 'DELETE) (push url deleted))
-                            nil))
-                         ((symbol-function 'y-or-n-p)
-                          (lambda (q) (push q prompts) t))
-                         ((symbol-function 'display-buffer) #'ignore)
-                         ((symbol-function 'org-canvas--log-info)
-                          (lambda (_l fmt &rest args)
-                            (push (apply #'format fmt args) logged)))
-                         ((symbol-function 'org-canvas--log-warning)
-                          (lambda (_l fmt &rest args)
-                            (push (apply #'format fmt args) logged))))
-                 ,@body))))
-       (let ((buf (find-buffer-visiting org-file)))
-         (when buf (kill-buffer buf)))
-       (delete-directory temp-dir t))))
+  `(with-test-course (dir :files '(("assignments.org" . "#+TITLE: Assignments\n")))
+     (let ((deleted nil) (prompts nil) (logged nil))
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                    (lambda (&rest _) test-319--remote))
+                   ((symbol-function 'org-canvas-api-request)
+                    (lambda (method url &rest _)
+                      (when (eq method 'DELETE) (push url deleted))
+                      nil))
+                   ((symbol-function 'y-or-n-p)
+                    (lambda (q) (push q prompts) t))
+                   ((symbol-function 'display-buffer) #'ignore)
+                   ((symbol-function 'org-canvas--log-info)
+                    (lambda (_l fmt &rest args)
+                      (push (apply #'format fmt args) logged)))
+                   ((symbol-function 'org-canvas--log-warning)
+                    (lambda (_l fmt &rest args)
+                      (push (apply #'format fmt args) logged))))
+           ,@body)))))
 
 (describe "org-canvas--assignment-owner (issue #319)"
   (it "names the file that owns a quiz's or a discussion's assignment"
