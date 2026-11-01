@@ -1,0 +1,4 @@
+* Changed
+- #620 =test/test-helper.el= no longer defines thirteen mock builders and
+  test generators that nothing called, the builders the one fixture pair
+  replaced.  =test-org-canvas-make-response=, which a spec still uses, stays.
