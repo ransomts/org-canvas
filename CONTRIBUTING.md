@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This guide covers the development w
 
 ## Development Setup
 
-1. **Install Emacs** (minimum version: see `Package-Requires` in `lisp/org-canvas.el`; CI tests on 29.3, 29.4 and 30.1).
+1. **Install Emacs** (minimum version: see `Package-Requires` in `lisp/org-canvas.el`; CI tests on 29.3, 29.4 and 30.2).
 2. **Install [Eldev](https://github.com/emacs-eldev/eldev)**:
    ```bash
    curl -fsSL https://raw.github.com/emacs-eldev/eldev/master/webinstall/eldev | sh
@@ -207,7 +207,7 @@ docs: update manual for new quiz properties
    - A changelog fragment, `changelog.d/<issue>.org`, says what changed (see `changelog.d/README.org`; `python3 scripts/changelog-collect.py --check` validates it). Do not edit `CHANGELOG.org`: the fragments are folded into it at release time with `python3 scripts/changelog-collect.py`, so parallel PRs never conflict there
    - The manual's Property Reference is regenerated if the property registry changed (the pull request template has the command)
 3. Open a PR against `main`; the template's checklist and test plan are the summary.
-4. CI runs tests on Emacs 29.3, 29.4 and 30.1 (the 29.x suites and the run-each-file-alone isolation check in three parallel shards each), plus lint, complexity, coverage and the changelog-fragment check.
+4. CI runs tests on Emacs 29.3, 29.4 and 30.2 (the 29.x suites and the run-each-file-alone isolation check in three parallel shards each), plus lint, complexity, coverage and the changelog-fragment check.
 
 ## Pre-push Hook
 

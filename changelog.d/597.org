@@ -1,0 +1,15 @@
+* Changed
+- #597 The CI leg that covers the 30 series now runs Emacs 30.2, the
+  current release of that series, instead of 30.1.  A second leg was the
+  other option and lost: one leg per series is the rule #591 set, and
+  30.2 is bugfix-only, so 30.1's stricter checkdoc -- the argument for
+  keeping a leading-edge leg at all -- is unchanged by the move.
+  =test (30.2)= keeps the Codecov upload, so project coverage still
+  comes from the fastest Emacs 30 suite.  The job is renamed, which
+  means the required check changes with it: branch protection now needs
+  =test (30.2)= in place of =test (30.1)=, and the pull request that
+  makes the change cannot satisfy the old name, so it merges with
+  admin bypass and the rule is updated immediately after.
+  The pre-push hook's =emacs30-nox= pin moves from nixpkgs 24.11 (30.1)
+  to 25.05 (30.2), so the hook and CI agree on what "Emacs 30" means
+  again -- the disagreement #591 was written to end.

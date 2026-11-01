@@ -3,7 +3,7 @@
 #
 # This hook runs automatically before every `git push`. It gates pushes on:
 #   1. Lint clean (eldev lint — doc, package, re linters), under the
-#      same Emacs 30 CI lints with: checkdoc on 30.1 rejects a
+#      same Emacs 30 CI lints with: checkdoc on 30.2 rejects a
 #      third-person verb anywhere in a docstring's first line, and a
 #      newer system Emacs lets it through (PRs #89, #90, #189, #258, #259)
 #   2. Cognitive complexity within budget (eldev complexity)
@@ -27,7 +27,7 @@ COMPLEXITY_BUDGET=0  # no function is above the threshold; see design.org
 # Pin each Emacs version to a specific nixpkgs snapshot
 declare -A NIX_ARCHIVES=(
   [29]="https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz"
-  [30]="https://github.com/NixOS/nixpkgs/archive/nixos-24.11.tar.gz"
+  [30]="https://github.com/NixOS/nixpkgs/archive/nixos-25.05.tar.gz"
 )
 
 declare -A NIX_PACKAGES=(
