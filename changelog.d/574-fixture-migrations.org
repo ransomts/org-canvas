@@ -1,0 +1,12 @@
+* Changed
+- #574 The spec suite now says "a mocked Canvas" and "a course with
+  these files" once: every remaining pair of
+  =with-org-canvas-test-config= and =with-mock-api= is the shared
+  =with-test-api=, and fifteen more per-file course builders --
+  quiz results, quiz accommodations, people, groups, heading verify,
+  extend student, drift, messages, discussion replies, announcements
+  verify, question banks, rubric results, local file links, sections
+  lookup files and the assignments 319 helper -- build their course
+  with =with-test-course= instead of their own temp directory and
+  teardown loop.  No spec's meaning changed: the assertions and the
+  request counts are the same, and the suite still runs 6,564 specs.
