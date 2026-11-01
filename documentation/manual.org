@@ -221,6 +221,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =excuse [--all] [--overwrite] FILE= | =org-canvas-submissions-excuse= (=--all=: every student, not only those with no submission; =--overwrite=: graded ones too; =-n=: a dry run) |   |
 | =import-grades [--posted] FILE IN= | =org-canvas-submissions-import-grades= (=-n=: a dry run) | a key matched nothing or a change was kept back |
 | =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
+| =quiz-regrade QUIZ QUESTION-TEXT [--score N] [--dry-run]= | =org-canvas-quiz-regrade=: every attempt that drew the question scored with N (the default =full=, the question's points) and read back | an attempt failed to send or read back at another score |
 | =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
@@ -5019,6 +5020,40 @@ a summary line above (submissions, in progress, more than one attempt,
 mean kept score). Every pull rewrites the file; nothing is pushed from
 it. New Quizzes have no such endpoint, so the prompt lists classic
 quizzes only.
+
+** Quiz Regrade
+
+Canvas regrades a quiz question across attempts, but it skips a
+question drawn from a question bank, which is exactly when a broken
+question is worth repairing across the class: every attempt that drew
+it is owed the same credit. =(org-canvas-quiz-regrade QUIZ FRAGMENT
+&optional SCORE DRY-RUN)= names the quiz by exact title, id or =#ID=,
+the question by a fragment of its text (which must name exactly one
+question), and =SCORE= as =full= (or nil) for the question's points or
+a number no greater than them. It reads every attempt through the
+quiz's shadow assignment's submission history -- the endpoint that
+lists every question an attempt drew, so a bank-drawn question is
+found -- and sends the score to each attempt that scored under it, the
+kept and the unkept alike, so the kept score is right whichever
+attempt wins under Canvas's scoring policy. Each send is read back and
+named when it did not take. Nothing is written to Org: the quiz's
+grading file and its attempts table are pull products, and the next
+pull of either shows what was sent. A practice or survey quiz has no
+shadow assignment, and is refused.
+
+The allowlist word is =submissions=, since a score is a grade.
+
+From a script, the batch command line runs it, with =-n= or
+=--dry-run= to name the attempts it would change and send nothing:
+
+#+begin_src sh
+scripts/org-canvas quiz-regrade "Quiz One" "Which term is flawed?" --dry-run
+scripts/org-canvas quiz-regrade 42 "Which term is flawed?" --score full
+scripts/org-canvas quiz-regrade "#42" "Which term is flawed?" --score 2.5
+#+end_src
+
+It exits 1 when an attempt failed to send or read back at another
+score, and prints the same report.
 
 ** Peer Reviews
 
