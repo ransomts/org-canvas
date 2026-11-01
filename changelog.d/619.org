@@ -1,0 +1,7 @@
+* Security
+- #619 =eldev package= no longer copies the developer's credentials file
+  (=org-canvas-credentials.el=) into the tarball, so a build cannot carry a
+  live API token to another machine, and the manual's
+  =generate-property-reference.el= stays out of the package too.  The archive
+  no longer links out of its own directory, so extracting it leaves no stray
+  =org-canvas.el= beside the package.

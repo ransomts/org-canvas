@@ -49,7 +49,31 @@
 ;; (mutant--report) call, which byte-compilation executes, so a plain
 ;; eldev compile used to start a full mutation run that rewrote lisp/ files
 ;; and spawned eldev test per mutant.
-(setf eldev-standard-excludes (append eldev-standard-excludes '("./scripts/")))
+;;
+;; `:or', not `append': `eldev-standard-excludes' is a composite fileset
+;; (`(:or ...)'), and appending to it presumes a simple list, which Eldev
+;; warns about on every command and which stops being true if the default
+;; gains another composite form.  See "Modifying filesets" in Eldev's
+;; manual.  The three additions below are all files that must never be
+;; packaged:
+;;
+;;   ./lisp/org-canvas-credentials.el  the developer's live API token; git
+;;                                    ignores it, but a package build does
+;;                                    not, and a tarball copied to another
+;;                                    machine would carry it
+;;   ./test/docgen/                    a build tool for the manual's
+;;                                    property reference, not the package
+;;   ./org-canvas.el                   the convenience symlink at the
+;;                                    root; lisp/org-canvas.el is the copy
+;;                                    a package carries, and the symlink
+;;                                    used to make `eldev package' write
+;;                                    hard links out of the archive
+(setf eldev-standard-excludes
+      `(:or ,eldev-standard-excludes
+            "./scripts/"
+            "./lisp/org-canvas-credentials.el"
+            "./test/docgen/"
+            "./org-canvas.el"))
 
 ;;; Project commands
 
