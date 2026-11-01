@@ -1,0 +1,5 @@
+* Changed
+- #621 The workflows pin every third-party action to the commit its release
+  tag names, with the release in a trailing =# v7=-style comment, so a moved
+  tag cannot change what runs beside =CODECOV_TOKEN=.  Dependabot keeps the
+  SHA and the comment current together.
