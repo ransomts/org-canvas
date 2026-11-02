@@ -1,0 +1,14 @@
+* Changed
+- #628 The always-loaded hard rules and conventions are rule plus pointer
+  again.  Each of the 22 hard rules keeps a line with its issue numbers
+  and the heading that holds the reasoning; the rules that had grown
+  into histories (the drift verbs, the create paths, the rubric
+  associations) now state the rule and send the reader to the decision.
+  =conventions.md= keeps what a contributor must know before writing
+  code and points at the narrative for each section, and the one rule
+  with no narrative home — that =json-read= hands back vectors — gained
+  "A Reply Is Parsed JSON: Arrays Are Vectors (#153)" in
+  api-interaction.org.  The architecture guide's duplicated pipeline,
+  run-context and sync-state sections now summarize and point at
+  design.org instead of restating it, and its narrative index lists the
+  new section.  No rule was dropped.

@@ -132,6 +132,30 @@ The codebase uses uppercase symbols (='POST=, ='PUT=, ='GET=,
 This is important because passing uppercase symbols or keywords to plz
 causes 400 Bad Request errors.
 
+** A Reply Is Parsed JSON: Arrays Are Vectors (issue #153)
+
+=org-canvas-api-request= hands plz =:as #'json-read=, so a caller
+receives the shape =json-read= makes, not the shape a hand-written
+stub makes: a JSON object arrives as an alist, a JSON array as a
+*vector*, and an empty JSON array as an empty vector — which is
+non-nil, so a =(when reply ...)= guard cannot stand in for an emptiness
+check.  A stub that returns a list hides both facts, and the
+difference shows only on a live course.
+
+Walk a reply with sequence functions (=cl-find-if=, =seq-*=), or coerce
+once with =(append reply nil)= before a list-only function — =dolist=,
+a destructive =sort= — sees it.  =org-canvas-api-request-all-pages= is
+the exception that returns a list by design, because it accumulates
+pages itself; =(append (org-canvas-api-request ...) nil)= is the
+correct coercion when one reply has to join that shape.
+
+The tabs pull is the case that shipped (#153): =sort= over the vector
+returned a vector, =dolist= signalled =listp=, and the empty-vector
+guard was satisfied as well, so no course got its ** Navigation
+section while every list-returning test passed.  A stub should return
+the vector =json-read= really makes, not the list that is convenient
+to type.
+
 ** The Shape of an Error Datum (issue #152)
 
 A =condition-case= on =plz-error= catches errors signalled three ways,
