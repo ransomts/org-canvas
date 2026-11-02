@@ -60,6 +60,7 @@
   :structural-fn #'org-canvas--validate-settings-structure
   :properties
   `((:org-prop "APPLY_WEIGHTS" :data-key :apply_weights :type boolean
+     :always-emit t
      :doc "Weight assignment groups")
     (:org-prop "HIDE_FINAL_GRADES" :data-key :hide_final_grades :type boolean
      :doc "Hide grades from students")

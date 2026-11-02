@@ -1205,7 +1205,15 @@
             :to-be nil)
     (expect (org-canvas--registry-value-default-p
              '(:type enum :default "points") "points")
-            :to-be t)))
+            :to-be t))
+
+  (it "finds no default for a spec that always emits its value (issue #637)"
+    (expect (org-canvas--registry-value-default-p
+             '(:type number :always-emit t) 0)
+            :to-be nil)
+    (expect (org-canvas--registry-value-default-p
+             '(:type boolean :always-emit t) :json-false)
+            :to-be nil)))
 
 (describe "org-canvas--pull-apply-spec"
   (it "leaves a property alone when the item does not carry its field"
@@ -1245,6 +1253,15 @@
         '(:org-prop "PUBLISHED" :data-key :published :type boolean :default t)
         '((published . t)) (point)))
      (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))
+
+  (it "writes a zero for a spec that always emits (issue #637)"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "WEIGHT" :data-key :group_weight :type number :always-emit t)
+      '((group_weight . 0.0)) (point))
+     (expect (org-entry-get (point) "WEIGHT") :to-equal "0.0")))
 
   (it "writes false over a stale true when the default is true (issue #134)"
     (with-temp-org-buffer
@@ -1911,7 +1928,22 @@ Keep this too
 "
        (org-back-to-heading)
        (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
-       (expect (org-entry-get (point) "PINNED") :to-equal "false")))))
+       (expect (org-entry-get (point) "PINNED") :to-equal "false"))))
+
+  (it "sets false for a spec that always emits its default (issue #637)"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-boolean-property
+      (point) "APPLY_WEIGHTS" :json-false "settings")
+     (expect (org-entry-get (point) "APPLY_WEIGHTS") :to-equal "false")))
+
+  (it "registers APPLY_WEIGHTS as always emitted (issue #637)"
+    (let ((spec (org-canvas--registry-find-property "APPLY_WEIGHTS" "settings")))
+      (expect (plist-get spec :always-emit) :to-be-truthy))))
 
 (describe "org-canvas--pull-set-timestamp-property"
   (it "sets Org timestamp from ISO8601"

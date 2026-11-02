@@ -932,6 +932,12 @@ where a silent heading keeps the linked content's own state — declares
 `:absent-inherits'.  Neither value is then a default, so a pull writes
 true and false alike rather than dropping one as implied (issue #323).
 
+A property whose default is the answer — an unweighted course's
+APPLY_WEIGHTS: false, a group's WEIGHT: 0 — declares `:always-emit'.
+A pull then writes both values instead of dropping the default as
+implied, so a reader can tell weighting off from weights never
+pulled (issue #637).
+
 A module whose payload carries the heading's body declares
 `:body-api-key', the Canvas field it lands in (\"description\",
 \"body\", \"message\"), so the drift report can compare it — the

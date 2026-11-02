@@ -1,0 +1,8 @@
+* Fixed
+- #637 An unweighted course now pulls as unweighted instead of as
+  silence.  =APPLY_WEIGHTS= and =WEIGHT= are always written, so
+  =settings.org= carries =APPLY_WEIGHTS: false= and each group in
+  =assignment-groups.org= carries =WEIGHT: 0=.  Both were suppressed as
+  "the type's default", leaving a drawer indistinguishable from one
+  where the field was never read; a property spec now declares
+  =:always-emit= to say the default is the answer.
