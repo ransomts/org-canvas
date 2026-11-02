@@ -180,10 +180,21 @@ No comments allowed.
            (payload (org-canvas--announcement-build-payload data)))
       (expect (alist-get 'delayed_post_at payload) :to-equal "2024-01-15T09:00:00Z")))
 
-  (it "adds lock_at when allow_discussion_comments is nil"
+  (it "adds a fixed past lock_at when allow_discussion_comments is nil"
     (let* ((data '(:title "Locked" :message "" :published t :allow_discussion_comments nil))
            (payload (org-canvas--announcement-build-payload data)))
-      (expect (alist-get 'lock_at payload) :to-match "^20[0-9][0-9]-")))
+      (expect (alist-get 'lock_at payload)
+              :to-equal org-canvas--announcement-comments-locked-at)))
+
+  (it "builds the same payload hash on every run (issue #629)"
+    ;; A timestamp taken at build time made each sync see a new payload,
+    ;; so every announcement without ALLOW_COMMENTS was re-PUT forever.
+    (let* ((data '(:title "Locked" :message "Body" :published t
+                   :allow_discussion_comments nil))
+           (first (org-canvas--announcement-build-payload data))
+           (second (org-canvas--announcement-build-payload data)))
+      (expect (org-canvas--sync-payload-hash first data nil)
+              :to-equal (org-canvas--sync-payload-hash second data nil))))
 
   (it "does not add lock_at when allow_discussion_comments is t"
     (let* ((data '(:title "Open" :message "" :published t :allow_discussion_comments t))
@@ -283,6 +294,45 @@ Body content.
                     (goto-char (point-min))
                     (org-back-to-heading)
                     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "12345"))))))
+        (delete-directory temp-dir t))))
+
+  (it "skips an announcement without ALLOW_COMMENTS on the second sync (issue #629)"
+    ;; A live dry run found every announcement re-PUT on every sync: the
+    ;; payload carried the build time in `lock_at', so the hash never
+    ;; matched.  Two real syncs must end with one write.
+    (let ((temp-dir (make-temp-file "announcements-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "announcements.org" temp-dir))
+                 (writes 0)
+                 (posted nil))
+            (with-temp-file org-file
+              (insert "* Welcome
+:PROPERTIES:
+:END:
+
+Hello class.
+"))
+            (let ((org-canvas-announcements-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-test-sync-handler
+                  (lambda (method url &rest _args)
+                    (cond
+                     ((and (eq method 'POST) (string-match "discussion_topics$" url))
+                      (setq writes (1+ writes))
+                      (setq posted t)
+                      '((id . 12345) (title . "Welcome")))
+                     ((and (eq method 'PUT) (string-match "discussion_topics/12345" url))
+                      (setq writes (1+ writes))
+                      '((id . 12345) (title . "Welcome")))
+                     ((and (eq method 'GET) (string-match "discussion_topics" url))
+                      (if posted '(((id . 12345) (title . "Welcome"))) '()))
+                     (t '((id . 99999)))))
+                (org-canvas-sync-announcements)
+                (expect writes :to-equal 1)
+                (org-canvas-sync-announcements)
+                (expect writes :to-equal 1))))
         (delete-directory temp-dir t))))
 
   (it "sends a payload whose body reflects the org input"

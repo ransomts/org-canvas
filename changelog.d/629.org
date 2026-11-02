@@ -1,0 +1,8 @@
+* Fixed
+- #629 An announcement that does not set =ALLOW_COMMENTS: true= is no
+  longer re-sent on every sync.  The payload builder stamped =lock_at=
+  with the time of the build, so the payload hash never matched and
+  every sync re-PUT every such announcement, moving =lock_at= forward
+  each time.  Replies are still closed, with a fixed instant in the
+  past instead of "now", so a second sync skips the announcement as
+  unchanged.
