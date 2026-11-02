@@ -400,13 +400,28 @@
        (org-canvas--pull-set-boolean-property (point) "PUBLISHED" t)
        (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))
 
+  (it "keeps a line that already spells the default (issue #498)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n:PROPERTIES:\n:PUBLISHED: true\n:PEER_REVIEWS: false\n:END:\n"
+       (org-back-to-heading t)
+       (org-canvas--pull-set-boolean-property (point) "PUBLISHED" t)
+       (org-canvas--pull-set-boolean-property (point) "PEER_REVIEWS" :json-false)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-equal "false"))))
+
   (it "reads the default of the feature a registry key names (issue #323)"
     (let ((org-canvas-emit-defaults nil))
       (with-temp-org-buffer
-       "* Heading\n"
+       "* Item\n"
        (org-canvas--pull-set-boolean-property
         (point) "PUBLISHED" t "module-items")
-       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))
+      ;; Pages declare PUBLISHED: true as their default, so a fresh
+      ;; heading stays silent there.  A heading that already spelled the
+      ;; default keeps it instead (issue #498).
+      (with-temp-org-buffer
+       "* Page\n"
        (org-canvas--pull-set-boolean-property
         (point) "PUBLISHED" t "pages")
        (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))

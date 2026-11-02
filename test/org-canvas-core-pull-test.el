@@ -1182,6 +1182,15 @@
       '((published . t)) (point))
      (expect (org-entry-get (point) "PUBLISHED") :to-be nil)))
 
+  (it "keeps a default the heading already spells (issue #498)"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:PUBLISHED: true\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "PUBLISHED" :data-key :published :type boolean :default t)
+      '((published . t)) (point))
+     (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))
+
   (it "writes the default when org-canvas-emit-defaults is set"
     (with-temp-org-buffer
      "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
