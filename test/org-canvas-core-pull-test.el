@@ -23,65 +23,54 @@
 
 (describe "file-level LAST_SYNCED"
   (it "writes #+LAST_SYNCED to the buffer header"
-    (let ((temp (make-temp-file "org-test-" nil ".org")))
-      (with-temp-file temp (insert "#+TITLE: Pages\n* Page 1\n"))
-      (unwind-protect
-          (with-current-buffer (find-file-noselect temp)
-            (org-canvas--pull-write-file-header)
-            (save-buffer)
-            (with-temp-buffer
-              (insert-file-contents temp)
-              (expect (buffer-string) :to-match
-                      "^#\\+LAST_SYNCED: \\[[0-9-]+ \\w+ [0-9:]+\\]"))
-            (kill-buffer))
-        (delete-file temp))))
+    (with-test-course (dir :files '(("pages.org" . "#+TITLE: Pages\n* Page 1\n")))
+      (with-current-buffer (find-file-noselect org-canvas-pages-file)
+        (org-canvas--pull-write-file-header)
+        (save-buffer)
+        (with-temp-buffer
+          (insert-file-contents org-canvas-pages-file)
+          (expect (buffer-string) :to-match
+                  "^#\\+LAST_SYNCED: \\[[0-9-]+ \\w+ [0-9:]+\\]"))
+        (kill-buffer))))
 
   (it "replaces an existing header instead of duplicating"
-    (let ((temp (make-temp-file "org-test-" nil ".org")))
-      (with-temp-file temp
-        (insert "#+TITLE: Pages\n#+LAST_SYNCED: [2025-01-01 Wed 00:00]\n* x\n"))
-      (unwind-protect
-          (with-current-buffer (find-file-noselect temp)
-            (org-canvas--pull-write-file-header)
-            (save-buffer)
-            (with-temp-buffer
-              (insert-file-contents temp)
-              (let ((count 0))
-                (goto-char (point-min))
-                (while (re-search-forward "^#\\+LAST_SYNCED:" nil t)
-                  (cl-incf count))
-                (expect count :to-equal 1)))
-            (kill-buffer))
-        (delete-file temp))))
+    (with-test-course
+        (dir :files '(("pages.org"
+                       . "#+TITLE: Pages\n#+LAST_SYNCED: [2025-01-01 Wed 00:00]\n* x\n")))
+      (with-current-buffer (find-file-noselect org-canvas-pages-file)
+        (org-canvas--pull-write-file-header)
+        (save-buffer)
+        (with-temp-buffer
+          (insert-file-contents org-canvas-pages-file)
+          (let ((count 0))
+            (goto-char (point-min))
+            (while (re-search-forward "^#\\+LAST_SYNCED:" nil t)
+              (cl-incf count))
+            (expect count :to-equal 1)))
+        (kill-buffer))))
 
   (it "inserts header at top when no #+TITLE present"
-    (let ((temp (make-temp-file "org-test-" nil ".org")))
-      (with-temp-file temp (insert "* Heading\n"))
-      (unwind-protect
-          (with-current-buffer (find-file-noselect temp)
-            (org-canvas--pull-write-file-header)
-            (save-buffer)
-            (with-temp-buffer
-              (insert-file-contents temp)
-              (goto-char (point-min))
-              (expect (buffer-substring (point-min) (line-end-position))
-                      :to-match "^#\\+LAST_SYNCED:"))
-            (kill-buffer))
-        (delete-file temp))))
+    (with-test-course (dir :files '(("pages.org" . "* Heading\n")))
+      (with-current-buffer (find-file-noselect org-canvas-pages-file)
+        (org-canvas--pull-write-file-header)
+        (save-buffer)
+        (with-temp-buffer
+          (insert-file-contents org-canvas-pages-file)
+          (goto-char (point-min))
+          (expect (buffer-substring (point-min) (line-end-position))
+                  :to-match "^#\\+LAST_SYNCED:"))
+        (kill-buffer))))
 
   (it "inserts header into a brand-new empty buffer"
-    (let ((temp (make-temp-file "org-test-" nil ".org")))
-      (with-temp-file temp (insert ""))
-      (unwind-protect
-          (with-current-buffer (find-file-noselect temp)
-            (org-canvas--pull-write-file-header)
-            (save-buffer)
-            (with-temp-buffer
-              (insert-file-contents temp)
-              (expect (buffer-string) :to-match
-                      "^#\\+LAST_SYNCED: \\[[0-9-]+ \\w+ [0-9:]+\\]"))
-            (kill-buffer))
-        (delete-file temp)))))
+    (with-test-course (dir :files '(("pages.org" . nil)))
+      (with-current-buffer (find-file-noselect org-canvas-pages-file)
+        (org-canvas--pull-write-file-header)
+        (save-buffer)
+        (with-temp-buffer
+          (insert-file-contents org-canvas-pages-file)
+          (expect (buffer-string) :to-match
+                  "^#\\+LAST_SYNCED: \\[[0-9-]+ \\w+ [0-9:]+\\]"))
+        (kill-buffer)))))
 
 (describe "org-canvas--pull-read-file-header"
   (it "reads #+LAST_SYNCED from the current buffer"
@@ -99,77 +88,59 @@
 
 (describe "org-canvas--build-file-id-cache"
   (it "returns an empty hash for an empty files.org"
-    (let ((temp-file (make-temp-file "files-" nil ".org")))
-      (unwind-protect
-          (let ((cache (org-canvas--build-file-id-cache temp-file)))
-            (expect (hash-table-count cache) :to-equal 0))
-        (delete-file temp-file))))
+    (with-test-course (dir :files '(("files.org" . nil)))
+      (let ((cache (org-canvas--build-file-id-cache org-canvas-files-file)))
+        (expect (hash-table-count cache) :to-equal 0))))
 
   (it "collects top-level file headings"
-    (let ((temp-file (make-temp-file "files-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* [[file:content/foo.pdf][foo.pdf]]
-:PROPERTIES:
-:CANVAS_ID: 1001
-:END:
-* [[file:content/bar.png][bar.png]]
-:PROPERTIES:
-:CANVAS_ID: 1002
-:END:
-"))
-            (let ((cache (org-canvas--build-file-id-cache temp-file)))
-              (expect (gethash "1001" cache) :to-equal "content/foo.pdf")
-              (expect (gethash "1002" cache) :to-equal "content/bar.png")
-              (expect (hash-table-count cache) :to-equal 2)))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* [[file:content/foo.pdf][foo.pdf]]\n"
+                       ":PROPERTIES:\n"
+                       ":CANVAS_ID: 1001\n"
+                       ":END:\n"
+                       "* [[file:content/bar.png][bar.png]]\n"
+                       ":PROPERTIES:\n"
+                       ":CANVAS_ID: 1002\n"
+                       ":END:\n")))
+      (let ((cache (org-canvas--build-file-id-cache org-canvas-files-file)))
+        (expect (gethash "1001" cache) :to-equal "content/foo.pdf")
+        (expect (gethash "1002" cache) :to-equal "content/bar.png")
+        (expect (hash-table-count cache) :to-equal 2))))
 
   (it "collects nested file headings under folder headings"
-    (let ((temp-file (make-temp-file "files-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Uploaded Media
-** [[file:content/Uploaded Media/img.png][img.png]]
-:PROPERTIES:
-:CANVAS_ID: 2001
-:END:
-"))
-            (let ((cache (org-canvas--build-file-id-cache temp-file)))
-              (expect (gethash "2001" cache)
-                      :to-equal "content/Uploaded Media/img.png")
-              (expect (hash-table-count cache) :to-equal 1)))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* Uploaded Media\n"
+                       "** [[file:content/Uploaded Media/img.png][img.png]]\n"
+                       ":PROPERTIES:\n"
+                       ":CANVAS_ID: 2001\n"
+                       ":END:\n")))
+      (let ((cache (org-canvas--build-file-id-cache org-canvas-files-file)))
+        (expect (gethash "2001" cache)
+                :to-equal "content/Uploaded Media/img.png")
+        (expect (hash-table-count cache) :to-equal 1))))
 
   (it "skips folder headings (no file: link, no CANVAS_ID)"
-    (let ((temp-file (make-temp-file "files-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Uploaded Media
-** [[file:content/Uploaded Media/img.png][img.png]]
-:PROPERTIES:
-:CANVAS_ID: 3001
-:END:
-"))
-            (let ((cache (org-canvas--build-file-id-cache temp-file)))
-              (expect (hash-table-count cache) :to-equal 1)))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* Uploaded Media\n"
+                       "** [[file:content/Uploaded Media/img.png][img.png]]\n"
+                       ":PROPERTIES:\n"
+                       ":CANVAS_ID: 3001\n"
+                       ":END:\n")))
+      (let ((cache (org-canvas--build-file-id-cache org-canvas-files-file)))
+        (expect (hash-table-count cache) :to-equal 1))))
 
   (it "skips entries missing CANVAS_ID"
-    (let ((temp-file (make-temp-file "files-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* [[file:content/foo.pdf][foo.pdf]]
-:PROPERTIES:
-:LAST_SYNCED: [2026-01-01 Thu 00:00]
-:END:
-"))
-            (let ((cache (org-canvas--build-file-id-cache temp-file)))
-              (expect (hash-table-count cache) :to-equal 0)))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* [[file:content/foo.pdf][foo.pdf]]\n"
+                       ":PROPERTIES:\n"
+                       ":LAST_SYNCED: [2026-01-01 Thu 00:00]\n"
+                       ":END:\n")))
+      (let ((cache (org-canvas--build-file-id-cache org-canvas-files-file)))
+        (expect (hash-table-count cache) :to-equal 0))))
 
   (it "returns an empty hash for a nonexistent file"
     (let ((cache (org-canvas--build-file-id-cache "/nonexistent/files.org")))
@@ -310,44 +281,36 @@
     (org-canvas--pull-summary-reset))
 
   (it "fetches metadata, downloads, registers, and rewrites"
-    (let ((cache (make-hash-table :test 'equal))
-          (api-calls 0)
-          (downloads 0)
-          (org-canvas-directory (make-temp-file "test-rewrite-" t))
-          (org-canvas-files-file nil))
-      (unwind-protect
-          (progn
-            (setq org-canvas-files-file
-                  (expand-file-name "files.org" org-canvas-directory))
-            (with-temp-file org-canvas-files-file
-              (insert "#+TITLE: Files\n"))
-            (cl-letf (((symbol-function 'org-canvas-api-request)
-                       (lambda (_method url &rest _args)
-                         (cl-incf api-calls)
-                         (cond
-                          ((string-match-p "/api/v1/files/30061566\\'" url)
-                           '((id . 30061566)
-                             (display_name . "screenshot.png")
-                             (folder_id . 999)
-                             (url . "https://x.com/files/30061566/download?verifier=Z")
-                             (content-type . "image/png")
-                             (size . 12345)))
-                          ((string-match-p "/api/v1/folders/999\\'" url)
-                           '((id . 999)
-                             (full_name . "course files/Uploaded Media"))))))
-                      ((symbol-function 'org-canvas--file-pull-download)
-                       (lambda (_dn _url path _size)
-                         (cl-incf downloads)
-                         (make-directory (file-name-directory path) t)
-                         (with-temp-file path (insert "fake bytes")))))
-              (let* ((input "see [[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
-                     (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
-                (expect rewritten :to-match
-                        "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]\\]")
-                (expect downloads :to-equal 1)
-                (expect (gethash "30061566" cache)
-                        :to-equal "content/Uploaded Media/screenshot.png"))))
-        (delete-directory org-canvas-directory t))))
+    (with-test-course (dir :files '(("files.org" . "#+TITLE: Files\n")))
+      (let ((cache (make-hash-table :test 'equal))
+            (api-calls 0)
+            (downloads 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest _args)
+                     (cl-incf api-calls)
+                     (cond
+                      ((string-match-p "/api/v1/files/30061566\\'" url)
+                       '((id . 30061566)
+                         (display_name . "screenshot.png")
+                         (folder_id . 999)
+                         (url . "https://x.com/files/30061566/download?verifier=Z")
+                         (content-type . "image/png")
+                         (size . 12345)))
+                      ((string-match-p "/api/v1/folders/999\\'" url)
+                       '((id . 999)
+                         (full_name . "course files/Uploaded Media"))))))
+                  ((symbol-function 'org-canvas--file-pull-download)
+                   (lambda (_dn _url path _size)
+                     (cl-incf downloads)
+                     (make-directory (file-name-directory path) t)
+                     (with-temp-file path (insert "fake bytes")))))
+          (let* ((input "see [[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
+                 (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
+            (expect rewritten :to-match
+                    "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]\\]")
+            (expect downloads :to-equal 1)
+            (expect (gethash "30061566" cache)
+                    :to-equal "content/Uploaded Media/screenshot.png"))))))
 
   (it "falls back to the placeholder folder when the folder 403s (issue #171)"
     (let ((org-canvas--rewrite-folder-cache nil))
@@ -361,77 +324,56 @@
     ;; A page body embedding a file from another course 403s for a
     ;; Designer.  Before #171 the permission error escaped this handler
     ;; and took the whole content type with it.
-    (let ((cache (make-hash-table :test 'equal))
-          (org-canvas-directory (make-temp-file "test-rewrite-403-" t))
-          (org-canvas-files-file nil))
-      (unwind-protect
-          (progn
-            (setq org-canvas-files-file
-                  (expand-file-name "files.org" org-canvas-directory))
-            (with-temp-file org-canvas-files-file (insert ""))
-            (org-canvas--pull-summary-reset)
-            (cl-letf (((symbol-function 'org-canvas-api-request)
-                       (lambda (&rest _)
-                         (signal 'org-canvas-permission-error
-                                 '("Permission denied (HTTP 403)")))))
-              (let* ((input "x [[https://x.com/courses/99999/files/21157335/preview]] y")
-                     (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
-                (expect rewritten :to-equal input)
-                (expect (length (org-canvas--pull-summary-records)) :to-equal 1))))
-        (delete-directory org-canvas-directory t))))
+    (with-test-course (dir :files '(("files.org" . nil)))
+      (let ((cache (make-hash-table :test 'equal)))
+        (org-canvas--pull-summary-reset)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (signal 'org-canvas-permission-error
+                             '("Permission denied (HTTP 403)")))))
+          (let* ((input "x [[https://x.com/courses/99999/files/21157335/preview]] y")
+                 (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
+            (expect rewritten :to-equal input)
+            (expect (length (org-canvas--pull-summary-records)) :to-equal 1))))))
 
   (it "returns nil and records to summary when metadata GET fails"
-    (let ((cache (make-hash-table :test 'equal))
-          (org-canvas-directory (make-temp-file "test-rewrite-fail-" t))
-          (org-canvas-files-file nil))
-      (unwind-protect
-          (progn
-            (setq org-canvas-files-file
-                  (expand-file-name "files.org" org-canvas-directory))
-            (with-temp-file org-canvas-files-file (insert ""))
-            (org-canvas--pull-summary-reset)
-            (cl-letf (((symbol-function 'org-canvas-api-request)
-                       (lambda (&rest _)
-                         (signal 'org-canvas-api-error '("Forbidden" nil nil)))))
-              (let* ((input "x [[https://x.com/courses/99999/files/99999999?verifier=Z]] y")
-                     (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
-                ;; URL passes through unchanged
-                (expect rewritten :to-equal input)
-                ;; Failure recorded
-                (expect (org-canvas--pull-summary-empty-p) :to-be nil))))
-        (delete-directory org-canvas-directory t))))
+    (with-test-course (dir :files '(("files.org" . nil)))
+      (let ((cache (make-hash-table :test 'equal)))
+        (org-canvas--pull-summary-reset)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (signal 'org-canvas-api-error '("Forbidden" nil nil)))))
+          (let* ((input "x [[https://x.com/courses/99999/files/99999999?verifier=Z]] y")
+                 (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
+            ;; URL passes through unchanged
+            (expect rewritten :to-equal input)
+            ;; Failure recorded
+            (expect (org-canvas--pull-summary-empty-p) :to-be nil))))))
 
   (it "caches resolved IDs for the rest of the session"
-    (let ((cache (make-hash-table :test 'equal))
-          (api-calls 0)
-          (org-canvas-directory (make-temp-file "test-rewrite-cache-" t))
-          (org-canvas-files-file nil))
-      (unwind-protect
-          (progn
-            (setq org-canvas-files-file
-                  (expand-file-name "files.org" org-canvas-directory))
-            (with-temp-file org-canvas-files-file (insert ""))
-            (cl-letf (((symbol-function 'org-canvas-api-request)
-                       (lambda (_method url &rest _args)
-                         (cl-incf api-calls)
-                         (cond
-                          ((string-match-p "/api/v1/files/30061566\\'" url)
-                           '((id . 30061566)
-                             (display_name . "screenshot.png")
-                             (folder_id . 999)
-                             (url . "https://x.com/files/30061566/download?verifier=Z")))
-                          ((string-match-p "/api/v1/folders/999\\'" url)
-                           '((full_name . "course files/Uploaded Media"))))))
-                      ((symbol-function 'org-canvas--file-pull-download)
-                       (lambda (_dn _url path _size)
-                         (make-directory (file-name-directory path) t)
-                         (with-temp-file path (insert "x")))))
-              (let ((url1 "[[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
-                    (url2 "[[https://x.com/courses/99999/files/30061566?verifier=B]]"))
-                (org-canvas--rewrite-canvas-file-urls (concat url1 "\n" url2) cache)
-                ;; Two URLs, but only one metadata fetch + one folder fetch
-                (expect api-calls :to-equal 2))))
-        (delete-directory org-canvas-directory t)))))
+    (with-test-course (dir :files '(("files.org" . nil)))
+      (let ((cache (make-hash-table :test 'equal))
+            (api-calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest _args)
+                     (cl-incf api-calls)
+                     (cond
+                      ((string-match-p "/api/v1/files/30061566\\'" url)
+                       '((id . 30061566)
+                         (display_name . "screenshot.png")
+                         (folder_id . 999)
+                         (url . "https://x.com/files/30061566/download?verifier=Z")))
+                      ((string-match-p "/api/v1/folders/999\\'" url)
+                       '((full_name . "course files/Uploaded Media"))))))
+                  ((symbol-function 'org-canvas--file-pull-download)
+                   (lambda (_dn _url path _size)
+                     (make-directory (file-name-directory path) t)
+                     (with-temp-file path (insert "x")))))
+          (let ((url1 "[[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
+                (url2 "[[https://x.com/courses/99999/files/30061566?verifier=B]]"))
+            (org-canvas--rewrite-canvas-file-urls (concat url1 "\n" url2) cache)
+            ;; Two URLs, but only one metadata fetch + one folder fetch
+            (expect api-calls :to-equal 2)))))))
 
 ;; Issue #390: a link into another course is never fetched, and a
 ;; file id whose fetch failed is not fetched again in the same run.
@@ -483,33 +425,29 @@
               :to-be 'failed)))
 
   (it "counts a same-course 403 as a skip, once, under the body's file"
-    (let* ((org-canvas-course-id "99999")
-           (org-canvas--rewrite-unresolved-ids nil)
-           (cache (make-hash-table :test 'equal))
-           (dir (make-temp-file "test-rewrite-skip-" t))
-           (pages (expand-file-name "pages.org" dir))
-           (link "[[https://x.com/courses/99999/files/556/preview]]"))
-      (unwind-protect
-          (cl-letf (((symbol-function 'org-canvas-api-request)
-                     (lambda (&rest _)
-                       (cl-incf calls)
-                       (signal 'org-canvas-permission-error
-                               '("Permission denied (HTTP 403)"))))
-                    ((symbol-function 'org-canvas--log-warning)
-                     (lambda (_logger fmt &rest args)
-                       (push (apply #'format fmt args) warnings))))
-            (with-temp-file pages (insert "* Page\n"))
-            (with-current-buffer (org-canvas--find-file-noselect pages)
-              (org-canvas--rewrite-canvas-file-urls (concat link link) cache)
-              (kill-buffer))
-            (let ((recs (org-canvas--pull-summary-records)))
-              (expect calls :to-equal 1)
-              (expect (length recs) :to-equal 1)
-              (expect (plist-get (car recs) :kind) :to-be 'skip)
-              (expect (plist-get (car recs) :file) :to-equal "pages.org")
-              (expect (plist-get (car recs) :item) :to-equal "556")
-              (expect (car warnings) :to-match "file 556 skipped")))
-        (delete-directory dir t))))
+    (with-test-course (dir :files '(("pages.org" . "* Page\n")))
+      (let* ((org-canvas-course-id "99999")
+             (org-canvas--rewrite-unresolved-ids nil)
+             (cache (make-hash-table :test 'equal))
+             (link "[[https://x.com/courses/99999/files/556/preview]]"))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (cl-incf calls)
+                     (signal 'org-canvas-permission-error
+                             '("Permission denied (HTTP 403)"))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (with-current-buffer (org-canvas--find-file-noselect org-canvas-pages-file)
+            (org-canvas--rewrite-canvas-file-urls (concat link link) cache)
+            (kill-buffer))
+          (let ((recs (org-canvas--pull-summary-records)))
+            (expect calls :to-equal 1)
+            (expect (length recs) :to-equal 1)
+            (expect (plist-get (car recs) :kind) :to-be 'skip)
+            (expect (plist-get (car recs) :file) :to-equal "pages.org")
+            (expect (plist-get (car recs) :item) :to-equal "556")
+            (expect (car warnings) :to-match "file 556 skipped"))))))
 
   (it "records any other failed fetch as an error"
     (let ((org-canvas-course-id "99999")
