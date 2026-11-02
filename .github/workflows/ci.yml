@@ -208,6 +208,13 @@ jobs:
         # "Keeping this file true").
         run: python3 scripts/stories-check.py
 
+      - name: Check API replies are treated as vectors
+        # Canvas sends a JSON array, `json-read' hands back a vector, so
+        # `car', `nth', `last' or `dolist' on a whole reply fails on a
+        # real course while a spec mocking the reply as a list passes
+        # (issue #625).
+        run: python3 scripts/api-reply-list-check.py
+
   isolation-shards:
     # Every test file must pass on its own: `eldev test "pattern"` is
     # the documented way to run a subset, and the full suite hides what

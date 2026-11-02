@@ -243,6 +243,47 @@ of that function would be; its return value is the response, nil
 included.  Bound by `with-test-api-handler' (test-fixtures.el), and nil
 otherwise, so the response table answers.")
 
+(defun test-org-canvas--json-object-p (value)
+  "Return non-nil when VALUE is a list shaped like a JSON object.
+Canvas answers decode with `json-object-type' `alist' and
+`json-key-type' `symbol', so an object is a list whose every element is
+a (KEY . VALUE) pair with a symbol for KEY.  An array decodes to a
+vector; a spec writes one as a quoted list instead, whose elements are
+objects (themselves lists of pairs), scalars, or nil -- anything but
+`(SYMBOL . VALUE)' all the way down.  A list of dotted pairs of
+non-symbols, such as ((1 . 2)), is therefore read as an array."
+  (and (consp value)
+       (proper-list-p value)
+       (cl-every (lambda (element)
+                   (and (consp element) (symbolp (car element))))
+                 value)))
+
+(defun test-org-canvas-jsonify (value)
+  "Return VALUE as `org-canvas-api-request' would: arrays as vectors.
+The real request decodes the reply with `json-read', so a JSON array
+arrives as a vector and a JSON object as an alist.  A stub that writes
+the array as a quoted list hands the code under test a list the real
+Canvas never would, hiding any `car', `nth', `last' or `dolist' the
+production code wrongly applies to an array (#625).  Convert every
+array-shaped list -- including the elements of a vector, recursively --
+to a vector, keep objects as alists, and leave strings, numbers,
+symbols, records (`plz-response' among them) and hash tables alone."
+  (cond
+   ((or (recordp value) (hash-table-p value) (not (sequencep value)))
+    value)
+   ((stringp value) value)
+   ((test-org-canvas--json-object-p value)
+    (mapcar (lambda (pair)
+              (cons (car pair) (test-org-canvas-jsonify (cdr pair))))
+            value))
+   ((vectorp value)
+    (vconcat (mapcar #'test-org-canvas-jsonify value)))
+   ((consp value)
+    (if (proper-list-p value)
+        (vconcat (mapcar #'test-org-canvas-jsonify value))
+      value))
+   (t value)))
+
 (defun test-org-canvas-mock-api-request (method url &rest args)
   "Mock API request function that records calls and returns mock responses.
 METHOD, URL, and :data occupy the first three slots (backward compatible);
@@ -250,18 +291,21 @@ the full ARGS plist is recorded as a fourth slot so :params and :timeout
 can be asserted via `test-org-canvas-call-arg'.  A non-nil
 `test-org-canvas-api-handler' answers the call; otherwise the first
 matching `test-org-canvas-api-responses' entry does, defaulting to a
-canned object."
+canned object.  Either answer goes through `test-org-canvas-jsonify',
+so a stub that writes a JSON array as a quoted list still reaches the
+code under test as the vector Canvas sends (#625)."
   (let ((call (list method url (plist-get args :data) args)))
     (push call test-org-canvas-api-calls)
-    (if test-org-canvas-api-handler
-        (apply test-org-canvas-api-handler method url args)
-      ;; Find matching response
-      (let ((response nil))
-        (cl-loop for (pattern . resp) in test-org-canvas-api-responses
-                 when (string-match-p pattern url)
-                 do (setq response resp)
-                 and return nil)
-        (or response '((id . 12345) (name . "Mock Response")))))))
+    (test-org-canvas-jsonify
+     (if test-org-canvas-api-handler
+         (apply test-org-canvas-api-handler method url args)
+       ;; Find matching response
+       (let ((response nil))
+         (cl-loop for (pattern . resp) in test-org-canvas-api-responses
+                  when (string-match-p pattern url)
+                  do (setq response resp)
+                  and return nil)
+         (or response '((id . 12345) (name . "Mock Response"))))))))
 
 (defun test-org-canvas-api-called-p (method url-pattern)
   "Check if API was called with METHOD and URL matching URL-PATTERN."

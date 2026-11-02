@@ -22,7 +22,7 @@ Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/or
 
 Utilities (test-helper.el; full reference in testing.org):
 - `with-temp-org-buffer` — file-backed temp Org buffer; org functions misbehave in `with-temp-buffer`
-- `with-mock-api` — records calls; assert with `test-org-canvas-api-called-p`, `test-org-canvas-api-call-count`
+- `with-mock-api` — records calls; assert with `test-org-canvas-api-called-p`, `test-org-canvas-api-call-count`. Every stubbed reply passes through `test-org-canvas-jsonify`, so a quoted list written for a JSON array reaches the code as the vector Canvas sends (`car`, `nth`, `last`, `dolist` then fail the spec, not the live course; #625). `scripts/api-reply-list-check.py` is the coarser net for specs that `cl-letf` the request function themselves
 - `with-sync-test-env`, `with-org-canvas-test-config`, `with-html-to-org-identity`, `with-nonexistent-canvas-files` (binds every `org-canvas-*-file`, since defcustom defaults are evaluated at load)
 - Generators: `test-org-canvas-define-common-{parse,transform,push}-tests`, `with-pull-property-test`
 - Emacs 29: pre-bind `:type` in `let*` before `expect` (oclosure shadowing); skip with `(signal 'buttercup-pending ...)` under `test-org-canvas-emacs-30-p`
