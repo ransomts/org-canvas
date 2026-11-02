@@ -2867,7 +2867,10 @@ edits included, and recomputes every total from those scores: a group
 is matched to Canvas's by =CANVAS_ID=, or by name when it has none, and
 takes the file's =WEIGHT=, =DROP_LOWEST=, =DROP_HIGHEST= and
 =NEVER_DROP=.  Weighting comes from =APPLY_WEIGHTS= in =settings.org=,
-or from the course as pulled when the file does not say.  The report,
+or from the course as pulled when the file does not say.  Both answers
+are always written: =APPLY_WEIGHTS: false= and a group's =WEIGHT: 0=
+are recorded rather than left out, so an unweighted course reads as
+unweighted and not as a course whose weights were never pulled.  The report,
 in =*canvas-gradebook-what-if*=, shows the mean, the median and the
 letter counts for Canvas's totals now, for Canvas's own table
 recomputed (a check on the recomputation), and for the file's table;

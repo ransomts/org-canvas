@@ -95,6 +95,7 @@ always known this; see `org-canvas--assignment-group-compute-rules'."
   :query "LEVEL=2+WEIGHT={.}"
   :properties
   '((:org-prop "WEIGHT" :data-key :group_weight :type number
+     :always-emit t
      :doc "Group weight percentage (0-100)")
     (:org-prop "DROP_LOWEST" :data-key :drop_lowest :type number
      :remote-fn org-canvas--assignment-group-remote-drop-lowest

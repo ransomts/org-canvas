@@ -46,7 +46,10 @@ values are written, since only absence means \"inherit\" (issue #323).
 For the same reason such a spec leaves PROPERTY untouched when VALUE is
 nil or `:null': Canvas omits a module item's `published' for a student
 token, and reading that silence as false wrote PUBLISHED: false on
-every item, an unpublish waiting for the next push (issue #487)."
+every item, an unpublish waiting for the next push (issue #487).
+A spec declaring `:always-emit' writes both values too: its default is
+the answer to a question the file exists to record, as an unweighted
+course's APPLY_WEIGHTS: false does (issue #637)."
   (let* ((spec (org-canvas--registry-find-property property registry-key))
          (boolean-spec (and spec (eq (plist-get spec :type) 'boolean)
                             (not (plist-get spec :absent-inherits))))
@@ -62,6 +65,7 @@ every item, an unpublish waiting for the next push (issue #487)."
     (cond
      ((and (plist-get spec :absent-inherits) (memq value '(nil :null))))
      ((or org-canvas-emit-defaults
+          (plist-get spec :always-emit)
           (not boolean-spec)
           (not (eq (and normalized t) (and default t))))
       (org-canvas-org-set-property
@@ -773,16 +777,20 @@ link's target heading does not exist locally."
 A terse drawer leaves such values implicit: the registered `:default'
 for a boolean (nil when none is declared), zero for a number, and
 nothing at all for the rest.  A boolean declaring `:absent-inherits'
-has no default: its absence means something neither value does."
+has no default: its absence means something neither value does.  A spec
+declaring `:always-emit' has none either: for it the default is the
+answer, and a silent drawer would be indistinguishable from a field
+never read (issue #637)."
   (let ((value (org-canvas--registry-normalize-remote value))
         (default (plist-get spec :default)))
-    (pcase (plist-get spec :type)
-      ('boolean (and (not (plist-get spec :absent-inherits))
-                     (eq (and value t) (and default t))))
-      ('number (or (null value) (equal value default)
-                   (and (numberp value) (zerop value))))
-      (_ (or (null value) (equal value "") (equal value default)
-             (and (vectorp value) (zerop (length value))))))))
+    (unless (plist-get spec :always-emit)
+      (pcase (plist-get spec :type)
+        ('boolean (and (not (plist-get spec :absent-inherits))
+                       (eq (and value t) (and default t))))
+        ('number (or (null value) (equal value default)
+                     (and (numberp value) (zerop value))))
+        (_ (or (null value) (equal value "") (equal value default)
+               (and (vectorp value) (zerop (length value)))))))))
 
 (defun org-canvas--pull-apply-spec (spec item pos)
   "Write the property SPEC describes at POS from the Canvas ITEM.
