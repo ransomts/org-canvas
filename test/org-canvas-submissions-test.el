@@ -173,7 +173,17 @@
   (it "is nil when the assignments file does not exist"
     (cl-letf (((symbol-function 'org-canvas--submissions-assignments-file)
                (lambda () "/nonexistent/assignments.org")))
-      (expect (org-canvas--submissions-heading-for-assignment "1001") :to-be nil))))
+      (expect (org-canvas--submissions-heading-for-assignment "1001") :to-be nil)))
+  (it "matches a numeric id, as Canvas hands it over (issue #634)"
+    (let ((file (make-temp-file "org-canvas-assignments-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Closer: First Stakes\n:PROPERTIES:\n:CANVAS_ID: 1001\n:END:\n"))
+            (expect (org-canvas--submissions-heading-for-id file 1001)
+                    :to-equal "Closer: First Stakes"))
+        (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+        (delete-file file)))))
 
 (describe "grading file links line"
   (it "links the Org heading, the Canvas page, and SpeedGrader"

@@ -1548,8 +1548,7 @@ keeps that shape on a pull (issue #295)."
 
 (defun org-canvas--quiz-pull-named-tables (text)
   "Return the accommodations table in TEXT, as text, or nil."
-  (when (string-match "^#\\+NAME:[ \t]+accommodations[ \t]*\n\\(?:|.*\n?\\)*" text)
-    (string-trim-right (match-string 0 text))))
+  (org-canvas--named-table-text text "accommodations"))
 
 (defun org-canvas--quiz-pull-replace-inline-description (description)
   "Replace the inline description of the quiz at point with DESCRIPTION HTML.

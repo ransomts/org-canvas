@@ -452,13 +452,18 @@ A posted student's changes are kept back unless ALLOW-POSTED.  Under
 The file is saved when anything changed."
   (let* ((dry-run org-canvas--dry-run)
          (markers (org-canvas--submissions-comments-markers))
-         (outcomes (save-excursion
-                     (apply #'append
-                            (mapcar (lambda (s)
-                                      (org-canvas--submissions-comments-import-student
-                                       s markers allow-posted (not dry-run)))
-                                    students)))))
-    (dolist (m markers) (set-marker (cdr m) nil))
+         ;; Free the markers even when a student's plan signals: a leaked
+         ;; marker keeps its buffer alive and moves when the file is
+         ;; edited, exactly as the grade import already avoided
+         ;; (issue #634).
+         (outcomes (unwind-protect
+                       (save-excursion
+                         (apply #'append
+                                (mapcar (lambda (s)
+                                          (org-canvas--submissions-comments-import-student
+                                           s markers allow-posted (not dry-run)))
+                                        students)))
+                     (dolist (m markers) (set-marker (cdr m) nil)))))
     (when (and buffer-file-name (not dry-run))
       (org-canvas--save-buffer))
     (org-canvas--submissions-comments-tally outcomes dry-run)))

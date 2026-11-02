@@ -533,12 +533,10 @@ conversation costs its own replies and not the pull — the rule issue
     (org-canvas--log-warning org-canvas--logger
       "[Messages] '%s': conversation %s %s: %s"
       subject id (if skip "skipped" "not read") msg)
-    (org-canvas--pull-summary-record
-     :kind (if skip 'skip 'error)
-     :file "messages.org"
-     :item (format "conversation %s of '%s'" id subject)
-     :error msg
-     :log-line (org-canvas--pull-summary-current-log-line))))
+    (org-canvas--pull-summary-record-failure
+     err (file-name-nondirectory org-canvas-messages-file)
+     (format "conversation %s of '%s'" id subject)
+     msg)))
 
 (defun org-canvas--message-fetch-detail (conversation subject)
   "Return CONVERSATION's detail, or nil when the read fails.

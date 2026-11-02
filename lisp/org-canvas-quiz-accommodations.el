@@ -68,7 +68,7 @@
 ;;;; Table
 
 (defconst org-canvas--accommodation-table-regexp
-  "^#\\+NAME:[ \t]+accommodations[ \t]*$"
+  (org-canvas--named-table-line-regexp "accommodations")
   "Match the `#+NAME:' line that opens an accommodations table.")
 
 (defun org-canvas--accommodation-find-table (end)

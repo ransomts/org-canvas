@@ -305,7 +305,8 @@ is a (:file :line :heading) plist.  Nil without a table."
   (let ((end (save-excursion (org-end-of-subtree t) (point)))
         (dates (org-canvas--validate-heading-dates)))
     (save-excursion
-      (unless (re-search-forward "^#\\+NAME: overrides" end t)
+      (unless (re-search-forward
+               (org-canvas--named-table-line-regexp "overrides") end t)
         (cl-return-from org-canvas--validate-override-table nil))
       (forward-line 1)
       (unless (looking-at "^|")

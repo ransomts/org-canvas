@@ -108,7 +108,8 @@ so it is not written."
 The table comes back as `org-table-to-lisp' gives it."
   (save-excursion
     (when (re-search-forward
-           (format "^#\\+NAME:[ \t]+%s[ \t]*$" org-canvas--grading-scheme-table-name)
+           (org-canvas--named-table-line-regexp
+            org-canvas--grading-scheme-table-name)
            end t)
       (forward-line 1)
       (when (looking-at-p org-table-line-regexp)

@@ -1168,22 +1168,9 @@ On failure, fetches detailed rubric info for diagnostics."
 (defun org-canvas--rubric-outcome-title (outcome-id)
   "Look up the title of an outcome with OUTCOME-ID in outcomes.org.
 Returns the heading title string, or nil if not found."
-  (when (and outcome-id
-             (boundp 'org-canvas-outcomes-file)
-             (file-exists-p org-canvas-outcomes-file))
-    (with-current-buffer (org-canvas--find-file-noselect org-canvas-outcomes-file)
-      (let ((id-str (if (numberp outcome-id)
-                        (number-to-string outcome-id)
-                      (format "%s" outcome-id))))
-        (save-excursion
-          (goto-char (point-min))
-          (catch 'found
-            (org-map-entries
-             (lambda ()
-               (when (equal (org-entry-get (point) "CANVAS_ID") id-str)
-                 (throw 'found (org-get-heading t t t t))))
-             "LEVEL=2" 'file)
-            nil))))))
+  (when (and outcome-id (boundp 'org-canvas-outcomes-file))
+    (org-canvas--heading-title-by-property
+     org-canvas-outcomes-file "CANVAS_ID" outcome-id "LEVEL=2")))
 
 (defun org-canvas--rubric-pull-outcome-link (outcome-id)
   "Build the OUTCOME property link string for a pulled criterion.

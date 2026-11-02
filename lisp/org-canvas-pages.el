@@ -102,8 +102,7 @@
 
 (defun org-canvas--page-scheduled-p (pom)
   "Return non-nil when the page heading at POM carries a PUBLISH_AT."
-  (let ((publish-at (org-entry-get pom "PUBLISH_AT")))
-    (and publish-at (not (string-empty-p (string-trim publish-at))))))
+  (org-canvas--publish-at-scheduled-p pom))
 
 (defun org-canvas--page-published-comparable-p (pom _item)
   "Return non-nil when PUBLISHED at POM is a comparable opinion.
@@ -308,12 +307,8 @@ A refusal is recorded in the pull summary, a skip or an error as
     (org-canvas-api-error
      (org-canvas--log-warning org-canvas--logger
        "[Pull] page %s not readable: %s" url (error-message-string err))
-     (org-canvas--pull-summary-record
-      :kind (if (org-canvas--api-skip-error-p err) 'skip 'error)
-      :file (file-name-nondirectory org-canvas-pages-file)
-      :item url
-      :error (error-message-string err)
-      :log-line (org-canvas--pull-summary-current-log-line))
+     (org-canvas--pull-summary-record-failure
+      err (file-name-nondirectory org-canvas-pages-file) url)
      nil)))
 
 (defun org-canvas--pages-list-from-modules (err)

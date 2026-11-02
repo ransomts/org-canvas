@@ -128,7 +128,7 @@ and tags stay."
 ;;;; The Body
 
 (defconst org-canvas--drift-kept-block-re
-  "^#\\+NAME:[ \t]+\\(?:overrides\\|accommodations\\)[ \t]*$"
+  (org-canvas--named-table-line-regexp '("overrides" "accommodations"))
   "A table a heading's body holds that its push reads apart from the body.")
 
 (defun org-canvas--drift-body-adoptable-p (props)
@@ -414,7 +414,8 @@ Returns nil, or why nothing was written."
   "Return the start of the overrides table of the heading at point, or nil."
   (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
-      (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+      (when (re-search-forward
+           (org-canvas--named-table-line-regexp "overrides") end t)
         (forward-line 1)
         (and (org-at-table-p) (point))))))
 

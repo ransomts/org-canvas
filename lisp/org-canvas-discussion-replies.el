@@ -144,17 +144,8 @@ gets, so the heading and the property agree on the course's zone."
 (defun org-canvas--reply-find-entry (entry-id)
   "Return the position of the heading carrying CANVAS_ENTRY_ID ENTRY-ID, or nil.
 Searches the current buffer at every level."
-  (let ((found nil)
-        (target (format "%s" entry-id)))
-    (save-excursion
-      (goto-char (point-min))
-      (org-map-entries
-       (lambda ()
-         (when (and (null found)
-                    (equal (org-entry-get (point) "CANVAS_ENTRY_ID") target))
-           (setq found (point))))
-       "CANVAS_ENTRY_ID={.}" 'file))
-    found))
+  (org-canvas--heading-position-by-property
+   "CANVAS_ENTRY_ID" entry-id "CANVAS_ENTRY_ID={.}"))
 
 (defun org-canvas--reply-set-properties (pos entry parent-id)
   "Write ENTRY's properties on the heading at POS.

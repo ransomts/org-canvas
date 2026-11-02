@@ -247,17 +247,7 @@ Canvas id nor a file link; the mode detector reads the same two marks."
   "Return the position of the heading whose CANVAS_ID is ID, or nil.
 Searches the whole buffer, since a re-pull may find a file the operator
 has moved to a different folder heading by hand."
-  (let ((target (format "%s" id))
-        (found nil))
-    (org-with-wide-buffer
-     (goto-char (point-min))
-     (org-map-entries
-      (lambda ()
-        (when (and (not found)
-                   (equal (org-entry-get (point) "CANVAS_ID") target))
-          (setq found (point))))
-      t 'file))
-    found))
+  (org-canvas--heading-position-by-property "CANVAS_ID" id))
 
 (defun org-canvas--file-pull-heading-folder-parts (pos)
   "Return the folder path of the heading at POS, as a list of names.

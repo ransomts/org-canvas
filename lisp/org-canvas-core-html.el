@@ -644,12 +644,11 @@ link to a file not uploaded yet is recorded there, not warned about."
           ;; Strip the override and accommodation tables (a `#+NAME:'
           ;; line and the table rows after it): they feed a sync, not
           ;; the description.
-          (goto-char (point-min))
-          (while (re-search-forward "^#\\+NAME: \\(overrides\\|accommodations\\)\n" nil t)
-            (let ((start (match-beginning 0)))
-              (while (looking-at "^|")
-                (forward-line 1))
-              (delete-region start (point))))
+          (let ((stripped (org-canvas--strip-named-tables
+                           (buffer-substring-no-properties (point-min) (point-max))
+                           '("overrides" "accommodations"))))
+            (erase-buffer)
+            (insert stripped))
           ;; Strip property drawers: the HTML exporter drops them anyway,
           ;; and property links (GROUP:, RUBRIC_LINK:) must not reach the
           ;; body link resolver, which cannot resolve them to Canvas URLs

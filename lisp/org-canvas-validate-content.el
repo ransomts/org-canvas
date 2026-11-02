@@ -447,7 +447,8 @@ LOC is a (:file :line :heading) plist.  Nil without a table."
   (let ((end (save-excursion (org-end-of-subtree t) (point)))
         (issues nil))
     (save-excursion
-      (unless (re-search-forward "^#\\+NAME:[ \t]+accommodations[ \t]*$" end t)
+      (unless (re-search-forward
+               (org-canvas--named-table-line-regexp "accommodations") end t)
         (cl-return-from org-canvas--validate-quiz-accommodations nil))
       (forward-line 1)
       (unless (looking-at "^|")
@@ -528,8 +529,7 @@ plist.  Push-only: both protect what the next push sends."
 
 (defun org-canvas--validate-page-scheduled-p ()
   "Return non-nil when the heading at point carries a PUBLISH_AT."
-  (let ((publish-at (org-entry-get (point) "PUBLISH_AT")))
-    (and publish-at (not (string-empty-p (string-trim publish-at))))))
+  (org-canvas--publish-at-scheduled-p (point)))
 
 (defun org-canvas--validate-new-quiz-item-type (loc)
   "Warn when the New Quiz item at point has a TYPE a push refuses.

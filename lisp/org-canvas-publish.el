@@ -229,7 +229,8 @@ and a heading never pushed are each a `user-error'."
                   (if file (file-name-nondirectory file) "This buffer")
                   "assignments, quizzes, discussions and pages"))
     (org-canvas--sync-refuse-deleted)
-    (when (and (plist-get rules :scheduled) (org-entry-get (point) "PUBLISH_AT"))
+    (when (and (plist-get rules :scheduled)
+               (org-canvas--publish-at-scheduled-p (point)))
       (user-error "'%s' is scheduled by PUBLISH_AT, which a change of its published state would cancel on Canvas; remove PUBLISH_AT first"
                   title))
     (unless (org-entry-get (point) id-property)

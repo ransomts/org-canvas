@@ -844,12 +844,9 @@ has disabled is a skip too (`org-canvas--api-skip-error-p', issue
       "[Pull] Settings: %s not pulled (%s); settings.org keeps what it had"
       what msg)
     (org-canvas--user-message "Settings: %s not pulled (%s)" what msg)
-    (org-canvas--pull-summary-record
-     :kind (if skip 'skip 'error)
-     :file (file-name-nondirectory org-canvas-settings-file)
-     :item what
-     :error (if skip msg (format "not pulled: %s" msg))
-     :log-line (org-canvas--pull-summary-current-log-line))))
+    (org-canvas--pull-summary-record-failure
+     err (file-name-nondirectory org-canvas-settings-file) what
+     (if skip msg (format "not pulled: %s" msg)))))
 
 (defun org-canvas--settings-pull-optional (what fetch-fn &optional absent-on-404)
   "Call FETCH-FN for WHAT, returning nil and saying so when it fails.
