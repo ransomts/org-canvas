@@ -632,6 +632,17 @@ about as it is sent."
                    (data (org-canvas--settings-resolve-course-image data))
                    (payload (org-canvas--settings-build-payload data))
                    (late-policy-payload (org-canvas--settings-build-late-policy-payload data))
+                   ;; One previewed write per PUT the run would send: the
+                   ;; course settings always, the late policy and the post
+                   ;; policy when the file declares them, and the tab state
+                   ;; as one write (it previews each tab separately).  The
+                   ;; table counts items, so this is what "3 would sync"
+                   ;; meant for a course with both policies (issue #636).
+                   (dry-run-count (and org-canvas--dry-run
+                                       (+ 1
+                                          (if late-policy-payload 1 0)
+                                          (if (plist-get data :post-policy) 1 0)
+                                          (if navigation 1 0))))
                    (response (org-canvas--settings-push data payload)))
               (org-canvas--settings-push-late-policy late-policy-payload)
               (org-canvas--settings-push-post-policy data)
@@ -643,11 +654,19 @@ about as it is sent."
               (org-canvas--log-info org-canvas--logger "========================================")
               ;; A dry run issues only a GET; counting it as a success made
               ;; the preview table claim work that did not happen (issue #66).
-              (org-canvas--sync-record-feature-stats "Settings"
-                                                     (if org-canvas--dry-run
-                                                         '(:dry-run 1)
-                                                       '(:success 1)))
-              (message "Settings sync complete.")
+              (org-canvas--sync-record-feature-stats
+               "Settings"
+               (if org-canvas--dry-run
+                   (list :dry-run dry-run-count)
+                 '(:success 1)))
+              (if org-canvas--dry-run
+                  (progn
+                    (org-canvas--log-info org-canvas--logger
+                      "Would sync: %d | Would conflict: 0 | Skipped: 0"
+                      dry-run-count)
+                    (message "Settings dry-run: %d would sync, 0 would conflict, 0 skipped."
+                             dry-run-count))
+                (message "Settings sync complete."))
               ctx)
           (error
            (org-canvas--log-error org-canvas--logger "[FAILED] Settings sync: %s"

@@ -38,6 +38,7 @@
 (declare-function org-canvas--sync-remote-drifted-p "org-canvas-core-push" (canvas-id ctx title))
 (declare-function org-canvas--sync-remote-newer-at "org-canvas-core-push" (canvas-id ctx))
 (declare-function org-canvas--sync-remote-items-titled "org-canvas-core-push" (title ctx))
+(declare-function org-canvas--sync-dry-run-reason "org-canvas-core-push" (canvas-id ctx))
 (declare-function org-canvas--sync-backfill-baseline "org-canvas-core-push" (canvas-id title ctx))
 (declare-function org-canvas--sync-deferred-error-p "org-canvas-core-push" (err))
 
@@ -411,6 +412,8 @@ already hold this title (issue #85)?  Either way the entry counts as
                                       existing ", ")
                            (org-canvas--dry-run-decision-note
                             'org-canvas-duplicate-title-strategy)))
+                  (canvas-id
+                   (or (org-canvas--sync-dry-run-reason canvas-id ctx) ""))
                   (t "")))
          (key (if (string= verb "CONFLICT") :dry-run-conflict :dry-run)))
     (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s'%s"
@@ -770,7 +773,7 @@ the baseline re-read from it (issue #124)."
 (defconst org-canvas--sync-spec-keys
   '(:feature :file :query :parse :build :push :finalize
     :pull-item-fn :title-key :hash-extra :hash :dry-run :prepare :after-sync
-    :id-property :after-heading)
+    :id-property :after-heading :dry-run-uncompared)
   "Keys a sync spec may carry.
 A sync spec is the plist `org-canvas-define-sync' builds from its
 options and hands to `org-canvas--sync-run-pipeline' and
@@ -791,8 +794,12 @@ the first entry, whose result the context keeps as :prepared,
 :after-sync the hook run on the context before the summary, and
 :id-property the Org property the stamp lives in (CANVAS_ID unless the
 module says otherwise), which a sync by heading matches an id against
-\(issue #287), and :after-heading the function a push of one heading
-runs after it (see `org-canvas--push-at-point-after-heading').")
+\(issue #287), :after-heading the function a push of one heading
+runs after it (see `org-canvas--push-at-point-after-heading'), and
+:dry-run-uncompared a short phrase naming the parts of the payload the
+drift report does not compare (module items, quiz questions), which the
+dry run appends when Canvas matches every compared property
+\(issue #636).")
 
 (defun org-canvas--sync-entry-hash (payload data ctx)
   "Return the change-detection hash for PAYLOAD and DATA under CTX, or nil.
@@ -890,6 +897,7 @@ collects the module items left pending — without a global."
                  :baseline baseline
                  :remote-updated (plist-get snapshot :updated)
                  :remote-titles (or (plist-get snapshot :titles) 'none)
+                 :remote-items (plist-get snapshot :items)
                  :remote-times (list nil)
                  :parse-fn parse-fn
                  :build-fn build-fn
@@ -904,6 +912,7 @@ collects the module items left pending — without a global."
                  :hash-extra-fn hash-extra-fn
                  :hash-fn hash-fn
                  :dry-run-in-push dry-run-in-push
+                 :dry-run-uncompared (plist-get spec :dry-run-uncompared)
                  :pull-item-fn pull-item-fn)))
       (when prepare-fn
         (plist-put ctx :prepared (funcall prepare-fn ctx)))
@@ -1018,6 +1027,10 @@ ARGS is a plist with the following keys:
              previews them: the runner then calls it under a dry run instead
              of reporting from the snapshot, and counts the sentinel it
              returns
+  :dry-run-uncompared - Optional short phrase naming the parts of the payload
+             the drift report does not compare (e.g. \"module items\"), which
+             the dry run appends when Canvas matches every compared property
+             (issue #636)
   :prepare - Optional function of the run context, run once after the
              snapshot and before the first entry (and before the parse of a
              push at point); its result is kept in the context as :prepared
@@ -1082,6 +1095,7 @@ ARGS, so the macro itself only destructures and splices."
          (pull-item-fn (plist-get args :pull-item-fn))
          (hash-extra-fn (plist-get args :hash-extra))
          (hash-fn (plist-get args :hash))
+         (dry-run-uncompared (plist-get args :dry-run-uncompared))
          (prepare-fn (plist-get args :prepare))
          (after-heading-fn (plist-get args :after-heading))
          (push-fn (or (plist-get args :push)
@@ -1109,6 +1123,7 @@ ARGS, so the macro itself only destructures and splices."
           :title-key title-key
           :hash-extra-fn hash-extra-fn :hash-fn hash-fn
           :dry-run-mode (plist-get args :dry-run)
+          :dry-run-uncompared dry-run-uncompared
           :prepare-fn prepare-fn
           :after-sync-fn (plist-get args :after-sync)
           :after-heading-fn after-heading-fn
@@ -1167,6 +1182,7 @@ spec declares a :first command to run ahead of it (outcomes)."
                      :hash-extra ,(plist-get spec :hash-extra-fn)
                      :hash ,(plist-get spec :hash-fn)
                      :dry-run ,(plist-get spec :dry-run-mode)
+                     :dry-run-uncompared ,(plist-get spec :dry-run-uncompared)
                      :prepare ,(plist-get spec :prepare-fn)
                      :after-sync ,(plist-get spec :after-sync-fn))))
         (first-fn (plist-get spec :first-fn)))

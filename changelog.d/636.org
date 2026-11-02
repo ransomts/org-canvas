@@ -1,0 +1,12 @@
+* Added
+- #636 A dry run's =Would update= line now says why: it names each compared
+  property whose local value differs from Canvas's, with both values, using
+  the drift report's own comparison.  When Canvas matches every compared
+  property it says the local payload changed since the last push, naming a
+  stale =PAYLOAD_HASH= or the parts the report does not compare (module
+  items, quiz questions) where the feature declares them with the new
+  =:dry-run-uncompared= sync-spec option.
+- #636 The settings sync now prints a =Settings dry-run: N would sync, 0
+  would conflict, 0 skipped.= line and counts each write it would send --
+  the course settings, the late policy, the post policy and the tab state --
+  so the per-feature lines add up to the global total.

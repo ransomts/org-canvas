@@ -437,6 +437,45 @@ Welcome to the course.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "counts every previewed write and says so (issue #636)"
+    ;; The global "would sync" total must add up from the per-feature
+    ;; lines: course settings always, plus the late policy, the post
+    ;; policy and the tab state when the file declares them.
+    (let* ((temp-dir (make-temp-file "settings-dry-count-" t))
+           (settings-file (expand-file-name "settings.org" temp-dir))
+           (msgs nil))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n"
+                      ":POST_POLICY: manual\n"
+                      ":LATE_SUBMISSION_DEDUCTION_ENABLED: true\n:END:\n\n"
+                      "Hello.\n\n** Navigation\n1. Home\n2. +Syllabus+\n"))
+            (let ((org-canvas-settings-file settings-file)
+                  (org-canvas--dry-run t)
+                  (org-canvas--sync-global-counters
+                   (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+                  (org-canvas--sync-global-feature-stats nil))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_method _url &rest _args)
+                             '((id . 1234) (name . "Test Course"))))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'message)
+                           (lambda (fmt &rest args)
+                             (push (apply #'format fmt args) msgs))))
+                  (org-canvas-sync-settings)
+                  (let ((entry (car org-canvas--sync-global-feature-stats)))
+                    (expect (plist-get entry :label) :to-equal "Settings")
+                    (expect (plist-get entry :dry-run) :to-equal 4))
+                  (expect (car msgs)
+                          :to-equal
+                          "Settings dry-run: 4 would sync, 0 would conflict, 0 skipped.")))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "signals error for missing file"
     (let ((org-canvas-settings-file "/tmp/nonexistent/settings.org"))
       (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))

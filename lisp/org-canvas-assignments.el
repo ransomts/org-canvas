@@ -1218,6 +1218,7 @@ then, and says so."
   :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))
   :post-fn #'org-canvas--assignment-post-finalize
   :hash-extra #'org-canvas--assignment-rubric-hash-extra
+  :dry-run-uncompared "the rubric and post policy"
   :after-heading #'org-canvas--assignment-sync-heading-overrides
   :pull-item-fn #'org-canvas--assignment-pull-item)
 

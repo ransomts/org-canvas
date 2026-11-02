@@ -553,6 +553,7 @@ The `:prepare' of the discussions sync; its result is unused."
   :find-fn (lambda (title) (org-canvas--search-item "discussion_topics" title))
   :post-fn #'org-canvas--discussion-post-finalize
   :hash-extra #'org-canvas--discussion-hash-extra
+  :dry-run-uncompared "checkpoints"
   :prepare #'org-canvas--discussion-sync-prepare
   :pull-item-fn #'org-canvas--discussion-pull-item)
 

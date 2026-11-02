@@ -1083,21 +1083,24 @@ the sync had already written (issue #97)."
 
 (defconst org-canvas--sync-ctx-keys
   '(:feature-name :feature-upper
-    :baseline :remote-updated :remote-titles :remote-times
+    :baseline :remote-updated :remote-titles :remote-items :remote-times
     :parse-fn :build-fn :push-fn :finalize-fn :hash-extra-fn
     :total-count :counters :synced-ids :title-key
     :pull-item-fn :conflict-apply-all :duplicate-apply-all :remote-touched
     :module-items-moved :module-items-pending :module-items-adopted
     :module-items-relocated
     :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push
+    :dry-run-uncompared
     :outcome :heading-report :heading-payload :file-links-unsynced)
   "Every key a sync run context may carry, present from creation.
 Static: :feature-name, :feature-upper, :title-key, the pipeline
 functions, :total-count, :hash-extra-fn.  Snapshot: :baseline (the
 file's #+LAST_SYNCED as a time), :remote-updated (id to `updated_at'),
 :remote-titles (title to items, `none' inside a run that has no
-snapshot, nil outside a run), :remote-times (a cell of the timestamps
-seen).  Run state: :counters, :synced-ids (a cell), :pull-item-fn (the
+snapshot, nil outside a run), :remote-items (id to the remote item
+itself, which the dry run reads to name the fields that differ, issue
+#636), :remote-times (a cell of the timestamps seen).  Run state:
+:counters, :synced-ids (a cell), :pull-item-fn (the
 module's pull function, which enables the pull option at a conflict),
 :conflict-apply-all and :duplicate-apply-all (a capital answer at a
 prompt, remembered for the rest of this run only), :remote-touched (set
@@ -1108,9 +1111,12 @@ string pairs moved by GraphQL this run, issue #352), :file-changed-ids
 and :file-recreated-ids (files), :prepared (what the spec's :prepare
 function returned before the first entry; the root outcome group id
 for outcomes), :hash-fn and :dry-run-in-push (the spec's :hash and
-whether its :dry-run is `push'), :outcome (what a single-entry push
-ended as — `synced', `unchanged', `conflict', `pulled', `duplicate',
-`fragment' or `dry-run' — for a caller that syncs headings by name, issue #287),
+whether its :dry-run is `push'), :dry-run-uncompared (the parts of the
+payload the drift report does not compare, which the dry run names when
+Canvas matches every compared property, issue #636), :outcome (what a
+single-entry push ended as — `synced', `unchanged', `conflict',
+`pulled', `duplicate', `fragment' or `dry-run' — for a caller that
+syncs headings by name, issue #287),
 :heading-report (the plist a spec's :after-heading returned, merged
 into that caller's result, issue #380), :heading-payload (the payload
 that single-entry push built, for :after-heading to compare with what
