@@ -1,0 +1,11 @@
+* Fixed
+- #630 A dry run no longer uploads the body's inline images or linked
+  local files.  Resolution runs during the parse, before the push
+  sentinel, so =M-x org-canvas-sync-dry-run= used to POST an uncached
+  image, create the =org-canvas-images= folder and hand the file to
+  =url-retrieve-synchronously=.  A dry run now logs "Would upload ..."
+  and leaves the link as it is.
+- #630 An inline image upload respects =org-canvas-write-allowlist=:
+  a scoped credentials file must name the files feature, =files= or
+  =files.org=, since the image is written into Canvas Files.  A page or
+  assignment entry alone no longer quietly grants it.

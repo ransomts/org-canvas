@@ -287,5 +287,95 @@ record what it is handed through `org-canvas-dry-run--record'."
                               dry-lines)
                   :not :to-equal nil))))))
 
+;;;; Body links under a dry run (issue #630)
+;;
+;; Inline images and local file links are resolved during the Parse
+;; stage, before the push sentinel: a dry run used to POST the image,
+;; create the `org-canvas-images' folder and hand the file to
+;; `url-retrieve-synchronously' on the way to a preview.
+
+(defmacro org-canvas-dry-run--with-body (body &rest forms)
+  "Visit a scratch org file whose body is BODY, then evaluate FORMS.
+Both `fig.png' and `handout.pdf' exist beside it, so the only reason
+not to upload them is the dry run itself.  The visited buffer is bound
+to `buffer', the directory to `dir'."
+  (declare (indent 1))
+  `(let* ((dir (make-temp-file "dry-body-" t))
+          (org-file (expand-file-name "pages.org" dir))
+          (buffer nil))
+     (unwind-protect
+         (progn
+           (with-temp-file (expand-file-name "fig.png" dir) (insert "PNG"))
+           (with-temp-file (expand-file-name "handout.pdf" dir) (insert "PDF"))
+           (with-temp-file org-file (insert "* Page\n" ,body "\n"))
+           (setq buffer (find-file-noselect org-file))
+           (with-current-buffer buffer
+             (org-mode)
+             (goto-char (point-min))
+             ,@forms))
+       (when (buffer-live-p buffer) (kill-buffer buffer))
+       (delete-directory dir t))))
+
+(describe "dry run body resolution (issue #630)"
+  (it "does not upload an inline image or create its folder"
+    (org-canvas-dry-run--with-body "[[file:fig.png]]"
+      (let ((uploads 0) (folders 0) (transfers 0) (logs nil)
+            (org-canvas--image-cache (make-hash-table :test 'equal)))
+        (cl-letf (((symbol-function 'org-canvas--upload-file)
+                   (lambda (&rest _) (setq uploads (1+ uploads)) '((id . 1))))
+                  ((symbol-function 'org-canvas--image-ensure-folder)
+                   (lambda () (setq folders (1+ folders)) 5))
+                  ((symbol-function 'url-retrieve-synchronously)
+                   (lambda (&rest _) (setq transfers (1+ transfers)) nil))
+                  ((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) logs)))
+                  ((symbol-function 'message) #'ignore))
+          (with-org-canvas-test-config
+            (let* ((org-canvas--dry-run t)
+                   (html (org-canvas--export-subtree-body-to-html)))
+              (expect html :to-be-truthy))))
+        (expect uploads :to-equal 0)
+        (expect folders :to-equal 0)
+        (expect transfers :to-equal 0)
+        (expect (seq-filter (lambda (l) (string-match-p "Would upload fig\\.png" l))
+                            logs)
+                :not :to-equal nil))))
+
+  (it "does not resolve a local file link or record it for upload"
+    (org-canvas-dry-run--with-body "[[file:handout.pdf][handout]]"
+      (let ((recorded nil) (logs nil) (ctx nil))
+        (cl-letf (((symbol-function 'org-canvas--local-file-canvas-id)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas--ctx-push)
+                   (lambda (&rest _) (setq recorded t)))
+                  ((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) logs)))
+                  ((symbol-function 'message) #'ignore))
+          (with-org-canvas-test-config
+            (let ((org-canvas--dry-run t))
+              (setq ctx (org-canvas--sync-make-ctx))
+              (org-canvas--resolve-file-links dir ctx))))
+        (expect recorded :to-be nil)
+        (expect (seq-filter (lambda (l) (string-match-p
+                                          "Would upload handout\\.pdf" l))
+                            logs)
+                :not :to-equal nil))))
+
+  (it "still uploads a cached image, which is a read"
+    (org-canvas-dry-run--with-body "[[file:fig.png]]"
+      (let ((org-canvas--image-cache (make-hash-table :test 'equal))
+            (uploads 0))
+        (puthash "fig.png" "https://canvas.example.com/files/9/preview"
+                 org-canvas--image-cache)
+        (cl-letf (((symbol-function 'org-canvas--upload-file)
+                   (lambda (&rest _) (setq uploads (1+ uploads)))))
+          (with-org-canvas-test-config
+            (let* ((org-canvas--dry-run t)
+                   (html (org-canvas--export-subtree-body-to-html)))
+              (expect html :to-match "files/9/preview"))))
+        (expect uploads :to-equal 0)))))
+
 (provide 'org-canvas-dry-run-test)
 ;;; org-canvas-dry-run-test.el ends here
