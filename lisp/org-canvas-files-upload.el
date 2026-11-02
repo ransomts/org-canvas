@@ -338,7 +338,12 @@ with `location' key."
 
 (defun org-canvas--file-confirm-with-retry (url max-retries)
   "GET URL with exponential-backoff retries up to MAX-RETRIES.
-Returns the API response or signals the last error."
+Returns the API response or signals the last error.
+
+URL comes from the upload host's step-2 reply, so it is checked against
+`org-canvas-base-url' before the first attempt: this GET carries the
+bearer token, and an off-host location would receive it (issue #631)."
+  (org-canvas--api-require-base-host url "upload confirmation")
   (let ((attempt 0) response last-err)
     (while (and (< attempt max-retries) (null response))
       (setq attempt (1+ attempt))

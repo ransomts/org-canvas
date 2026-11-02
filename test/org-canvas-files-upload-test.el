@@ -466,7 +466,17 @@
   (it "errors when no id or location in response"
     (let ((step2-response '((error . "something wrong"))))
       (expect (org-canvas--file-upload-step3-confirm step2-response)
-              :to-throw 'error))))
+              :to-throw 'error)))
+
+  (it "refuses an off-host location without sending the token (issue #631)"
+    (with-org-canvas-test-config
+      (let ((called nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (setq called t) '((id . 1)))))
+          (expect (org-canvas--file-upload-step3-confirm
+                   '((location . "https://upload.evil.example/confirm")))
+                  :to-throw 'org-canvas-api-error)
+          (expect called :to-be nil))))))
 
 (describe "org-canvas--file-search-by-name (mocked)"
   (before-each (test-org-canvas-reset-file-caches))
@@ -744,7 +754,7 @@
                   ((symbol-function 'org-canvas--log-warning)
                    (lambda (_logger &rest _args)
                      (setq warning-logged t))))
-          (let ((step2-response '((location . "https://example.com/confirm"))))
+          (let ((step2-response '((location . "https://test.canvas.example.com/confirm"))))
             (org-canvas--file-upload-step3-confirm step2-response)
             (expect warning-logged :to-be t)))))))
 
@@ -871,7 +881,7 @@
                   ;; Skip sleep-for in tests
                   ((symbol-function 'sleep-for) (lambda (&rest _) nil)))
           (let ((result (org-canvas--file-upload-step3-confirm
-                         '((location . "https://example.com/confirm")))))
+                         '((location . "https://test.canvas.example.com/confirm")))))
             (expect (alist-get 'id result) :to-equal 99)
             (expect call-count :to-equal 2))))))
 
@@ -882,7 +892,7 @@
                    (signal 'error '("Server error"))))
                 ((symbol-function 'sleep-for) (lambda (&rest _) nil)))
         (expect (org-canvas--file-upload-step3-confirm
-                 '((location . "https://example.com/confirm")))
+                 '((location . "https://test.canvas.example.com/confirm")))
                 :to-throw 'error)))))
 
 ;;;; New Property Tests: Usage Rights
@@ -1100,7 +1110,7 @@
                      (if (< attempt-count 3)
                          (error "Not ready yet")
                        '((id . 42))))))
-          (org-canvas--file-confirm-with-retry "https://test.example.com/confirm" 3)
+          (org-canvas--file-confirm-with-retry "https://test.canvas.example.com/confirm" 3)
           (expect 'message :to-have-been-called-with
                   "%s in %ds..." "File upload: retry 2/3" 2))))))
 
@@ -1400,46 +1410,63 @@
 (describe "org-canvas--file-confirm-with-retry attempt count"
   (before-each (test-org-canvas-reset-file-caches))
 
+  ;; The retry helper is the choke point for the step-3 GET, so it must
+  ;; refuse an off-host URL before the first token-bearing attempt.
+  (it "refuses an off-host URL before the first attempt (issue #631)"
+    (with-org-canvas-test-config
+      (let ((attempts 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (setq attempts (1+ attempts)))))
+          (expect (org-canvas--file-confirm-with-retry
+                   "https://upload.evil.example/1" 3)
+                  :to-throw 'org-canvas-api-error)
+          (expect attempts :to-equal 0)))))
+
   ;; `<' vs `<=' survived: nothing pinned how many attempts actually run.
   (it "makes exactly max-retries attempts before giving up"
-    (let ((attempts 0))
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _)
-                   (setq attempts (1+ attempts))
-                   (org-canvas--signal 'org-canvas-api-error "nope")))
-                ((symbol-function 'sleep-for) #'ignore)
-                ((symbol-function 'message) (lambda (&rest _) nil)))
-        (expect (org-canvas--file-confirm-with-retry "https://x.example/1" 3)
-                :to-throw)
-        (expect attempts :to-equal 3))))
+    (with-org-canvas-test-config
+      (let ((attempts 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (setq attempts (1+ attempts))
+                     (org-canvas--signal 'org-canvas-api-error "nope")))
+                  ((symbol-function 'sleep-for) #'ignore)
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (expect (org-canvas--file-confirm-with-retry
+                   "https://test.canvas.example.com/1" 3)
+                  :to-throw)
+          (expect attempts :to-equal 3)))))
 
   (it "does not back off before the first attempt"
     ;; `(> attempt 1)' guards the exponential sleep.  With `>=' the very
     ;; first attempt would sleep a second and log a spurious "Retry 1/N"
     ;; before it had failed at anything.
-    (let ((slept nil))
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _) '((id . 5))))
-                ((symbol-function 'sleep-for)
-                 (lambda (&rest args) (push args slept)))
-                ((symbol-function 'message) (lambda (&rest _) nil)))
-        (org-canvas--file-confirm-with-retry "https://x.example/1" 3)
-        (expect slept :to-be nil))))
+    (with-org-canvas-test-config
+      (let ((slept nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) '((id . 5))))
+                  ((symbol-function 'sleep-for)
+                   (lambda (&rest args) (push args slept)))
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (org-canvas--file-confirm-with-retry
+           "https://test.canvas.example.com/1" 3)
+          (expect slept :to-be nil)))))
 
   (it "stops at the first success without burning the remaining retries"
-    (let ((attempts 0))
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _)
-                   (setq attempts (1+ attempts))
-                   (if (= attempts 2)
-                       '((id . 5))
-                     (org-canvas--signal 'org-canvas-api-error "nope"))))
-                ((symbol-function 'sleep-for) #'ignore)
-                ((symbol-function 'message) (lambda (&rest _) nil)))
-        (expect (alist-get 'id (org-canvas--file-confirm-with-retry
-                                "https://x.example/1" 5))
-                :to-equal 5)
-        (expect attempts :to-equal 2)))))
+    (with-org-canvas-test-config
+      (let ((attempts 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (setq attempts (1+ attempts))
+                     (if (= attempts 2)
+                         '((id . 5))
+                       (org-canvas--signal 'org-canvas-api-error "nope"))))
+                  ((symbol-function 'sleep-for) #'ignore)
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (expect (alist-get 'id (org-canvas--file-confirm-with-retry
+                                  "https://test.canvas.example.com/1" 5))
+                  :to-equal 5)
+          (expect attempts :to-equal 2))))))
 
 (describe "org-canvas--file-parse-upload-response branches"
   (before-each (test-org-canvas-reset-file-caches))

@@ -252,6 +252,40 @@
               (expect (buffer-string) :to-match "Adopted course")))
         (delete-directory temp-dir t))))
 
+  (it "writes the credentials file mode 0600 (issue #631)"
+    (let ((temp-dir (make-temp-file "org-canvas-init-" t)))
+      (unwind-protect
+          (let ((cred-file (org-canvas--write-credentials-file
+                            temp-dir "https://test.example.com" "t" "1")))
+            (expect (logand (file-modes cred-file) #o777) :to-equal #o600))
+        (delete-directory temp-dir t))))
+
+  (it "warns when an existing credentials file is group-readable (issue #631)"
+    (let ((temp-dir (make-temp-file "org-canvas-init-" t))
+          (said nil))
+      (unwind-protect
+          (let ((cred-file (expand-file-name "org-canvas-credentials.el" temp-dir)))
+            (with-temp-file cred-file (insert "old"))
+            (set-file-modes cred-file #o664)
+            (cl-letf (((symbol-function 'org-canvas--user-message)
+                       (lambda (fmt &rest args)
+                         (setq said (apply #'format fmt args)))))
+              (org-canvas--write-credentials-file
+               temp-dir "https://test.example.com" "t" "1"))
+            (expect said :to-match "readable by group or others")
+            (expect (logand (file-modes cred-file) #o777) :to-equal #o600))
+        (delete-directory temp-dir t))))
+
+  (it "asks the compiler not to produce a credentials .elc (issue #631)"
+    (let ((temp-dir (make-temp-file "org-canvas-init-" t)))
+      (unwind-protect
+          (let ((cred-file (org-canvas--write-credentials-file
+                            temp-dir "https://test.example.com" "t" "1")))
+            (with-temp-buffer
+              (insert-file-contents cred-file)
+              (expect (buffer-string) :to-match "no-byte-compile: t")))
+        (delete-directory temp-dir t))))
+
   (it "leaves a course you own writable (issue #163)"
     (let ((temp-dir (make-temp-file "org-canvas-init-" t)))
       (unwind-protect

@@ -1084,6 +1084,73 @@ ran alone (issue #260)."
         (org-canvas--require-optional 'org-canvas-credentials "the credentials file"))
       (expect said :not :to-match "HIJACKME"))))
 
+(describe "org-canvas--load-credentials-file"
+  (it "loads the .el source by explicit path and never a stale .elc"
+    (let ((file "/tmp/cred/org-canvas-credentials.el")
+          (compiled "/tmp/cred/org-canvas-credentials.elc")
+          (loaded nil)
+          (said nil))
+      (cl-letf (((symbol-function 'org-canvas--credentials-source-file)
+                 (lambda () file))
+                ((symbol-function 'featurep) (lambda (&rest _) nil))
+                ((symbol-function 'file-exists-p)
+                 (lambda (name) (string= name compiled)))
+                ((symbol-function 'load)
+                 (lambda (name &rest args) (setq loaded (cons name args))))
+                ((symbol-function 'org-canvas--user-message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (expect (org-canvas--load-credentials-file) :to-equal file)
+        (expect loaded :to-equal (list file nil t t))
+        (expect said :to-match "ignoring byte-compiled")
+        (expect said :to-match "org-canvas-credentials\\.elc"))))
+
+  (it "stays quiet when there is no credentials file"
+    (let (said)
+      (cl-letf (((symbol-function 'org-canvas--credentials-source-file)
+                 (lambda () nil))
+                ((symbol-function 'featurep) (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas--user-message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (expect (org-canvas--load-credentials-file) :to-be nil)
+        (expect said :to-be nil))))
+
+  (it "reports a credentials file that signals and carries on"
+    (let ((said nil))
+      (cl-letf (((symbol-function 'org-canvas--credentials-source-file)
+                 (lambda () "/tmp/cred/org-canvas-credentials.el"))
+                ((symbol-function 'featurep) (lambda (&rest _) nil))
+                ((symbol-function 'file-exists-p) (lambda (&rest _) nil))
+                ((symbol-function 'load)
+                 (lambda (&rest _) (error "Cannot open load file: nope")))
+                ((symbol-function 'org-canvas--user-message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (expect (org-canvas--load-credentials-file) :to-be nil)
+        (expect said :to-match "the credentials file unavailable")
+        (expect said :to-match "Cannot open load file"))))
+
+  (it "does not reload a credentials feature already provided"
+    (let ((located nil))
+      (cl-letf (((symbol-function 'featurep)
+                 (lambda (feature) (eq feature 'org-canvas-credentials)))
+                ((symbol-function 'org-canvas--credentials-source-file)
+                 (lambda () (setq located t) nil)))
+        (expect (org-canvas--load-credentials-file)
+                :to-equal 'org-canvas-credentials)
+        (expect located :to-be nil)))))
+
+(describe "org-canvas--credentials-source-file"
+  (it "asks load-path for the .el itself, not a compiled suffix"
+    (let ((asked nil))
+      (cl-letf (((symbol-function 'locate-file)
+                 (lambda (name path &optional suffixes)
+                   (setq asked (list name path suffixes))
+                   "/tmp/cred/org-canvas-credentials.el")))
+        (expect (org-canvas--credentials-source-file)
+                :to-equal "/tmp/cred/org-canvas-credentials.el")
+        (expect (car asked) :to-equal "org-canvas-credentials")
+        (expect (cadr asked) :to-be load-path)
+        (expect (caddr asked) :to-equal '(".el"))))))
+
 (describe "org-canvas--registry-find-feature"
   (it "matches a pipeline feature name against the registry label"
     ;; The pipeline says "assignment-groups", the registry says
