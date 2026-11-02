@@ -386,95 +386,74 @@ Welcome to the course.
 
 (describe "org-canvas-sync-settings"
   (it "syncs settings from file"
-    (let* ((temp-dir (make-temp-file "settings-test" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n\nHello.\n"))
-            (let ((org-canvas-settings-file settings-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             '((id . 1234) (name . "Test Course"))))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-sync-settings)
-                  (with-current-buffer (find-file-noselect settings-file)
-                    (goto-char (point-min))
-                    (org-back-to-heading)
-                    (expect-synced-timestamp (point)))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("settings.org"
+                       "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n\nHello.\n")))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     '((id . 1234) (name . "Test Course"))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil)))
+          (org-canvas-sync-settings)
+          (with-current-buffer (find-file-noselect org-canvas-settings-file)
+            (goto-char (point-min))
+            (org-back-to-heading)
+            (expect-synced-timestamp (point)))))))
 
   (it "records a dry run as would-sync, not as a success"
     ;; Issue #66: only a GET goes out, so counting it as a success made the
     ;; preview table claim work that never happened.
-    (let* ((temp-dir (make-temp-file "settings-dry-" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n\nHello.\n"))
-            (let ((org-canvas-settings-file settings-file)
-                  (org-canvas--dry-run t)
-                  (org-canvas--sync-global-counters
-                   (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
-                  (org-canvas--sync-global-feature-stats nil))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             '((id . 1234) (name . "Test Course"))))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-sync-settings)
-                  (let ((entry (car org-canvas--sync-global-feature-stats)))
-                    (expect (plist-get entry :label) :to-equal "Settings")
-                    (expect (plist-get entry :dry-run) :to-equal 1)
-                    (expect (plist-get entry :success) :to-equal 0))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("settings.org"
+                       "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n\nHello.\n")))
+      (let ((org-canvas--dry-run t)
+            (org-canvas--sync-global-counters
+             (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+            (org-canvas--sync-global-feature-stats nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       '((id . 1234) (name . "Test Course"))))
+                    ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                    ((symbol-function 'display-buffer) (lambda (_) nil)))
+            (org-canvas-sync-settings)
+            (let ((entry (car org-canvas--sync-global-feature-stats)))
+              (expect (plist-get entry :label) :to-equal "Settings")
+              (expect (plist-get entry :dry-run) :to-equal 1)
+              (expect (plist-get entry :success) :to-equal 0)))))))
 
   (it "counts every previewed write and says so (issue #636)"
     ;; The global "would sync" total must add up from the per-feature
     ;; lines: course settings always, plus the late policy, the post
     ;; policy and the tab state when the file declares them.
-    (let* ((temp-dir (make-temp-file "settings-dry-count-" t))
-           (settings-file (expand-file-name "settings.org" temp-dir))
-           (msgs nil))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n"
-                      ":POST_POLICY: manual\n"
-                      ":LATE_SUBMISSION_DEDUCTION_ENABLED: true\n:END:\n\n"
-                      "Hello.\n\n** Navigation\n1. Home\n2. +Syllabus+\n"))
-            (let ((org-canvas-settings-file settings-file)
-                  (org-canvas--dry-run t)
-                  (org-canvas--sync-global-counters
-                   (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
-                  (org-canvas--sync-global-feature-stats nil))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             '((id . 1234) (name . "Test Course"))))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil))
-                          ((symbol-function 'message)
-                           (lambda (fmt &rest args)
-                             (push (apply #'format fmt args) msgs))))
-                  (org-canvas-sync-settings)
-                  (let ((entry (car org-canvas--sync-global-feature-stats)))
-                    (expect (plist-get entry :label) :to-equal "Settings")
-                    (expect (plist-get entry :dry-run) :to-equal 4))
-                  (expect (car msgs)
-                          :to-equal
-                          "Settings dry-run: 4 would sync, 0 would conflict, 0 skipped.")))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (let ((msgs nil))
+      (with-test-course
+          (dir :files '(("settings.org"
+                         "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n"
+                         ":POST_POLICY: manual\n"
+                         ":LATE_SUBMISSION_DEDUCTION_ENABLED: true\n:END:\n\n"
+                         "Hello.\n\n** Navigation\n1. Home\n2. +Syllabus+\n")))
+        (let ((org-canvas--dry-run t)
+              (org-canvas--sync-global-counters
+               (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+              (org-canvas--sync-global-feature-stats nil))
+          (with-org-canvas-test-config
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (_method _url &rest _args)
+                         '((id . 1234) (name . "Test Course"))))
+                      ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                      ((symbol-function 'display-buffer) (lambda (_) nil))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args)
+                         (push (apply #'format fmt args) msgs))))
+              (org-canvas-sync-settings)
+              (let ((entry (car org-canvas--sync-global-feature-stats)))
+                (expect (plist-get entry :label) :to-equal "Settings")
+                (expect (plist-get entry :dry-run) :to-equal 4))
+              (expect (car msgs)
+                      :to-equal
+                      "Settings dry-run: 4 would sync, 0 would conflict, 0 skipped.")))))))
 
   (it "signals error for missing file"
     (let ((org-canvas-settings-file "/tmp/nonexistent/settings.org"))
@@ -555,177 +534,153 @@ Old syllabus.
 
 (describe "org-canvas-pull-settings"
   (it "creates file and populates properties"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-settings-file settings-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           '((name . "Data Science")
-                             (time_zone . "America/New_York")
-                             (default_view . "modules")
-                             (apply_assignment_group_weights . t)
-                             (hide_final_grades . :json-false)
-                             (public_syllabus . t)
-                             (is_public . :json-false)
-                             (license . "private")
-                             (start_at . "2026-01-15T10:00:00Z")
-                             (end_at . "2026-05-15T10:00:00Z")
-                             (syllabus_body . "<p>Welcome</p>"))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-settings)
-                ;; Verify the saved file by reading it into a temp org buffer
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents settings-file)
-                                 (buffer-string))))
-                  (with-temp-org-buffer
-                   content
-                   (re-search-forward "^\\*+ " nil t)
-                   (org-back-to-heading)
-                   (expect (org-entry-get (point) "TIME_ZONE")
-                           :to-equal "America/New_York")
-                   (expect (org-entry-get (point) "DEFAULT_VIEW")
-                           :to-equal "modules")
-                   (expect (org-entry-get (point) "APPLY_WEIGHTS")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "HIDE_FINAL_GRADES")
-                           :to-be nil)
-                   (expect (org-entry-get (point) "PUBLIC_SYLLABUS")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "IS_PUBLIC")
-                           :to-be nil)
-                   (expect (org-entry-get (point) "LICENSE")
-                           :to-equal "private")
-                   (expect (org-entry-get (point) "START_AT")
-                           :to-match "2026-01-15")
-                   (expect (org-entry-get (point) "END_AT")
-                           :to-match "2026-05-15")
-                   (expect-synced-timestamp (point))
-                   (expect (buffer-string) :to-match "Welcome"))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files nil)
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     '((name . "Data Science")
+                       (time_zone . "America/New_York")
+                       (default_view . "modules")
+                       (apply_assignment_group_weights . t)
+                       (hide_final_grades . :json-false)
+                       (public_syllabus . t)
+                       (is_public . :json-false)
+                       (license . "private")
+                       (start_at . "2026-01-15T10:00:00Z")
+                       (end_at . "2026-05-15T10:00:00Z")
+                       (syllabus_body . "<p>Welcome</p>"))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil)))
+          (org-canvas-pull-settings)
+          ;; Verify the saved file by reading it into a temp org buffer
+          (let ((content (with-temp-buffer
+                           (insert-file-contents org-canvas-settings-file)
+                           (buffer-string))))
+            (with-temp-org-buffer
+             content
+             (re-search-forward "^\\*+ " nil t)
+             (org-back-to-heading)
+             (expect (org-entry-get (point) "TIME_ZONE")
+                     :to-equal "America/New_York")
+             (expect (org-entry-get (point) "DEFAULT_VIEW")
+                     :to-equal "modules")
+             (expect (org-entry-get (point) "APPLY_WEIGHTS")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "HIDE_FINAL_GRADES")
+                     :to-be nil)
+             (expect (org-entry-get (point) "PUBLIC_SYLLABUS")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "IS_PUBLIC")
+                     :to-be nil)
+             (expect (org-entry-get (point) "LICENSE")
+                     :to-equal "private")
+             (expect (org-entry-get (point) "START_AT")
+                     :to-match "2026-01-15")
+             (expect (org-entry-get (point) "END_AT")
+                     :to-match "2026-05-15")
+             (expect-synced-timestamp (point))
+             (expect (buffer-string) :to-match "Welcome")))))))
 
   (it "sets new boolean and number settings properties on pull"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-settings-file settings-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           '((name . "Course")
-                             (time_zone . "UTC")
-                             (default_view . "modules")
-                             (apply_assignment_group_weights . t)
-                             (hide_final_grades . :json-false)
-                             (public_syllabus . :json-false)
-                             (is_public . :json-false)
-                             (allow_student_discussion_topics . t)
-                             (allow_student_discussion_editing . :json-false)
-                             (allow_student_forum_attachments . t)
-                             (lock_all_announcements . t)
-                             (restrict_student_future_view . :json-false)
-                             (restrict_student_past_view . t)
-                             (show_announcements_on_home_page . t)
-                             (home_page_announcement_limit . 5)
-                             (hide_distribution_graphs . :json-false))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-settings)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents settings-file)
-                                 (buffer-string))))
-                  (with-temp-org-buffer
-                   content
-                   (re-search-forward "^\\*+ " nil t)
-                   (org-back-to-heading)
-                   (expect (org-entry-get (point) "ALLOW_STUDENT_DISCUSSION_TOPICS")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "ALLOW_STUDENT_DISCUSSION_EDITING")
-                           :to-be nil)
-                   (expect (org-entry-get (point) "ALLOW_STUDENT_FORUM_ATTACHMENTS")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "LOCK_ALL_ANNOUNCEMENTS")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "RESTRICT_STUDENT_FUTURE_VIEW")
-                           :to-be nil)
-                   (expect (org-entry-get (point) "RESTRICT_STUDENT_PAST_VIEW")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "HOME_PAGE_ANNOUNCEMENT_LIMIT")
-                           :to-equal "5")
-                   (expect (org-entry-get (point) "HIDE_DISTRIBUTION_GRAPHS")
-                           :to-be nil))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files nil)
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     '((name . "Course")
+                       (time_zone . "UTC")
+                       (default_view . "modules")
+                       (apply_assignment_group_weights . t)
+                       (hide_final_grades . :json-false)
+                       (public_syllabus . :json-false)
+                       (is_public . :json-false)
+                       (allow_student_discussion_topics . t)
+                       (allow_student_discussion_editing . :json-false)
+                       (allow_student_forum_attachments . t)
+                       (lock_all_announcements . t)
+                       (restrict_student_future_view . :json-false)
+                       (restrict_student_past_view . t)
+                       (show_announcements_on_home_page . t)
+                       (home_page_announcement_limit . 5)
+                       (hide_distribution_graphs . :json-false))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil)))
+          (org-canvas-pull-settings)
+          (let ((content (with-temp-buffer
+                           (insert-file-contents org-canvas-settings-file)
+                           (buffer-string))))
+            (with-temp-org-buffer
+             content
+             (re-search-forward "^\\*+ " nil t)
+             (org-back-to-heading)
+             (expect (org-entry-get (point) "ALLOW_STUDENT_DISCUSSION_TOPICS")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "ALLOW_STUDENT_DISCUSSION_EDITING")
+                     :to-be nil)
+             (expect (org-entry-get (point) "ALLOW_STUDENT_FORUM_ATTACHMENTS")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "LOCK_ALL_ANNOUNCEMENTS")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "RESTRICT_STUDENT_FUTURE_VIEW")
+                     :to-be nil)
+             (expect (org-entry-get (point) "RESTRICT_STUDENT_PAST_VIEW")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE")
+                     :to-equal "true")
+             (expect (org-entry-get (point) "HOME_PAGE_ANNOUNCEMENT_LIMIT")
+                     :to-equal "5")
+             (expect (org-entry-get (point) "HIDE_DISTRIBUTION_GRAPHS")
+                     :to-be nil)))))))
 
   (it "updates existing file without duplicating headings"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "#+TITLE: Settings\n* Old Name\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n"))
-            (let ((org-canvas-settings-file settings-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             '((name . "New Name")
-                               (time_zone . "America/Chicago")
-                               (default_view . "feed")
-                               (apply_assignment_group_weights . :json-false)
-                               (hide_final_grades . :json-false)
-                               (public_syllabus . :json-false)
-                               (is_public . :json-false))))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil))
-                          ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                  (org-canvas-pull-settings)
-                  ;; Verify the saved file by reading it into a temp org buffer
-                  (let ((content (with-temp-buffer
-                                   (insert-file-contents settings-file)
-                                   (buffer-string))))
-                    (with-temp-org-buffer
-                     content
-                     ;; Should only have one level-1 heading
-                     (let ((count 0))
-                       (org-map-entries (lambda () (setq count (1+ count)))
-                                        "LEVEL=1" 'file)
-                       (expect count :to-equal 1))
-                     (re-search-forward "^\\*+ " nil t)
-                     (org-back-to-heading)
-                     (expect (org-entry-get (point) "TIME_ZONE")
-                             :to-equal "America/Chicago")))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("settings.org"
+                       "#+TITLE: Settings\n* Old Name\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n")))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     '((name . "New Name")
+                       (time_zone . "America/Chicago")
+                       (default_view . "feed")
+                       (apply_assignment_group_weights . :json-false)
+                       (hide_final_grades . :json-false)
+                       (public_syllabus . :json-false)
+                       (is_public . :json-false))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-pull-settings)
+          ;; Verify the saved file by reading it into a temp org buffer
+          (let ((content (with-temp-buffer
+                           (insert-file-contents org-canvas-settings-file)
+                           (buffer-string))))
+            (with-temp-org-buffer
+             content
+             ;; Should only have one level-1 heading
+             (let ((count 0))
+               (org-map-entries (lambda () (setq count (1+ count)))
+                                "LEVEL=1" 'file)
+               (expect count :to-equal 1))
+             (re-search-forward "^\\*+ " nil t)
+             (org-back-to-heading)
+             (expect (org-entry-get (point) "TIME_ZONE")
+                     :to-equal "America/Chicago")))))))
 
   (it "aborts when user declines overwrite of existing file"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "#+TITLE: Settings\n* Old Name\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n"))
-            (let ((org-canvas-settings-file settings-file)
-                  ;; Batch mode now skips the prompt (issue #34).
-                  (noninteractive nil))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             '((name . "New Name"))))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil))
-                          ((symbol-function 'y-or-n-p) (lambda (_) nil)))
-                  (expect (org-canvas-pull-settings) :to-throw 'user-error)))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files '(("settings.org"
+                       "#+TITLE: Settings\n* Old Name\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n")))
+      ;; Batch mode now skips the prompt (issue #34).
+      (let ((noninteractive nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       '((name . "New Name"))))
+                    ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                    ((symbol-function 'display-buffer) (lambda (_) nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+            (expect (org-canvas-pull-settings) :to-throw 'user-error)))))))
 
 ;;;; Additional Coverage Tests
 
@@ -741,62 +696,38 @@ Old syllabus.
 
 (describe "org-canvas-sync-settings error paths"
   (it "errors when no heading found"
-    (let* ((temp-dir (make-temp-file "settings-test" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "#+TITLE: Settings\n"))
-            (let ((org-canvas-settings-file settings-file))
-              (with-sync-test-env
-                (expect (org-canvas-sync-settings) :to-throw 'error))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("settings.org" "#+TITLE: Settings\n")))
+      (with-sync-test-env
+        (expect (org-canvas-sync-settings) :to-throw 'error))))
 
   (it "logs error on sync failure"
-    (let* ((temp-dir (make-temp-file "settings-test" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "#+TITLE: Settings\n* Course\n:PROPERTIES:\n:END:\n"))
-            (let ((org-canvas-settings-file settings-file))
-              (with-org-canvas-test-config
-                (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas--settings-parse-entry)
-                             (lambda () (signal 'error '("Parse error")))))
-                    ;; Should not throw (errors are caught and logged)
-                    (org-canvas-sync-settings))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files '(("settings.org" "#+TITLE: Settings\n* Course\n:PROPERTIES:\n:END:\n")))
+      (with-org-canvas-test-config
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas--settings-parse-entry)
+                     (lambda () (signal 'error '("Parse error")))))
+            ;; Should not throw (errors are caught and logged)
+            (org-canvas-sync-settings)))))))
 
 (describe "org-canvas-pull-settings heading creation"
   (it "creates heading when file has no headings"
-    (let* ((temp-dir (make-temp-file "settings-test" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file settings-file
-              (insert "#+TITLE: Settings\n"))
-            (let ((org-canvas-settings-file settings-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             '((name . "My Course"))))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil))
-                          ((symbol-function 'org-canvas--pull-confirm-overwrite)
-                           (lambda (&rest _) nil))
-                          ((symbol-function 'org-canvas--settings-pull-set-properties)
-                           (lambda (&rest _) nil)))
-                  (org-canvas-pull-settings)
-                  (with-current-buffer (find-file-noselect settings-file)
-                    (expect (buffer-string) :to-match "My Course"))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files '(("settings.org" "#+TITLE: Settings\n")))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     '((name . "My Course"))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil))
+                  ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas--settings-pull-set-properties)
+                   (lambda (&rest _) nil)))
+          (org-canvas-pull-settings)
+          (with-current-buffer (find-file-noselect org-canvas-settings-file)
+            (expect (buffer-string) :to-match "My Course")))))))
 
 ;;;; Late Policy + GRADING_STANDARD_ID Tests
 
@@ -980,61 +911,56 @@ Old syllabus.
 
 (describe "org-canvas-pull-settings (late policy + grading_standard_id)"
   (it "sets GRADING_STANDARD_ID and late policy properties on pull"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-settings-file settings-file)
-                (call-count 0))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method url &rest _args)
-                           (setq call-count (1+ call-count))
-                           (if (string-match "late_policy" url)
-                               '((late_policy .
-                                  ((late_submission_deduction . 10)
-                                   (late_submission_deduction_enabled . t)
-                                   (late_submission_interval . "day")
-                                   (late_submission_minimum_percent . 50)
-                                   (late_submission_minimum_percent_enabled . t)
-                                   (missing_submission_deduction . 100)
-                                   (missing_submission_deduction_enabled . :json-false))))
-                             '((name . "Course")
-                               (time_zone . "UTC")
-                               (default_view . "modules")
-                               (grading_standard_id . 42)
-                               (apply_assignment_group_weights . :json-false)
-                               (hide_final_grades . :json-false)
-                               (public_syllabus . :json-false)
-                               (is_public . :json-false)))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-settings)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents settings-file)
-                                 (buffer-string))))
-                  (with-temp-org-buffer
-                   content
-                   (re-search-forward "^\\*+ " nil t)
-                   (org-back-to-heading)
-                   (expect (org-entry-get (point) "GRADING_STANDARD_ID")
-                           :to-equal "42")
-                   (expect (org-entry-get (point) "LATE_SUBMISSION_DEDUCTION")
-                           :to-equal "10")
-                   (expect (org-entry-get (point) "LATE_SUBMISSION_DEDUCTION_ENABLED")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "LATE_SUBMISSION_INTERVAL")
-                           :to-equal "day")
-                   (expect (org-entry-get (point) "LATE_SUBMISSION_MINIMUM_PERCENT")
-                           :to-equal "50")
-                   (expect (org-entry-get (point) "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED")
-                           :to-equal "true")
-                   (expect (org-entry-get (point) "MISSING_SUBMISSION_DEDUCTION")
-                           :to-equal "100")
-                   (expect (org-entry-get (point) "MISSING_SUBMISSION_DEDUCTION_ENABLED")
-                           :to-be nil))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files nil)
+      (let ((call-count 0))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest _args)
+                       (setq call-count (1+ call-count))
+                       (if (string-match "late_policy" url)
+                           '((late_policy .
+                              ((late_submission_deduction . 10)
+                               (late_submission_deduction_enabled . t)
+                               (late_submission_interval . "day")
+                               (late_submission_minimum_percent . 50)
+                               (late_submission_minimum_percent_enabled . t)
+                               (missing_submission_deduction . 100)
+                               (missing_submission_deduction_enabled . :json-false))))
+                         '((name . "Course")
+                           (time_zone . "UTC")
+                           (default_view . "modules")
+                           (grading_standard_id . 42)
+                           (apply_assignment_group_weights . :json-false)
+                           (hide_final_grades . :json-false)
+                           (public_syllabus . :json-false)
+                           (is_public . :json-false)))))
+                    ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                    ((symbol-function 'display-buffer) (lambda (_) nil)))
+            (org-canvas-pull-settings)
+            (let ((content (with-temp-buffer
+                             (insert-file-contents org-canvas-settings-file)
+                             (buffer-string))))
+              (with-temp-org-buffer
+               content
+               (re-search-forward "^\\*+ " nil t)
+               (org-back-to-heading)
+               (expect (org-entry-get (point) "GRADING_STANDARD_ID")
+                       :to-equal "42")
+               (expect (org-entry-get (point) "LATE_SUBMISSION_DEDUCTION")
+                       :to-equal "10")
+               (expect (org-entry-get (point) "LATE_SUBMISSION_DEDUCTION_ENABLED")
+                       :to-equal "true")
+               (expect (org-entry-get (point) "LATE_SUBMISSION_INTERVAL")
+                       :to-equal "day")
+               (expect (org-entry-get (point) "LATE_SUBMISSION_MINIMUM_PERCENT")
+                       :to-equal "50")
+               (expect (org-entry-get (point) "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED")
+                       :to-equal "true")
+               (expect (org-entry-get (point) "MISSING_SUBMISSION_DEDUCTION")
+                       :to-equal "100")
+               (expect (org-entry-get (point) "MISSING_SUBMISSION_DEDUCTION_ENABLED")
+                       :to-be nil)))))))))
 
 ;;;; Navigation Tab Tests
 
@@ -1346,43 +1272,37 @@ Syllabus text.
 
 (describe "org-canvas-pull-settings (course image)"
   (it "downloads image and stores [[file:...]] link in COURSE_IMAGE"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-settings-file settings-file)
-                (org-canvas-directory temp-dir))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           '((name . "Course")
-                             (time_zone . "UTC")
-                             (default_view . "modules")
-                             (apply_assignment_group_weights . :json-false)
-                             (hide_final_grades . :json-false)
-                             (public_syllabus . :json-false)
-                             (is_public . :json-false)
-                             (image_download_url . "https://canvas.example.com/files/123/preview.jpg?token=xyz"))))
-                        ((symbol-function 'org-canvas--file-pull-download)
-                         (lambda (_dn _url path _sz)
-                           (make-directory (file-name-directory path) t)
-                           (with-temp-file path (insert "image bytes"))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-settings)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents settings-file)
-                                 (buffer-string))))
-                  (with-temp-org-buffer
-                   content
-                   (re-search-forward "^\\*+ " nil t)
-                   (org-back-to-heading)
-                   (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
-                     (expect stored :to-match "\\[\\[file:content/course_image/preview\\.jpg\\]")
-                     (expect stored :not :to-match "token=xyz")
-                     (expect stored :not :to-match "https://")))))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files nil)
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     '((name . "Course")
+                       (time_zone . "UTC")
+                       (default_view . "modules")
+                       (apply_assignment_group_weights . :json-false)
+                       (hide_final_grades . :json-false)
+                       (public_syllabus . :json-false)
+                       (is_public . :json-false)
+                       (image_download_url . "https://canvas.example.com/files/123/preview.jpg?token=xyz"))))
+                  ((symbol-function 'org-canvas--file-pull-download)
+                   (lambda (_dn _url path _sz)
+                     (make-directory (file-name-directory path) t)
+                     (with-temp-file path (insert "image bytes"))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil)))
+          (org-canvas-pull-settings)
+          (let ((content (with-temp-buffer
+                           (insert-file-contents org-canvas-settings-file)
+                           (buffer-string))))
+            (with-temp-org-buffer
+             content
+             (re-search-forward "^\\*+ " nil t)
+             (org-back-to-heading)
+             (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
+               (expect stored :to-match "\\[\\[file:content/course_image/preview\\.jpg\\]")
+               (expect stored :not :to-match "token=xyz")
+               (expect stored :not :to-match "https://")))))))))
 
 (describe "org-canvas--settings-course-image-basename"
   (it "drops query string from URL"
@@ -1402,64 +1322,58 @@ Syllabus text.
 
 (describe "course image download"
   (it "downloads image_download_url into content/course_image/ and stores relpath link"
-    (let* ((dir (make-temp-file "settings-test-" t))
-           (downloaded-paths nil))
-      (unwind-protect
-          (cl-letf (((symbol-function 'org-canvas--file-pull-download)
-                     (lambda (_display-name _url path _size)
-                       (push path downloaded-paths)
-                       (make-directory (file-name-directory path) t)
-                       (with-temp-file path (insert "image bytes")))))
-            (let ((org-canvas-directory dir))
-              (with-temp-org-buffer
-               "* Settings\n"
-               (org-back-to-heading)
-               (org-canvas--settings-pull-set-properties
-                (point)
-                '((id . 1) (name . "Test")
-                  (image_download_url . "https://inst-fs.example/files/img.jpg?token=ABC&download=1&exp=999"))
-                nil nil)
-               (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
-                 (expect stored :to-match "\\[\\[file:content/course_image/img\\.jpg\\]")
-                 (expect downloaded-paths :to-have-same-items-as
-                         (list (expand-file-name "content/course_image/img.jpg" dir)))))))
-        (delete-directory dir t))))
+    (with-test-course
+        (dir :files nil)
+      (let ((downloaded-paths nil))
+        (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                   (lambda (_display-name _url path _size)
+                     (push path downloaded-paths)
+                     (make-directory (file-name-directory path) t)
+                     (with-temp-file path (insert "image bytes")))))
+          (with-temp-org-buffer
+           "* Settings\n"
+           (org-back-to-heading)
+           (org-canvas--settings-pull-set-properties
+            (point)
+            '((id . 1) (name . "Test")
+              (image_download_url . "https://inst-fs.example/files/img.jpg?token=ABC&download=1&exp=999"))
+            nil nil)
+           (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
+             (expect stored :to-match "\\[\\[file:content/course_image/img\\.jpg\\]")
+             (expect downloaded-paths :to-have-same-items-as
+                     (list (expand-file-name "content/course_image/img.jpg" dir)))))))))
 
   (it "stores the local relpath form, not the signed URL"
-    (let* ((dir (make-temp-file "settings-test-" t)))
-      (unwind-protect
-          (cl-letf (((symbol-function 'org-canvas--file-pull-download)
-                     (lambda (_dn _url path _sz)
-                       (make-directory (file-name-directory path) t)
-                       (with-temp-file path (insert "x")))))
-            (let ((org-canvas-directory dir))
-              (with-temp-org-buffer
-               "* Settings\n"
-               (org-back-to-heading)
-               (org-canvas--settings-pull-set-properties
-                (point)
-                '((image_download_url . "https://x.example/files/img.jpg?token=secret"))
-                nil nil)
-               (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
-                 (expect stored :not :to-match "token=secret")
-                 (expect stored :not :to-match "https://")))))
-        (delete-directory dir t))))
+    (with-test-course
+        (dir :files nil)
+      (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                 (lambda (_dn _url path _sz)
+                   (make-directory (file-name-directory path) t)
+                   (with-temp-file path (insert "x")))))
+        (with-temp-org-buffer
+         "* Settings\n"
+         (org-back-to-heading)
+         (org-canvas--settings-pull-set-properties
+          (point)
+          '((image_download_url . "https://x.example/files/img.jpg?token=secret"))
+          nil nil)
+         (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
+           (expect stored :not :to-match "token=secret")
+           (expect stored :not :to-match "https://"))))))
 
   (it "skips download when image_download_url is absent"
-    (let* ((dir (make-temp-file "settings-test-" t))
-           (call-count 0))
-      (unwind-protect
-          (cl-letf (((symbol-function 'org-canvas--file-pull-download)
-                     (lambda (&rest _) (cl-incf call-count))))
-            (let ((org-canvas-directory dir))
-              (with-temp-org-buffer
-               "* Settings\n"
-               (org-back-to-heading)
-               (org-canvas--settings-pull-set-properties
-                (point) '((id . 1)) nil nil)
-               (expect (org-entry-get (point) "COURSE_IMAGE") :to-be nil)
-               (expect call-count :to-equal 0))))
-        (delete-directory dir t)))))
+    (with-test-course
+        (dir :files nil)
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                   (lambda (&rest _) (cl-incf call-count))))
+          (with-temp-org-buffer
+           "* Settings\n"
+           (org-back-to-heading)
+           (org-canvas--settings-pull-set-properties
+            (point) '((id . 1)) nil nil)
+           (expect (org-entry-get (point) "COURSE_IMAGE") :to-be nil)
+           (expect call-count :to-equal 0)))))))
 
 ;;;; Additional Navigation Tab Tests
 
@@ -1769,42 +1683,37 @@ Keep this.
 
 (describe "org-canvas-pull-settings (with navigation tabs)"
   (it "inserts navigation heading when tabs are pulled successfully"
-    (let* ((temp-dir (make-temp-file "pull-settings" t))
-           (settings-file (expand-file-name "settings.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-settings-file settings-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method url &rest _args)
-                           (cond
-                            ((string-match "late_policy" url)
-                             nil)
-                            ((string-match "tabs" url)
-                             '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1))
-                               ((id . "modules") (label . "Modules") (hidden . :json-false) (position . 2))
-                               ((id . "grades") (label . "Grades") (hidden . t) (position . 3))))
-                            (t
-                             '((name . "Test Course")
-                               (time_zone . "UTC")
-                               (default_view . "modules")
-                               (apply_assignment_group_weights . :json-false)
-                               (hide_final_grades . :json-false)
-                               (public_syllabus . :json-false)
-                               (is_public . :json-false))))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-settings)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents settings-file)
-                                 (buffer-string))))
-                  ;; Navigation heading should be present
-                  (expect content :to-match "\\*\\* Navigation")
-                  (expect content :to-match "1\\. Home")
-                  (expect content :to-match "2\\. Modules")
-                  (expect content :to-match "3\\. \\+Grades\\+")))))
-        (let ((buf (find-buffer-visiting settings-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files nil)
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest _args)
+                     (cond
+                      ((string-match "late_policy" url)
+                       nil)
+                      ((string-match "tabs" url)
+                       '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1))
+                         ((id . "modules") (label . "Modules") (hidden . :json-false) (position . 2))
+                         ((id . "grades") (label . "Grades") (hidden . t) (position . 3))))
+                      (t
+                       '((name . "Test Course")
+                         (time_zone . "UTC")
+                         (default_view . "modules")
+                         (apply_assignment_group_weights . :json-false)
+                         (hide_final_grades . :json-false)
+                         (public_syllabus . :json-false)
+                         (is_public . :json-false))))))
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil)))
+          (org-canvas-pull-settings)
+          (let ((content (with-temp-buffer
+                           (insert-file-contents org-canvas-settings-file)
+                           (buffer-string))))
+            ;; Navigation heading should be present
+            (expect content :to-match "\\*\\* Navigation")
+            (expect content :to-match "1\\. Home")
+            (expect content :to-match "2\\. Modules")
+            (expect content :to-match "3\\. \\+Grades\\+")))))))
 
 ;;;; Optional pieces of the settings pull say so when they fail (issue #142)
 ;;
@@ -1818,38 +1727,30 @@ RESPONDER is called with the request URL and returns the response or
 signals.  INITIAL, when given, is the settings.org the pull starts
 from; without it the pull creates the file.  Returns a plist
 \(:content FILE-TEXT :warnings LIST :infos LIST :records LIST)."
-  (let* ((temp-dir (make-temp-file "pull-settings" t))
-         (settings-file (expand-file-name "settings.org" temp-dir))
-         (warnings nil)
-         (infos nil))
-    (unwind-protect
-        (let ((org-canvas-settings-file settings-file))
-          (when initial
-            (with-temp-file settings-file (insert initial)))
-          (org-canvas--pull-summary-reset)
-          (with-org-canvas-test-config
-            (cl-letf (((symbol-function 'org-canvas-api-request)
-                       (lambda (_method url &rest _args) (funcall responder url)))
-                      ((symbol-function 'org-canvas--log-warning)
-                       (lambda (_logger fmt &rest args)
-                         (push (apply #'format fmt args) warnings)))
-                      ((symbol-function 'org-canvas--log-info)
-                       (lambda (_logger fmt &rest args)
-                         (push (apply #'format fmt args) infos)))
-                      ((symbol-function 'message) #'ignore)
-                      ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                      ((symbol-function 'display-buffer) (lambda (_) nil)))
-              (org-canvas-pull-settings)))
-          (list :content (with-temp-buffer
-                           (insert-file-contents settings-file)
-                           (buffer-string))
-                :warnings (nreverse warnings)
-                :infos (nreverse infos)
-                :records (org-canvas--pull-summary-records)))
-      (let ((buf (find-buffer-visiting settings-file)))
-        (when buf (kill-buffer buf)))
+  (let ((warnings nil)
+        (infos nil))
+    (with-test-course
+        (dir :files (when initial `(("settings.org" ,initial))))
       (org-canvas--pull-summary-reset)
-      (delete-directory temp-dir t))))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest _args) (funcall responder url)))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings)))
+                  ((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) infos)))
+                  ((symbol-function 'message) #'ignore)
+                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                  ((symbol-function 'display-buffer) (lambda (_) nil)))
+          (org-canvas-pull-settings)))
+      (list :content (with-temp-buffer
+                       (insert-file-contents org-canvas-settings-file)
+                       (buffer-string))
+            :warnings (nreverse warnings)
+            :infos (nreverse infos)
+            :records (org-canvas--pull-summary-records)))))
 
 (defconst test-org-canvas-settings--course-response
   '((name . "Test Course")
@@ -2202,31 +2103,24 @@ It stands in for pandoc where pandoc is not installed.")
           ;; Pushed back: real HTML, the same text and list shape, and
           ;; the file link the Canvas URL again, not a relative href
           ;; that 404s (issue #468).
-          (let* ((dir (file-name-as-directory
-                       (file-truename (make-temp-file "org-459-" t))))
-                 (temporary-file-directory dir)
-                 (org-canvas-files-file (expand-file-name "files.org" dir))
-                 (org-canvas--local-file-id-cache nil))
-            (unwind-protect
-                (progn
-                  (with-temp-file org-canvas-files-file
-                    (insert "* [[file:content/handout.pdf][handout.pdf]]\n"
-                            ":PROPERTIES:\n:CANVAS_ID: 123\n:END:\n"))
-                  (with-temp-org-buffer content
-                    (goto-char (point-min))
-                    (re-search-forward "^\\* ")
-                    (let* ((data (org-canvas--settings-parse-entry))
-                           (course (gethash "course" (org-canvas--settings-build-payload data)))
-                           (html (gethash "syllabus_body" course)))
-                      (expect html :not :to-match "&lt;")
-                      (expect html :to-match "<p>\nWelcome to Ethics\n?</p>")
-                      (expect html :to-match "<ul class=\"org-ul\">\n<li>Week 1\n<ul class=\"org-ul\">\n<li>Reading one</li>")
-                      (expect html :to-match "<li>Week 2</li>")
-                      (expect html :to-match
-                              "href=\"[^\"]*/courses/[0-9]+/files/123\">handout</a>"))))
-              (when-let* ((buf (find-buffer-visiting org-canvas-files-file)))
-                (kill-buffer buf))
-              (delete-directory dir t)))))))
+          (with-test-course
+              (dir :files '(("files.org"
+                             "* [[file:content/handout.pdf][handout.pdf]]\n"
+                             ":PROPERTIES:\n:CANVAS_ID: 123\n:END:\n")))
+            (let ((temporary-file-directory (file-name-as-directory dir))
+                  (org-canvas--local-file-id-cache nil))
+              (with-temp-org-buffer content
+                (goto-char (point-min))
+                (re-search-forward "^\\* ")
+                (let* ((data (org-canvas--settings-parse-entry))
+                       (course (gethash "course" (org-canvas--settings-build-payload data)))
+                       (html (gethash "syllabus_body" course)))
+                  (expect html :not :to-match "&lt;")
+                  (expect html :to-match "<p>\nWelcome to Ethics\n?</p>")
+                  (expect html :to-match "<ul class=\"org-ul\">\n<li>Week 1\n<ul class=\"org-ul\">\n<li>Reading one</li>")
+                  (expect html :to-match "<li>Week 2</li>")
+                  (expect html :to-match
+                          "href=\"[^\"]*/courses/[0-9]+/files/123\">handout</a>")))))))))
 
   (it "writes no syllabus text when Canvas has an empty one"
     (with-temp-org-buffer "* Course\n:PROPERTIES:\n:END:\n\nOld syllabus.\n"
