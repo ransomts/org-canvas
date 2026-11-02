@@ -1,0 +1,9 @@
+* Changed
+- #574 The eighth fixture slice moves the section pull specs onto
+  =with-test-course=: each of the ten =org-canvas-pull-sections= specs
+  built a private temp directory, wrote its =sections.org= into it, and
+  deleted the directory (and sometimes its buffer) in an
+  =unwind-protect=.  They now name the file once and let the shared
+  fixture write it, bind every course file variable and clean up the
+  directory and its buffers.  The org text, the mocked responses, the
+  assertions and the request counts are unchanged.
