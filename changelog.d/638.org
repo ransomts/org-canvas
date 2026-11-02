@@ -1,0 +1,11 @@
+* Fixed
+- #638 Pulling assignment groups no longer writes a level-1 copy of every
+  level-2 group.  The pull's upsert searched and created at level 1
+  regardless of the feature's own query, so a group under its container
+  was never found and a copy was appended to the end of the file, which
+  the next pull then updated in place: the file never healed.  The
+  upsert now takes the registry's query, searches by =CANVAS_ID= at that
+  query's level (not with the query itself, since a group not yet given
+  its =WEIGHT= does not match it), creates a new heading at that level
+  under the container, and =validate= reports a =CANVAS_ID= that appears
+  on two headings at different levels instead of passing the file.

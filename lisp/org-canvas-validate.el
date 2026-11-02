@@ -124,6 +124,59 @@ Called after the per-entry checks, with the buffer current."
                     (org-canvas--validate-duplicate-issue file (cdr group))))
                 (org-canvas--validate-collect-titles query))))
 
+(defun org-canvas--validate-collect-ids ()
+  "Return (ID LEVEL LINE TITLE) for every heading in the buffer with a CANVAS_ID.
+Document order, so the first of a pair is the one worth naming."
+  (let ((entries nil))
+    (org-map-entries
+     (lambda ()
+       (when-let* ((id (org-entry-get (point) "CANVAS_ID")))
+         (push (list id (org-outline-level) (line-number-at-pos)
+                     (org-get-heading t t t t))
+               entries)))
+     nil 'file)
+    (nreverse entries)))
+
+(defun org-canvas--validate-duplicate-id-issue (file entry other)
+  "Return the issue for ENTRY, a heading repeating OTHER's CANVAS_ID in FILE.
+Both are (ID LEVEL LINE TITLE).  One Canvas object is one heading: a
+pull that could not find the entry at the level its sync reads wrote a
+copy beside it, and the file holds two headings for one id (issue #638)."
+  (org-canvas--validate-make-issue
+   'error
+   (list :file file :line (nth 2 entry) :heading (nth 3 entry))
+   "CANVAS_ID"
+   (format "CANVAS_ID %s is on two headings at different levels: '%s' level %d (line %d) and '%s' level %d here — a pull wrote a copy beside the original; delete the one at the level the feature does not sync"
+           (nth 0 entry) (nth 3 other) (nth 1 other) (nth 2 other)
+           (nth 3 entry) (nth 1 entry))))
+
+(defun org-canvas--validate-duplicate-level-ids (file)
+  "Report headings in FILE that repeat a CANVAS_ID at another outline level.
+Levels are compared across the whole file rather than within one
+feature's query: a `CANVAS_ID' on a level-1 copy beside its level-2
+original is invisible to every per-spec check, so validate passed a file
+a pull had just corrupted (issue #638).  The titles must match as well.
+Two features may share a file -- a module and a module item both live in
+modules.org -- and their object ids come from different sequences, so a
+bare id match would pair a module with an unrelated item.  Called once
+per file, like the cross-course scan."
+  (let ((entries (with-current-buffer (org-canvas--find-file-noselect file)
+                   (org-with-wide-buffer
+                    (org-canvas--validate-collect-ids))))
+        (issues nil)
+        (seen nil))
+    (dolist (entry entries)
+      (let ((first (seq-find (lambda (other)
+                               (and (equal (car other) (car entry))
+                                    (/= (nth 1 other) (nth 1 entry))
+                                    (equal (nth 3 other) (nth 3 entry))))
+                             seen)))
+        (when first
+          (push (org-canvas--validate-duplicate-id-issue file entry first)
+                issues))
+        (push entry seen)))
+    (nreverse issues)))
+
 ;;;; 2. Cross-Course Links (issue #172)
 
 (defun org-canvas--validate-canvas-host ()
@@ -527,7 +580,8 @@ The cross-course link scan runs once per distinct file rather than
 once per spec: two features can register the same file (modules and
 module items both name modules.org), and the scan reads the whole file
 either way, so a per-spec call would report every foreign link twice
-\(issue #172).  So do the body-fragment and local-file-link scans.
+\(issue #172).  So do the body-fragment, local-file-link and
+duplicate-level-id scans.
 The module check reads the modules file against the content files
 once, after the specs (issue #413).
 Returns a plist (:issues ISSUES :checked N :skipped N)."
@@ -550,7 +604,8 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
                       (nconc all-issues
                              (org-canvas--validate-cross-course-links file)
                              (org-canvas--validate-body-fragments file)
-                             (org-canvas--validate-local-file-links file)))))
+                             (org-canvas--validate-local-file-links file)
+                             (org-canvas--validate-duplicate-level-ids file)))))
           (setq files-skipped (1+ files-skipped)))))
     (setq all-issues (nconc all-issues (org-canvas--validate-module-coverage)))
     (list :issues all-issues :checked files-checked :skipped files-skipped)))
