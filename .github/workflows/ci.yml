@@ -246,6 +246,14 @@ jobs:
       - name: Run linter
         run: eldev lint
 
+      - name: Byte-compile with warnings as errors
+        # `eldev lint` misses what the byte-compiler reports (docstring
+        # width, forward references, unused bindings).  `-s main` keeps
+        # scripts/ out of the fileset: a bare `eldev compile` would run
+        # the mutation script (issue #626).  `-F` recompiles everything
+        # so the gate cannot pass on stale .elc files.
+        run: eldev compile -s main -W -F
+
   complexity:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

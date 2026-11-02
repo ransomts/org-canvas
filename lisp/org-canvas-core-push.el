@@ -626,7 +626,6 @@ reads from the item."
   (let* ((endpoint (org-canvas--push-options-endpoint options))
          (find-fn (org-canvas--push-options-find-fn options))
          (post-url-fn (org-canvas--push-options-post-url-fn options))
-         (put-url-fn (org-canvas--push-options-put-url-fn options))
          (id-key (or (org-canvas--push-options-id-key options) :canvas-id))
          (twin (org-canvas--recovery-find-twin find-fn title id-key)))
     (if twin

@@ -179,7 +179,8 @@ Nil as well when `org-canvas-assignments-file' is unset or missing."
    "CANVAS_ID" assignment-id "CANVAS_ID={.}"))
 
 (defun org-canvas--rubric-results-title (entry)
-  "Return ENTRY's heading title: a link to its assignments.org heading, else the name."
+  "Return ENTRY's heading title.
+A link to its assignments.org heading, else the name."
   (let ((name (plist-get entry :name)))
     (or (org-canvas--heading-link
          (and (boundp 'org-canvas-assignments-file) org-canvas-assignments-file)

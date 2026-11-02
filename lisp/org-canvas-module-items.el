@@ -32,6 +32,8 @@
 (require 'org-canvas-modules)
 (require 'cl-lib)
 
+(defvar org-canvas-quizzes-file)
+
 ;;;; Item Helpers
 
 (defun org-canvas--module-item-type-from-file (filepath)

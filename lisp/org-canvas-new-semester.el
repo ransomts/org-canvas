@@ -172,7 +172,8 @@ COURSE-ID and DIRECTORY are the retarget the line names."
             directory)))
 
 (defun org-canvas--semester-file-section (entry)
-  "Return ENTRY's report section, the empty string for a file with nothing to strip."
+  "Return ENTRY's report section.
+The empty string for a file with nothing to strip."
   (let ((entries (plist-get entry :entries))
         (header (plist-get entry :header)))
     (if (and (null entries) (not header))

@@ -429,7 +429,8 @@ the heading as written."
   (org-canvas--heading-link file heading text))
 
 (defun org-canvas--gradebook-student-cell (row)
-  "Return ROW's Student cell: a link to the roster heading when known, else the name."
+  "Return ROW's Student cell.
+A link to the roster heading when known, else the name."
   (let ((heading (org-canvas--gradebook-roster-heading (plist-get row :user-id)))
         (name (plist-get row :name)))
     (if heading

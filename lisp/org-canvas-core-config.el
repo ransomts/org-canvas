@@ -301,8 +301,8 @@ inherits it."
 Set it in `org-canvas-credentials.el', beside the course it scopes,
 to give a collaborator or a grader less than the whole course:
 
-  (setq org-canvas-write-allowlist '(\"assignments.org\" \"rubrics.org\"))
-  (setq org-canvas-write-allowlist '(\"submissions\"))
+  (setq org-canvas-write-allowlist \\='(\"assignments.org\" \"rubrics.org\"))
+  (setq org-canvas-write-allowlist \\='(\"submissions\"))
 
 An entry names an Org file by its basename, the way the
 multi-instructor workflow divides them (documentation/workflows.org),
@@ -422,16 +422,16 @@ Populated at module load time.  Used by `org-canvas--recompute-file-paths'.")
 ;; spelling their module wrote.  Every other reader goes through
 ;; `org-canvas--registry-entry'.
 
-(defvar org-canvas--registry (make-hash-table :test 'equal)
-  "The registry: one entry per feature, keyed by canonical id string.
-Populated at module load time by `org-canvas-register-feature' and
-`org-canvas-register-properties'; see the commentary above.")
-
 (defvaralias 'org-canvas--property-registry 'org-canvas--registry
   "Superseded by `org-canvas--registry' (issue #572).
 The declarative macros expand their `:registry-key' into a direct
 `gethash' on the registry, so the old name remains as an alias that
 reads the same table.")
+
+(defvar org-canvas--registry (make-hash-table :test 'equal)
+  "The registry: one entry per feature, keyed by canonical id string.
+Populated at module load time by `org-canvas-register-feature' and
+`org-canvas-register-properties'; see the commentary above.")
 
 (defun org-canvas--feature-id-string (feature)
   "Return FEATURE's canonical id as a string.
@@ -801,6 +801,8 @@ with what was already there."
       (unless (or (bobp) (bolp)) (insert "\n"))
       (insert name "\n")
       (write-region nil nil ignore nil 'silent))))
+
+(defvar org-canvas--logger)
 
 (defun org-canvas--student-data-ignore (file)
   "Keep the student-data FILE out of the git work tree its directory is in.
@@ -1262,7 +1264,7 @@ the getter's docstring."
 Forgotten when a command starts (`org-canvas--operation-start-hook'),
 so one command reads it once and the next reads afresh." name))
        (defun ,forget ()
-         ,(format "Drop the cached %s read, so the next read asks Canvas." name)
+         ,(format "Drop the cached %s read.\nThe next read asks Canvas." name)
          (setq ,cache nil))
        (add-hook 'org-canvas--operation-start-hook #',forget)
        (defun ,getter ()

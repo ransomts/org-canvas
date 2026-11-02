@@ -59,6 +59,7 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
+(declare-function org-canvas--validate-discussion-checkpoints "org-canvas-validate-content")
 
 ;;;; Configuration
 
