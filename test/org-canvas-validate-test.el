@@ -300,6 +300,95 @@ https://test.canvas.example.com/courses/284220/assignments/7
                (list '(:severity warning :message "x")))
               :to-be nil)))
 
+  (describe "org-canvas--validate-duplicate-level-ids"
+    (defun test-validate-level-ids (body)
+      "Scan BODY as assignment-groups.org and return the issues."
+      (let* ((dir (make-temp-file "org-val-dup-" t))
+             (file (expand-file-name "assignment-groups.org" dir)))
+        (unwind-protect
+            (progn (with-temp-file file (insert body))
+                   (org-canvas--validate-duplicate-level-ids file))
+          (delete-directory dir t))))
+
+    (it "reports a level-1 copy beside its level-2 original"
+      (let ((issues (test-validate-level-ids
+                     "* Assignment Groups
+** Final Project
+:PROPERTIES:
+:CANVAS_ID: 721652
+:END:
+* Final Project
+:PROPERTIES:
+:CANVAS_ID: 721652
+:END:
+")))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-equal 'error)
+        (expect (plist-get (car issues) :line) :to-equal 6)
+        (expect (plist-get (car issues) :heading) :to-equal "Final Project")
+        (expect (plist-get (car issues) :message) :to-match "level 2 (line 2)")
+        (expect (plist-get (car issues) :message) :to-match "level 1")))
+
+    (it "says nothing about the documented container shape"
+      (expect (test-validate-level-ids
+               "* Assignment Groups
+** Final Project
+:PROPERTIES:
+:CANVAS_ID: 721652
+:END:
+** Homework
+:PROPERTIES:
+:CANVAS_ID: 721653
+:END:
+")
+              :to-be nil))
+
+    (it "says nothing about two headings at one level sharing an id"
+      (expect (test-validate-level-ids
+               "* One
+:PROPERTIES:
+:CANVAS_ID: 5
+:END:
+* Two
+:PROPERTIES:
+:CANVAS_ID: 5
+:END:
+")
+              :to-be nil))
+
+    (it "does not pair a module with an unrelated item that shares a number"
+      (expect (test-validate-level-ids
+               "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 7
+:END:
+** Reading
+:PROPERTIES:
+:CANVAS_ID: 7
+:END:
+")
+              :to-be nil))
+
+    (it "reports the copy once, at the later heading"
+      (let ((issues (test-validate-level-ids
+                     "* Assignment Groups
+** Final Project
+:PROPERTIES:
+:CANVAS_ID: 721652
+:END:
+* Final Project
+:PROPERTIES:
+:CANVAS_ID: 721652
+:END:
+* Final Project
+:PROPERTIES:
+:CANVAS_ID: 721652
+:END:
+")))
+        (expect (length issues) :to-equal 2)
+        (expect (mapcar (lambda (i) (plist-get i :line)) issues)
+                :to-equal '(6 10)))))
+
   (describe "in the report"
     (it "lists each link and then groups them"
       (with-validate-test-dir dir

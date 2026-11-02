@@ -527,17 +527,35 @@ Does nothing if ISO8601 is nil or conversion fails."
     (let ((ts (org-canvas--iso8601-to-org-timestamp iso8601)))
       (when ts (org-canvas-org-set-property pos property ts)))))
 
-(defun org-canvas--pull-upsert-heading (file canvas-id &optional title id-property)
+(defun org-canvas--pull-upsert-heading (file canvas-id &optional title id-property
+                                            query container-title)
   "Find or create a heading in FILE matched by CANVAS-ID.
-If a level-1 heading with ID-PROPERTY (default \"CANVAS_ID\") equal to
-CANVAS-ID exists, return its position.  Otherwise create a new heading
-at the end of the buffer with TITLE and return its position.
+If a heading at the level QUERY names (default \"LEVEL=1\") with
+ID-PROPERTY (default \"CANVAS_ID\") equal to CANVAS-ID exists, return
+its position.  Otherwise create a heading at that level, at the end of
+the file's container heading, with TITLE, and return its position.  A
+file with no container heading to hold a level-2 entry gets one first,
+titled CONTAINER-TITLE.
+
+QUERY is the match the feature's registry entry declares, so a pull
+writes where its sync reads.  Assignment groups are level-2 headings
+under a container heading: searching only LEVEL=1 never found the
+group already there and appended a level-1 copy beside it, which the
+next pull found and updated in place, so the file never healed
+\(issue #638).
+
 Returns a point in the buffer visiting FILE."
-  (let ((id-prop (or id-property "CANVAS_ID"))
-        (buf (org-canvas--find-file-noselect (expand-file-name file))))
+  (let* ((id-prop (or id-property "CANVAS_ID"))
+         (query (or query "LEVEL=1"))
+         (level (org-canvas--pull-query-level query))
+         (buf (org-canvas--find-file-noselect (expand-file-name file))))
     (with-current-buffer buf
       (save-excursion
-        ;; Search for existing heading by CANVAS_ID
+        ;; Search for existing heading by CANVAS_ID, at the query's level
+        ;; only: an entry not yet carrying the property the feature's own
+        ;; query requires (a group with no WEIGHT) does not match it, and
+        ;; searching with the query wrote a second copy on every pull
+        ;; (issue #638).
         (goto-char (point-min))
         (let ((found nil))
           (org-map-entries
@@ -545,15 +563,53 @@ Returns a point in the buffer visiting FILE."
              (when (equal (org-entry-get (point) id-prop)
                           (format "%s" canvas-id))
                (setq found (point))))
-           "LEVEL=1" 'file)
+           (format "LEVEL=%d" level) 'file)
           (if found
               found
-            ;; Create new heading at end
-            (goto-char (point-max))
-            (unless (bolp) (insert "\n"))
-            (insert (format "* %s\n" (or title "Untitled")))
-            (org-back-to-heading t)
-            (point)))))))
+            ;; Create new heading at the query's level, under its container
+            (let ((end (org-canvas--pull-container-end level)))
+              (goto-char (or end (point-max)))
+              (unless (bolp) (insert "\n"))
+              (when (and (> level 1) (not end))
+                (insert (format "* %s\n" (or container-title "Untitled"))))
+              (insert (format "%s %s\n"
+                              (make-string level ?*)
+                              (or title "Untitled")))
+              (org-back-to-heading t)
+              (point))))))))
+
+(defun org-canvas--pull-container-title (feature-name)
+  "Return FEATURE-NAME's registry label, for a container a pull must write.
+An empty assignment-groups.org has no heading to hold its level-2
+groups, so the first pull writes one; the registry label names it the
+way the manual does (issue #638)."
+  (or (plist-get (gethash feature-name org-canvas--property-registry) :label)
+      "Untitled"))
+
+(defun org-canvas--pull-query-level (query)
+  "Return the outline level QUERY writes at, 1 when it names none.
+QUERY is a property registry `:query', e.g. \"LEVEL=2+WEIGHT={.}\"."
+  (if (and query (string-match "LEVEL=\\([0-9]+\\)" query))
+      (string-to-number (match-string 1 query))
+    1))
+
+(defun org-canvas--pull-container-end (level)
+  "Return the position after the last heading above LEVEL, or nil.
+A pull writing below the top level appends its new heading to the end
+of the container heading rather than to the end of the file, where it
+would sit outside the section the sync reads."
+  (when (> level 1)
+    (save-excursion
+      (goto-char (point-min))
+      (let (end)
+        (org-map-entries
+         (lambda ()
+           (when (< (org-outline-level) level)
+             (setq end (save-excursion
+                         (org-end-of-subtree t t)
+                         (point)))))
+         nil 'file)
+        end))))
 
 ;;;; Children of a Pulled Entry
 
@@ -1057,14 +1113,18 @@ TERTIARY-KEY (compared as a string) is inserted between secondary and
 
 (defun org-canvas--pull-process-item (item file pull-config)
   "Process a single pulled ITEM into FILE.
-PULL-CONFIG is a plist with :id-field :title-field :id-property :pull-item-fn."
+PULL-CONFIG is a plist with :id-field :title-field :id-property
+\:query :container-title :pull-item-fn."
   (let* ((id-field (plist-get pull-config :id-field))
          (title-field (plist-get pull-config :title-field))
          (id-property (plist-get pull-config :id-property))
+         (query (plist-get pull-config :query))
+         (container-title (plist-get pull-config :container-title))
          (item-fn (plist-get pull-config :pull-item-fn))
          (id (alist-get id-field item))
          (title (alist-get title-field item))
-         (pos (org-canvas--pull-upsert-heading file id title id-property)))
+         (pos (org-canvas--pull-upsert-heading file id title id-property query
+                                               container-title)))
     (goto-char pos)
     (when title (org-edit-headline title))
     (org-canvas-org-save-sync-state pos id id-property)
@@ -1193,6 +1253,17 @@ criteria, a quiz's questions) are never matched."
     (if (member query '(nil "LEVEL=1"))
         "LEVEL=1"
       (concat "LEVEL=1|" query))))
+
+(defun org-canvas--pull-write-query (feature-name)
+  "Return the Org match for the headings FEATURE-NAME's pull writes.
+The registry's `:query' when it names a level, else \"LEVEL=1\".  What
+a pull writes and what the sync reads must be the same shape, or a
+re-pull writes a copy beside every entry it fails to find (issue #638)."
+  (let ((query (plist-get (gethash feature-name org-canvas--property-registry)
+                          :query)))
+    (if (and query (string-match-p "LEVEL=" query))
+        query
+      "LEVEL=1")))
 
 (defun org-canvas--pull-unlisted-headings (remote id-field id-property query)
   "Return (ID . MARKER) for each QUERY heading whose ID-PROPERTY REMOTE lacks.
@@ -1441,10 +1512,16 @@ the emitters below never read ARGS again."
   "Return the per-item config form SPEC describes.
 `org-canvas--pull-handle-item' reads it once per item, so what the module
 skips and how it names things travel with the call rather than in a
-global."
+global.  `:query' is the match the feature's registry entry declares,
+so a new heading is written at the level its sync reads, and
+`:container-title' names the container a first pull has to write for a
+level-2 feature whose file is empty (issue #638)."
   `(list :id-field ,(plist-get spec :id-field)
          :title-field ,(plist-get spec :title-field)
          :id-property ,(plist-get spec :id-property)
+         :query (org-canvas--pull-write-query ,(plist-get spec :feature-name))
+         :container-title (org-canvas--pull-container-title
+                           ,(plist-get spec :feature-name))
          :pull-item-fn ,(plist-get spec :item-fn)
          :skip-fn ,(plist-get spec :skip-fn)
          :skip-reason ,(plist-get spec :skip-reason)))

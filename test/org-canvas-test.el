@@ -812,10 +812,24 @@
                                  (buffer-string))))
                   (with-temp-org-buffer
                    content
-                   (let ((count 0))
-                     (org-map-entries (lambda () (cl-incf count))
-                                      "LEVEL=1" 'file)
-                     (expect count :to-equal 2)))))))
+                   ;; Issue #638: the canonical shape, a container with
+                   ;; the groups at level 2, not two level-1 headings.
+                   (let ((containers 0) (groups 0))
+                     (org-map-entries
+                      (lambda ()
+                        (if (= (org-outline-level) 1)
+                            (cl-incf containers)
+                          (progn (cl-incf groups)
+                                 (expect (org-entry-get (point) "CANVAS_ID")
+                                         :not :to-be nil))))
+                      "LEVEL>0" 'file)
+                     (expect containers :to-equal 1)
+                     (expect groups :to-equal 2)
+                     (goto-char (point-min))
+                     (re-search-forward "^\\*+ ")
+                     (beginning-of-line)
+                     (expect (org-get-heading t t t t)
+                             :to-equal "Assignment Groups")))))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))

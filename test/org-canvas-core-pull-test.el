@@ -1810,7 +1810,113 @@ Keep this too
                         :to-equal "my-page"))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+        (delete-directory temp-dir t))))
+
+  (it "finds an existing level-2 heading when given the feature's query"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Assignment Groups\n** Final Project\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 721652\n:END:\n"))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 721652 "Final Project" nil
+                        "LEVEL=2+WEIGHT={.}")))
+              (with-current-buffer (find-buffer-visiting test-file)
+                (goto-char pos)
+                (expect (org-outline-level) :to-be 2)
+                (expect (buffer-string)
+                        :not :to-match "^\\* Final Project")))
+            (with-current-buffer (find-buffer-visiting test-file)
+              (goto-char (point-min))
+              (expect (how-many "^\\*+ ") :to-be 2)))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates a new heading at the query's level under the container"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Assignment Groups\n** Existing\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                      "\n* Next Section\n"))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 2 "New Group" nil "LEVEL=2+WEIGHT={.}")))
+              (with-current-buffer (find-buffer-visiting test-file)
+                (goto-char pos)
+                (expect (org-get-heading t t t t) :to-equal "New Group")
+                (expect (org-outline-level) :to-be 2)
+                (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
+            (with-current-buffer (find-buffer-visiting test-file)
+              (org-with-wide-buffer
+               (goto-char (point-min))
+               ;; The new group belongs to the container, before the next
+               ;; level-1 section, not at the end of the file.
+               (search-forward "* Next Section")
+               (expect (org-outline-level) :to-be 1)
+               (goto-char (point-min))
+               (expect (how-many "^\\* Assignment Groups") :to-be 1)
+               (expect (how-many "^\\*\\* ") :to-be 2))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "reads the level out of a query, 1 when it names none"
+    (expect (org-canvas--pull-query-level "LEVEL=2+WEIGHT={.}") :to-be 2)
+    (expect (org-canvas--pull-query-level "+TAG=\"x\"") :to-be 1)
+    (expect (org-canvas--pull-query-level nil) :to-be 1))
+
+  (it "takes the write query from the registry, LEVEL=1 without one"
+    (expect (org-canvas--pull-write-query "assignment-groups")
+            :to-equal "LEVEL=2+WEIGHT={.}")
+    (expect (org-canvas--pull-write-query "assignments")
+            :to-equal "LEVEL=1"))
+
+  (it "names a container from the registry label"
+    (expect (org-canvas--pull-container-title "assignment-groups")
+            :to-equal "Assignment Groups")
+    (expect (org-canvas--pull-container-title "no-such-feature")
+            :to-equal "Untitled"))
+
+  (it "writes a container when a level-2 entry has none to sit under"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert ""))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 3 "New Group" nil "LEVEL=2"
+                        "Assignment Groups")))
+              (with-current-buffer (find-buffer-visiting test-file)
+                (goto-char pos)
+                (expect (org-get-heading t t t t) :to-equal "New Group")
+                (expect (org-outline-level) :to-be 2)
+                (goto-char (point-min))
+                (expect (org-get-heading t t t t)
+                        :to-equal "Assignment Groups")))
+            ;; The second entry goes under the same container.
+            (org-canvas--pull-upsert-heading test-file 4 "Another" nil
+                                             "LEVEL=2+WEIGHT={.}")
+            (with-current-buffer (find-buffer-visiting test-file)
+              (goto-char (point-min))
+              (expect (how-many "^\\* [^*]") :to-be 1)
+              (expect (how-many "^\\*\\* ") :to-be 2)))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil for a container end at the top level"
+    (with-temp-org-buffer
+     "* One
+** Two
+"
+     (expect (org-canvas--pull-container-end 1) :to-be nil)
+     (goto-char (point-min))
+     (expect (org-canvas--pull-container-end 2) :to-be (point-max)))))
 
 (describe "org-canvas-define-pull"
   (it "signals error when :file is missing"

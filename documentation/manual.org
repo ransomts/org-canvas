@@ -5662,7 +5662,7 @@ entry has moved.
 
 ** Heading Matching
 
-When pulling, each Canvas item is matched to an existing Org heading by its =CANVAS_ID= (or =CANVAS_URL= for pages).  If no match is found, a new heading is created at the end of the file.  This makes pulling idempotent -- running it multiple times updates existing headings rather than creating duplicates.
+When pulling, each Canvas item is matched to an existing Org heading by its =CANVAS_ID= (or =CANVAS_URL= for pages), at the level the feature syncs: a level-2 assignment group is found where it sits under its container, even before it carries the =WEIGHT= the sync query asks for.  If no match is found, a new heading is created at that level, at the end of the container heading rather than the end of the file (issue #638).  This makes pulling idempotent -- running it multiple times updates existing headings rather than creating duplicates.
 
 ** Link Reconstruction
 
