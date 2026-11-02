@@ -555,27 +555,40 @@ RATINGS is a vector/list of alists with \\='description and \\='points keys."
 
 (defun org-canvas--outcome-pull-process-group (gid)
   "Fetch and insert outcomes for group GID as L2 headings.
-Point must be at the parent group heading."
-  (condition-case nil
-      (let* ((outcomes-url (org-canvas-api-course-endpoint
-                            "outcome_groups/%s/outcomes" gid))
-             (outcomes (org-canvas-api-request-all-pages 'GET outcomes-url))
-             (count 0))
-        (dolist (link outcomes)
-          (let* ((outcome (alist-get 'outcome link))
-                 (oid (alist-get 'id outcome))
-                 (otitle (or (alist-get 'title outcome) "Untitled"))
-                 (desc (alist-get 'description outcome))
-                 (ratings (alist-get 'ratings outcome))
-                 (opos (org-canvas--outcome-pull-find-or-create-l2 oid otitle)))
-            (goto-char opos)
-            (when otitle (org-edit-headline otitle))
-            (org-canvas-org-save-sync-state opos oid)
-            (org-canvas--pull-insert-body desc)
-            (org-canvas--outcome-pull-insert-ratings desc ratings)
-            (cl-incf count)))
-        count)
-    (error 0)))
+Point must be at the parent group heading.  Returns the number of
+outcomes written, those written before a failure included.  A group
+Canvas refuses or does not answer is recorded in the pull summary, so
+its zero is not read as a group holding no outcomes (issue #623)."
+  (let ((count 0))
+    (condition-case err
+        (let* ((outcomes-url (org-canvas-api-course-endpoint
+                              "outcome_groups/%s/outcomes" gid))
+               (outcomes (org-canvas-api-request-all-pages 'GET outcomes-url)))
+          (dolist (link outcomes)
+            (let* ((outcome (alist-get 'outcome link))
+                   (oid (alist-get 'id outcome))
+                   (otitle (or (alist-get 'title outcome) "Untitled"))
+                   (desc (alist-get 'description outcome))
+                   (ratings (alist-get 'ratings outcome))
+                   (opos (org-canvas--outcome-pull-find-or-create-l2 oid otitle)))
+              (goto-char opos)
+              (when otitle (org-edit-headline otitle))
+              (org-canvas-org-save-sync-state opos oid)
+              (org-canvas--pull-insert-body desc)
+              (org-canvas--outcome-pull-insert-ratings desc ratings)
+              (cl-incf count)))
+          count)
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[Pull] outcome group %s not readable: %s"
+         gid (error-message-string err))
+       (org-canvas--pull-summary-record
+        :kind (if (org-canvas--api-skip-error-p err) 'skip 'error)
+        :file (file-name-nondirectory org-canvas-outcomes-file)
+        :item (format "%s" gid)
+        :error (error-message-string err)
+        :log-line (org-canvas--pull-summary-current-log-line))
+       count))))
 
 ;;;###autoload
 (defun org-canvas-pull-outcomes ()

@@ -3646,7 +3646,35 @@ URL, a POST with 900."
                                               (string-match-p "items/i3$" (cadr r))))
                              requests)
                     :to-be-truthy)
-            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)))))))
+            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil))))))
+
+  (it "does not create a second copy when the twin lookup fails (issue #624)"
+    (with-org-canvas-test-config
+      (let ((requests nil)
+            (logged nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (cond
+                      ((and (eq method 'PATCH) (string-match-p "/items/gone$" url))
+                       (error "HTTP 404 Not Found"))
+                      (t (signal 'org-canvas-timeout-error
+                                 '("Request timed out"))))))
+                  ((symbol-function 'org-canvas--log-error)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) logged))))
+          (let ((data (list :title "What is DNA?" :canvas-id "gone"
+                            :quiz-assignment-id "500" :type "choice")))
+            ;; The list is an unknown, not an empty quiz: the recovery
+            ;; must fail rather than POST a second copy (hard rule 16).
+            (expect (org-canvas--new-quiz-item-push-to-api
+                     data (make-hash-table :test 'equal))
+                    :to-throw 'org-canvas-timeout-error)
+            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
+            (expect (cl-some (lambda (line)
+                               (string-match-p "not creating a second copy" line))
+                             logged)
+                    :to-be-truthy)))))))
 
 (describe "org-canvas--new-quiz-item-remote-title"
   (it "reads the first paragraph under entry with its tags stripped"

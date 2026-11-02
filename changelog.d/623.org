@@ -1,0 +1,2 @@
+* Fixed
+- #623 The image folder lookup reads the vector Canvas sends for =folders/by_path=, so images already in the folder are reused instead of uploaded again and a new folder is no longer created on every push.

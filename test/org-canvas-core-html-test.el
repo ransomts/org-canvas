@@ -837,8 +837,9 @@ Bind `html' to the pushed HTML in BODY."
       (let ((org-canvas--image-cache nil))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (_method _url &rest _args)
-                     ;; folders/by_path returns a list
-                     '(((id . 42)))))
+                     ;; folders/by_path returns a vector, as Canvas replies
+                     ;; to a JSON array (issue #623)
+                     [((id . 42))]))
                   ((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method _url &rest _args)
                      '(((id . 7) (display_name . "logo.png")
@@ -877,12 +878,17 @@ Bind `html' to the pushed HTML in BODY."
         (expect (hash-table-count org-canvas--image-cache) :to-equal 1)))))
 
 (describe "org-canvas--image-ensure-folder"
-  (it "returns existing folder ID"
+  (it "returns the existing folder's id from the vector Canvas sends (issue #623)"
     (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   '(((id . 77))))))
-        (expect (org-canvas--image-ensure-folder) :to-equal 77))))
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (push method requests)
+                     ;; `json-read' gives a JSON array as a vector, which
+                     ;; `last' rejects; the specs used to stub a list.
+                     [((id . 77))])))
+          (expect (org-canvas--image-ensure-folder) :to-equal 77)
+          (expect requests :to-equal '(GET))))))
 
   (it "creates folder when not found"
     (with-org-canvas-test-config
@@ -891,10 +897,34 @@ Bind `html' to the pushed HTML in BODY."
                    (lambda (method _url &rest _args)
                      (setq call-count (1+ call-count))
                      (if (eq method 'GET)
-                         (signal 'error '("404"))
+                         (signal 'org-canvas-api-error
+                                 '("API Request Failed (HTTP 404)"))
                        '((id . 88))))))
           (expect (org-canvas--image-ensure-folder) :to-equal 88)
-          (expect call-count :to-equal 2))))))
+          (expect call-count :to-equal 2)))))
+
+  (it "re-signals a refused read instead of creating a folder (issue #624)"
+    (with-org-canvas-test-config
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (push method requests)
+                     (signal 'org-canvas-permission-error
+                             '("Permission denied (HTTP 403) reading this resource")))))
+          (expect (org-canvas--image-ensure-folder)
+                  :to-throw 'org-canvas-permission-error)
+          (expect requests :to-equal '(GET))))))
+
+  (it "re-signals a timeout instead of creating a folder (issue #624)"
+    (with-org-canvas-test-config
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (push method requests)
+                     (signal 'org-canvas-timeout-error '("Request timed out")))))
+          (expect (org-canvas--image-ensure-folder)
+                  :to-throw 'org-canvas-timeout-error)
+          (expect requests :to-equal '(GET)))))))
 
 ;;;; Image upload failure in resolve-single-image
 

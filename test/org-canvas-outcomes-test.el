@@ -1530,7 +1530,7 @@ Description B.
          (expect count :to-equal 1)
          (expect (buffer-string) :to-match "Outcome A")))))
 
-  (it "returns 0 on API error"
+  (it "records a refusal as a skip, not a silent zero (issue #623)"
     (with-temp-org-buffer
      "* Group
 :PROPERTIES:
@@ -1538,10 +1538,62 @@ Description B.
 :END:
 "
      (org-back-to-heading)
+     (org-canvas--pull-summary-reset)
      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                 (lambda (_method _url &optional _params)
-                  (signal 'error '("API error")))))
-       (expect (org-canvas--outcome-pull-process-group 100) :to-equal 0)))))
+                  (signal 'org-canvas-permission-error
+                          '("Permission denied (HTTP 403) reading outcomes")))))
+       (expect (org-canvas--outcome-pull-process-group 100) :to-equal 0)
+       (let ((records (org-canvas--pull-summary-records)))
+         (expect (length records) :to-equal 1)
+         (expect (plist-get (car records) :kind) :to-equal 'skip)
+         (expect (plist-get (car records) :file) :to-equal "outcomes.org")
+         (expect (plist-get (car records) :item) :to-equal "100")
+         (expect (plist-get (car records) :error)
+                 :to-match "Permission denied")))))
+
+  (it "records a failure as an error (issue #623)"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-summary-reset)
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (_method _url &optional _params)
+                  (signal 'org-canvas-api-error
+                          '("API Request Failed (HTTP 500)")))))
+       (expect (org-canvas--outcome-pull-process-group 100) :to-equal 0)
+       (let ((records (org-canvas--pull-summary-records)))
+         (expect (length records) :to-equal 1)
+         (expect (plist-get (car records) :kind) :to-equal 'error)
+         (expect (plist-get (car records) :item) :to-equal "100")
+         (expect (plist-get (car records) :error)
+                 :to-match "HTTP 500")))))
+
+  (it "keeps the outcomes written before a failure in its count (issue #623)"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-summary-reset)
+     (let ((inserted 0))
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (_method _url &optional _params)
+                    '(((outcome . ((id . 201) (title . "Outcome A"))))
+                      ((outcome . ((id . 202) (title . "Outcome B")))))))
+                 ((symbol-function 'org-canvas-org-save-sync-state)
+                  (lambda (&rest _) (cl-incf inserted)))
+                 ((symbol-function 'org-canvas--pull-insert-body)
+                  (lambda (&rest _)
+                    (when (= inserted 2)
+                      (signal 'error '("buffer edit failed"))))))
+         (expect (org-canvas--outcome-pull-process-group 100) :to-equal 1))))))
 
 (describe "org-canvas-pull-outcomes"
   (it "creates groups and outcomes"
