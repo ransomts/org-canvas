@@ -1,0 +1,10 @@
+* Changed
+- #574 The sixth fixture slice moves the module-item link-resolution
+  specs onto =with-test-course=: nineteen specs that made private temp
+  directories and files with =make-temp-file=, wrote one =pages.org=,
+  =assignments.org=, =files.org= or =modules.org= into them and deleted
+  them in an =unwind-protect= now name those files once and let the
+  shared fixture write them and remove the directory and its buffers.
+  The shared content reader also joins a one-element list of strings,
+  which those fixtures pass after the move.  No spec's assertions
+  changed.

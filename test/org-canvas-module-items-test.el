@@ -81,100 +81,76 @@
             :to-be nil))
 
   (it "resolves link with CANVAS_ID from target file"
-    (let ((temp-file (make-temp-file "pages" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Test Page\n:PROPERTIES:\n:CANVAS_ID: 12345\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file))
-                   (link (format "[[file:%s::*Test Page][Link Text]]" basename))
-                   (result (org-canvas--module-resolve-link link dir)))
-              (expect result :to-be-truthy)
-              (expect (plist-get result :content-id) :to-equal 12345)
-              (expect (plist-get result :title) :to-equal "Link Text")))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Test Page\n:PROPERTIES:\n:CANVAS_ID: 12345\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file))
+               (link (format "[[file:%s::*Test Page][Link Text]]" basename))
+               (result (org-canvas--module-resolve-link link dir)))
+          (expect result :to-be-truthy)
+          (expect (plist-get result :content-id) :to-equal 12345)
+          (expect (plist-get result :title) :to-equal "Link Text")))))
 
   (it "resolves link with CANVAS_URL for pages"
-    (let ((temp-file (make-temp-file "pages" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus-page\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file))
-                   (link (format "[[file:%s::*Syllabus][Syllabus Link]]" basename))
-                   (result (org-canvas--module-resolve-link link dir)))
-              (expect result :to-be-truthy)
-              (expect (plist-get result :page-url) :to-equal "syllabus-page")
-              (expect (plist-get result :title) :to-equal "Syllabus Link")))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus-page\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file))
+               (link (format "[[file:%s::*Syllabus][Syllabus Link]]" basename))
+               (result (org-canvas--module-resolve-link link dir)))
+          (expect result :to-be-truthy)
+          (expect (plist-get result :page-url) :to-equal "syllabus-page")
+          (expect (plist-get result :title) :to-equal "Syllabus Link")))))
 
   (it "returns nil when heading has no CANVAS_ID"
-    (let ((temp-file (make-temp-file "pages" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Unsynced Page\n:PROPERTIES:\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file))
-                   (link (format "[[file:%s::*Unsynced Page][Link]]" basename))
-                   (result (org-canvas--module-resolve-link link dir)))
-              (expect result :to-be nil)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Unsynced Page\n:PROPERTIES:\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file))
+               (link (format "[[file:%s::*Unsynced Page][Link]]" basename))
+               (result (org-canvas--module-resolve-link link dir)))
+          (expect result :to-be nil)))))
 
   (it "determines type from filename"
     (unless test-org-canvas-emacs-30-p
       (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
-    (let ((temp-file (make-temp-file "assignments" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 999\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file))
-                   (link (format "[[file:%s::*Homework 1][HW1]]" basename))
-                   (result (org-canvas--module-resolve-link link dir)))
-              (expect result :to-be-truthy)
-              ;; Type is determined by filename pattern
-              (let ((result-type (plist-get result :type)))
-                (expect result-type :to-be-truthy))))
-        (delete-file temp-file)))))
+    (with-test-course (dir :files
+                           '(("assignments.org" "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 999\n:END:\n")))
+      (let ((temp-file (expand-file-name "assignments.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file))
+               (link (format "[[file:%s::*Homework 1][HW1]]" basename))
+               (result (org-canvas--module-resolve-link link dir)))
+          (expect result :to-be-truthy)
+          ;; Type is determined by filename pattern
+          (let ((result-type (plist-get result :type)))
+            (expect result-type :to-be-truthy)))))))
 
 (describe "org-canvas--module-resolve-link edge cases"
   (it "handles link without heading specifier"
-    (let ((temp-file (make-temp-file "pages" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* First Page\n:PROPERTIES:\n:CANVAS_ID: 11111\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file))
-                   ;; Link without ::*Heading
-                   (link (format "[[file:%s][Just File]]" basename))
-                   (result (org-canvas--module-resolve-link link dir)))
-              ;; Should still find first heading
-              (expect result :to-be-truthy)
-              (expect (plist-get result :content-id) :to-equal 11111)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* First Page\n:PROPERTIES:\n:CANVAS_ID: 11111\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file))
+               ;; Link without ::*Heading
+               (link (format "[[file:%s][Just File]]" basename))
+               (result (org-canvas--module-resolve-link link dir)))
+          ;; Should still find first heading
+          (expect result :to-be-truthy)
+          (expect (plist-get result :content-id) :to-equal 11111)))))
 
   (it "falls back to basename in modules dir when absolute path not found"
-    (let ((temp-file (make-temp-file "discussions" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* My Discussion\n:PROPERTIES:\n:CANVAS_ID: 22222\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file))
-                   ;; Link with absolute path to non-existent directory
-                   (link (format "[[file:/nonexistent/path/%s::*My Discussion][My Discussion]]"
-                                 basename))
-                   (result (org-canvas--module-resolve-link link dir)))
-              ;; Should fall back to finding the file by basename in dir
-              (expect result :to-be-truthy)
-              (expect (plist-get result :content-id) :to-equal 22222)
-              (expect (plist-get result :title) :to-equal "My Discussion")))
-        (delete-file temp-file)))))
+    (with-test-course (dir :files
+                           '(("discussions.org" "* My Discussion\n:PROPERTIES:\n:CANVAS_ID: 22222\n:END:\n")))
+      (let ((temp-file (expand-file-name "discussions.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file))
+               ;; Link with absolute path to non-existent directory
+               (link (format "[[file:/nonexistent/path/%s::*My Discussion][My Discussion]]"
+                             basename))
+               (result (org-canvas--module-resolve-link link dir)))
+          ;; Should fall back to finding the file by basename in dir
+          (expect result :to-be-truthy)
+          (expect (plist-get result :content-id) :to-equal 22222)
+          (expect (plist-get result :title) :to-equal "My Discussion"))))))
 
 (describe "org-canvas--module-resolve-link for direct file links"
   (it "treats a non-.org link target as a File-typed module item"
@@ -241,107 +217,66 @@
 
 (describe "org-canvas--module-search-heading-for-id"
   (it "finds heading by exact match"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* My Page\n:PROPERTIES:\n:CANVAS_ID: 111\n:END:\n"))
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file "My Page" "My Page")))
-              (expect result :to-be-truthy)
-              (expect (car result) :to-equal "111")))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* My Page\n:PROPERTIES:\n:CANVAS_ID: 111\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file "My Page" "My Page")))
+          (expect result :to-be-truthy)
+          (expect (car result) :to-equal "111")))))
 
   (it "falls back to display title when exact heading search fails"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              ;; Heading is a link — exact search for the link text won't match
-              ;; because re-search-forward looks for the raw heading text
-              (insert "* [[file:content/foo.pdf][Foo Document]]\n:PROPERTIES:\n:CANVAS_ID: 222\n:END:\n"))
-            ;; Search with a heading that won't match raw text, but title
-            ;; matches the display name from org-get-heading
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file "NonexistentHeading" "Foo Document")))
-              (expect result :to-be-truthy)
-              (expect (car result) :to-equal "222")))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* [[file:content/foo.pdf][Foo Document]]\n:PROPERTIES:\n:CANVAS_ID: 222\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file "NonexistentHeading" "Foo Document")))
+          (expect result :to-be-truthy)
+          (expect (car result) :to-equal "222")))))
 
   (it "falls back to partial title match"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Introduction to Canvas\n:PROPERTIES:\n:CANVAS_ID: 333\n:END:\n"))
-            ;; Exact heading search will fail; partial match on title succeeds
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file "WontMatch" "Canvas")))
-              (expect result :to-be-truthy)
-              (expect (car result) :to-equal "333")))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Introduction to Canvas\n:PROPERTIES:\n:CANVAS_ID: 333\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file "WontMatch" "Canvas")))
+          (expect result :to-be-truthy)
+          (expect (car result) :to-equal "333")))))
 
   (it "returns nil when neither heading nor title matches"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Some Other Heading\n:PROPERTIES:\n:CANVAS_ID: 444\n:END:\n"))
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file "NoMatch" "AlsoNoMatch")))
-              (expect result :to-be nil)))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Some Other Heading\n:PROPERTIES:\n:CANVAS_ID: 444\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file "NoMatch" "AlsoNoMatch")))
+          (expect result :to-be nil)))))
 
   (it "returns page-url when CANVAS_URL is set"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* My Page\n:PROPERTIES:\n:CANVAS_URL: my-page-url\n:END:\n"))
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file "My Page" "My Page")))
-              (expect result :to-be-truthy)
-              (expect (cdr result) :to-equal "my-page-url")))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* My Page\n:PROPERTIES:\n:CANVAS_URL: my-page-url\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file "My Page" "My Page")))
+          (expect result :to-be-truthy)
+          (expect (cdr result) :to-equal "my-page-url")))))
 
   (it "unescapes brackets in heading before searching"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Page [with brackets]\n:PROPERTIES:\n:CANVAS_ID: 666\n:END:\n"))
-            ;; Org escapes brackets inside link components: \[ and \]
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file "Page \\[with brackets\\]" "Page")))
-              (expect result :to-be-truthy)
-              (expect (car result) :to-equal "666")))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Page [with brackets]\n:PROPERTIES:\n:CANVAS_ID: 666\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file "Page \\[with brackets\\]" "Page")))
+          (expect result :to-be-truthy)
+          (expect (car result) :to-equal "666")))))
 
   (it "uses first heading when no heading specified"
-    (let ((temp-file (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* First\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n* Second\n"))
-            (let ((result (org-canvas--module-search-heading-for-id
-                           temp-file nil "anything")))
-              (expect result :to-be-truthy)
-              (expect (car result) :to-equal "555")))
-        (let ((buf (get-file-buffer temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file)))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* First\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n* Second\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let ((result (org-canvas--module-search-heading-for-id
+                       temp-file nil "anything")))
+          (expect result :to-be-truthy)
+          (expect (car result) :to-equal "555"))))))
 
 (describe "org-canvas--module-heading-display-name"
   (it "returns a file link's description and any other heading as is"
@@ -679,103 +614,81 @@
 
 (describe "org-canvas--module-item-parse-entry with resolved links"
   (it "extracts content-id from linked file"
-    (let ((temp-file (make-temp-file "pages" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Test Page\n:PROPERTIES:\n:CANVAS_ID: 99999\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file)))
-              (with-temp-org-buffer
-               (format "* Module
+    (with-test-course (dir :files
+                           '(("pages.org" "* Test Page\n:PROPERTIES:\n:CANVAS_ID: 99999\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file)))
+          (with-temp-org-buffer
+              (format "* Module
 ** [[file:%s::*Test Page][Link Text]]
 :PROPERTIES:
 :END:
 " basename)
-               (search-forward "Link Text")
-               (org-back-to-heading)
-               (let ((data (org-canvas--module-item-parse-entry dir)))
-                 (expect (plist-get data :content-id) :to-equal 99999)))))
-        (delete-file temp-file))))
+            (search-forward "Link Text")
+            (org-back-to-heading)
+            (let ((data (org-canvas--module-item-parse-entry dir)))
+              (expect (plist-get data :content-id) :to-equal 99999)))))))
 
   (it "extracts page-url from linked page"
-    (let ((temp-file (make-temp-file "pages" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus-url\n:END:\n"))
-            (let* ((dir (file-name-directory temp-file))
-                   (basename (file-name-nondirectory temp-file)))
-              (with-temp-org-buffer
-               (format "* Module
+    (with-test-course (dir :files
+                           '(("pages.org" "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus-url\n:END:\n")))
+      (let ((temp-file (expand-file-name "pages.org" dir)))
+        (let* ((basename (file-name-nondirectory temp-file)))
+          (with-temp-org-buffer
+              (format "* Module
 ** [[file:%s::*Syllabus][Syllabus Link]]
 :PROPERTIES:
 :END:
 " basename)
-               (search-forward "Syllabus Link")
-               (org-back-to-heading)
-               (let ((data (org-canvas--module-item-parse-entry dir)))
-                 (expect (plist-get data :page-url) :to-equal "syllabus-url")))))
-        (delete-file temp-file)))))
+            (search-forward "Syllabus Link")
+            (org-back-to-heading)
+            (let ((data (org-canvas--module-item-parse-entry dir)))
+              (expect (plist-get data :page-url) :to-equal "syllabus-url"))))))))
 
 (describe "org-canvas--module-item-parse-entry min-score"
   (it "includes min-score when positive for linked items"
-    (let ((temp-pages (make-temp-file "pages-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-pages
-              (insert "* Linked Page\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n"))
-            (let ((temp-modules (make-temp-file "modules-" nil ".org")))
-              (unwind-protect
-                  (progn
-                    (with-temp-file temp-modules
-                      (insert (format "* Module\n** [[file:%s::*Linked Page][Linked Page]]\n:PROPERTIES:\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 80\n:END:\n" temp-pages)))
-                    (with-current-buffer (find-file-noselect temp-modules)
-                      (goto-char (point-min))
-                      (search-forward "Linked Page]]")
-                      (org-back-to-heading)
-                      (let ((data (org-canvas--module-item-parse-entry
-                                   (file-name-directory temp-modules))))
-                        (expect (plist-get data :min-score) :to-equal 80)
-                        (expect (plist-get data :completion-requirement) :to-equal "min_score"))
-                      (kill-buffer)))
-                (delete-file temp-modules))))
-        (delete-file temp-pages))))
+    (with-test-course (dir :files
+                           '(("pages.org" "* Linked Page\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n")
+                             ("modules.org" "* Module\n** [[file:pages.org::*Linked Page][Linked Page]]\n:PROPERTIES:\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 80\n:END:\n")))
+      (let ((temp-modules (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect temp-modules)
+          (goto-char (point-min))
+          (search-forward "Linked Page]]")
+          (org-back-to-heading)
+          (let ((data (org-canvas--module-item-parse-entry
+                       (file-name-directory temp-modules))))
+            (expect (plist-get data :min-score) :to-equal 80)
+            (expect (plist-get data :completion-requirement) :to-equal "min_score"))
+          (kill-buffer)))))
 
   (it "does not include min-score when zero"
-    (let ((temp-modules (make-temp-file "modules-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-modules
-              (insert "* Module\n** SubHeader Item\n:PROPERTIES:\n:MIN_SCORE: 0\n:END:\n"))
-            (with-current-buffer (find-file-noselect temp-modules)
-              (goto-char (point-min))
-              (search-forward "SubHeader")
-              (org-back-to-heading)
-              (let ((data (org-canvas--module-item-parse-entry
-                           (file-name-directory temp-modules))))
-                (expect (plist-get data :min-score) :to-be nil))
-              (kill-buffer)))
-        (delete-file temp-modules))))
+    (with-test-course (dir :files
+                           '(("modules.org" "* Module\n** SubHeader Item\n:PROPERTIES:\n:MIN_SCORE: 0\n:END:\n")))
+      (let ((temp-modules (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect temp-modules)
+          (goto-char (point-min))
+          (search-forward "SubHeader")
+          (org-back-to-heading)
+          (let ((data (org-canvas--module-item-parse-entry
+                       (file-name-directory temp-modules))))
+            (expect (plist-get data :min-score) :to-be nil))
+          (kill-buffer)))))
 
   (it "includes min-score for ExternalUrl items"
-    (let ((temp-modules (make-temp-file "modules-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-modules
-              (insert "* Module\n** Google Docs\n:PROPERTIES:\n:EXTERNAL_URL: https://docs.google.com\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 90\n:END:\n"))
-            (with-current-buffer (find-file-noselect temp-modules)
-              (goto-char (point-min))
-              (search-forward "Google Docs")
-              (org-back-to-heading)
-              (let* ((data (org-canvas--module-item-parse-entry
-                            (file-name-directory temp-modules)))
-                     (result-type (plist-get data :type)))
-                (expect result-type :to-equal "ExternalUrl")
-                (expect (plist-get data :min-score) :to-equal 90)
-                (expect (plist-get data :completion-requirement) :to-equal "min_score"))
-              (kill-buffer)))
-        (delete-file temp-modules)))))
+    (with-test-course (dir :files
+                           '(("modules.org" "* Module\n** Google Docs\n:PROPERTIES:\n:EXTERNAL_URL: https://docs.google.com\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 90\n:END:\n")))
+      (let ((temp-modules (expand-file-name "modules.org" dir)))
+        (with-current-buffer (find-file-noselect temp-modules)
+          (goto-char (point-min))
+          (search-forward "Google Docs")
+          (org-back-to-heading)
+          (let* ((data (org-canvas--module-item-parse-entry
+                        (file-name-directory temp-modules)))
+                 (result-type (plist-get data :type)))
+            (expect result-type :to-equal "ExternalUrl")
+            (expect (plist-get data :min-score) :to-equal 90)
+            (expect (plist-get data :completion-requirement) :to-equal "min_score"))
+          (kill-buffer))))))
 
 (describe "org-canvas--module-item-parse-entry (published)"
   (it "defaults published to t when not set"
@@ -3393,8 +3306,8 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
   (it "links the heading's path, naming it by the link description when the item has no title"
     (with-test-course
         (dir :files '(("files.org"
-                      :headings (("Week 1"
-                                  :body "** [[file:content/a.pdf][A.pdf]]
+                       :headings (("Week 1"
+                                   :body "** [[file:content/a.pdf][A.pdf]]
 :PROPERTIES:
 :CANVAS_ID: 5
 :END:
