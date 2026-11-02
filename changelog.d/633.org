@@ -1,0 +1,25 @@
+* Changed
+- #633 The manual's Commands Reference now marks the functions that are
+  not commands (no =M-x=) as "Lisp and batch": the sync, pull, delete
+  and show by-heading helpers, the batch validators and differ,
+  =org-canvas-batch-setup=, =org-canvas-set-published= and
+  =org-canvas-set-published-at-point=.
+- #633 The Commands Reference gained the three commands it was missing:
+  =org-canvas-files-force-reupload=, =org-canvas-force-reupload-file-at-point=
+  and =org-canvas-sync-final-grade-overrides=.
+- #633 The Command Menu table lists every key the transient menu
+  defines, including the Pull menu's ~=~ (show at point), the
+  Submissions menu's ~y K H I Y L l~, the Tools menu's ~k h Z~ and the
+  Sync at point menu's ~x~ (extend one student).
+- #633 A new "Other Options" table documents =org-canvas-image-folder=,
+  =org-canvas-max-file-size-mb=, =org-canvas-upload-timeout=,
+  =org-canvas-submissions-notes-template=, =org-canvas-assignment-sort=
+  and =org-canvas-emit-defaults=.
+- #633 The Architecture section lists the =core-*= split and says the
+  conflict baseline is the entry's =CANVAS_UPDATED_AT=, falling back to
+  the file's =#+LAST_SYNCED=.
+* Added
+- #633 Two spec guards keep the manual from drifting again: every name
+  in the Commands Reference is a command or its row says "Lisp and
+  batch", and the Command Menu table names exactly the keys
+  =org-canvas-dispatch= defines.
