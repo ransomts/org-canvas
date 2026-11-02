@@ -1983,6 +1983,17 @@ Keep this too
        (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
        (expect (org-entry-get (point) "PINNED") :to-equal "false"))))
 
+  (it "sets false when value is :null and org-canvas-emit-defaults is t"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (org-canvas--pull-set-boolean-property (point) "PINNED" :null)
+       (expect (org-entry-get (point) "PINNED") :to-equal "false"))))
+
   (it "sets false for a spec that always emits its default (issue #637)"
     (with-temp-org-buffer
      "* Item
