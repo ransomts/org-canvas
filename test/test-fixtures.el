@@ -79,7 +79,8 @@ is a two-assignment file."
 
 (defun test-org-canvas-course-contents (value)
   "Return VALUE, a `with-test-course' file's content, as text to write.
-VALUE is a string, nil for an empty file, or a plist of :prefix,
+VALUE is a string, nil for an empty file, a list of strings joined in
+order (for a long document split across lines), or a plist of :prefix,
 :headings and :suffix, where :headings is passed to
 `test-org-canvas-headings'."
   (cond
@@ -89,6 +90,10 @@ VALUE is a string, nil for an empty file, or a plist of :prefix,
     (concat (or (plist-get value :prefix) "")
             (test-org-canvas-headings (plist-get value :headings))
             (or (plist-get value :suffix) "")))
+   ((and (consp value)
+         (consp (cdr value))
+         (cl-every #'stringp value))
+    (apply #'concat value))
    (t (error "Cannot write a course file from %S" value))))
 
 ;;;; Course directory
