@@ -1,0 +1,12 @@
+* Changed
+- #574 The third fixture slice adds =with-test-submissions-dir= and
+  =test-org-canvas-submissions-file= to the shared layer: a temp
+  submissions directory (with =org-canvas-submissions-write-gitignore=
+  bound, since those pulls write one) and the one reader of what a pull
+  wrote there.  Peer reviews, quiz submissions, submissions status,
+  quiz regrade, search, submissions reports, new semester and the write
+  scope specs now take them instead of rebuilding the directory and its
+  teardown loop per file; the last two also take the shared
+  =test-org-canvas-course-cleanup= in place of a private one.  No
+  spec's meaning changed: the assertions and the request counts are the
+  same.

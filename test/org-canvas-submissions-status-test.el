@@ -105,25 +105,22 @@ EXTRA comes first, so an explicit `published', `grading_type' or
 The submissions directory is a temp directory, so a grading file
 written there is the only one the report can find."
   (declare (indent 2))
-  `(let* ((dir (make-temp-file "submissions-status-" t))
-          (org-canvas-submissions-directory dir)
-          (org-canvas-time-zone "UTC")
-          (test-sstatus--assignments ,assignments)
-          (test-sstatus--submissions ,submissions)
-          (test-sstatus--calls nil)
-          (test-sstatus--graphql-calls nil)
-          (test-sstatus--statistics nil)
-          (test-sstatus--statistics-calls nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                      #'test-sstatus--api)
-                     ((symbol-function 'org-canvas--graphql-query)
-                      #'test-sstatus--graphql)
-                     ((symbol-function 'message) #'ignore)
-                     ((symbol-function 'princ) #'ignore))
-             ,@body))
-       (delete-directory dir t))))
+  `(let ((org-canvas-time-zone "UTC")
+         (test-sstatus--assignments ,assignments)
+         (test-sstatus--submissions ,submissions)
+         (test-sstatus--calls nil)
+         (test-sstatus--graphql-calls nil)
+         (test-sstatus--statistics nil)
+         (test-sstatus--statistics-calls nil))
+     (with-test-submissions-dir
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                    #'test-sstatus--api)
+                   ((symbol-function 'org-canvas--graphql-query)
+                    #'test-sstatus--graphql)
+                   ((symbol-function 'message) #'ignore)
+                   ((symbol-function 'princ) #'ignore))
+           ,@body)))))
 
 (defun test-sstatus--write-grading-file (name pulled-at &optional id)
   "Write a grading file for assignment NAME whose PULLED_AT is PULLED-AT.

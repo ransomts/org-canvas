@@ -34,8 +34,7 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
            (with-current-buffer buf
              (goto-char (point-min))
              ,@body))
-       (when (buffer-live-p buf) (kill-buffer buf))
-       (delete-directory dir t))))
+       (test-org-canvas-course-cleanup dir))))
 
 (defmacro test-write-scope--with-grading-file (content &rest body)
   "Visit a scratch grading file holding CONTENT, in submissions mode, run BODY."
@@ -52,8 +51,7 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
              (org-canvas-submissions-mode 1)
              (cl-letf (((symbol-function 'org-canvas--graphql-query) #'ignore))
                ,@body)))
-       (when (buffer-live-p buf) (kill-buffer buf))
-       (delete-directory dir t))))
+       (test-org-canvas-course-cleanup dir))))
 
 (defun test-write-scope--refusal (form)
   "Run FORM; return the message of the write-scope error it signals."

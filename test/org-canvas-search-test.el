@@ -78,7 +78,7 @@ The calendar's context code and the announcements' parameter reach the
 URL through PARAMS, which the dispatcher appends before matching, so a
 key can name them."
   (declare (indent 1))
-  `(with-org-canvas-test-config
+  `(with-test-api
      (let ((org-canvas-time-zone test-search--tz)
            (course ,course))
        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)

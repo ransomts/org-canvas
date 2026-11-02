@@ -175,12 +175,7 @@ afterwards."
            (copy-file (expand-file-name "org-canvas-credentials.el" old-dir)
                       (expand-file-name "org-canvas-credentials.el" ,dir-var))
            ,@body)
-       (dolist (buf (buffer-list))
-         (let ((bf (buffer-file-name buf)))
-           (when (and bf (string-prefix-p tmp bf))
-             (with-current-buffer buf (set-buffer-modified-p nil))
-             (kill-buffer buf))))
-       (delete-directory tmp t))))
+       (test-org-canvas-course-cleanup tmp))))
 
 (defun test-new-semester--run (directory course-id)
   "Run `org-canvas-new-semester' on DIRECTORY with COURSE-ID, return its report.

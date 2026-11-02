@@ -86,7 +86,7 @@ that vary ATTEMPT alone read as the row with one more word on the end
 (defmacro test-preports--with-course (&rest body)
   "Run BODY against the fake course, the report shown nowhere."
   (declare (indent 0))
-  `(with-org-canvas-test-config
+  `(with-test-api
      (let ((printed nil))
        ;; Under batch the report is printed; it is caught here instead,
        ;; and the buffer it was rendered in is what the specs read.

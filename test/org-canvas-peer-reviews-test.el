@@ -64,30 +64,20 @@ shadows the default."
   "Run BODY with the fake API serving ASSIGNMENTS, REVIEWS and ENROLLMENTS.
 The submissions directory is a temp directory."
   (declare (indent 3))
-  `(let* ((dir (make-temp-file "peer-reviews-" t))
-          (org-canvas-submissions-directory dir)
-          (org-canvas-submissions-write-gitignore t)
-          (test-peer--assignments ,assignments)
-          (test-peer--reviews ,reviews)
-          (test-peer--enrollments ,enrollments)
-          (test-peer--calls nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-peer--api)
-                     ((symbol-function 'message) #'ignore))
-             ,@body))
-       (dolist (buf (buffer-list))
-         (when (and (buffer-file-name buf)
-                    (string-prefix-p dir (buffer-file-name buf)))
-           (with-current-buffer buf (set-buffer-modified-p nil))
-           (kill-buffer buf)))
-       (delete-directory dir t))))
+  `(let ((test-peer--assignments ,assignments)
+         (test-peer--reviews ,reviews)
+         (test-peer--enrollments ,enrollments)
+         (test-peer--calls nil))
+     (with-test-submissions-dir
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                    #'test-peer--api)
+                   ((symbol-function 'message) #'ignore))
+           ,@body)))))
 
 (defun test-peer--file (name)
   "Return the text of NAME under the submissions directory."
-  (with-temp-buffer
-    (insert-file-contents (expand-file-name name org-canvas-submissions-directory))
-    (buffer-string)))
+  (test-org-canvas-submissions-file name))
 
 (defun test-peer--rows (first-cell text)
   "Return every table row of TEXT whose first cell is FIRST-CELL, cells trimmed.
