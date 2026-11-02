@@ -1,0 +1,6 @@
+* Fixed
+- #625 The test suite's mocked Canvas now hands a quoted-list stub back as
+  the vector `json-read' produces for a JSON array, so a spec can no longer
+  pass while the code applies `car', `nth', `last' or `dolist' to a reply
+  that a live course sends as a vector.  `scripts/api-reply-list-check.py`
+  and a CI step guard the specs that mock the request function themselves.

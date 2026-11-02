@@ -40,6 +40,50 @@
               :to-equal '((title . "T")))
       (expect (test-org-canvas-api-call-data 'POST "no-such") :to-be nil))))
 
+(describe "mock replies arrive as Canvas sends them (issue #625)"
+  ;; `org-canvas-api-request' decodes a reply with `json-read', so an
+  ;; array arrives as a vector and an object as an alist.  A stub that
+  ;; writes the array as a quoted list used to hand the code under test
+  ;; a list Canvas never sends, hiding `car', `nth', `last' and `dolist'
+  ;; applied to a reply; the harness now converts it.
+
+  (it "reads a quoted list of objects as a vector of alists"
+    (expect (test-org-canvas-jsonify '(((id . 1) (name . "A"))
+                                       ((id . 2) (name . "B"))))
+            :to-equal [((id . 1) (name . "A")) ((id . 2) (name . "B"))]))
+
+  (it "keeps an object as an alist, converting the arrays inside it"
+    (expect (test-org-canvas-jsonify '((id . 1)
+                                       (items . (((id . 2)) ((id . 3))))))
+            :to-equal '((id . 1) (items . [((id . 2)) ((id . 3))]))))
+
+  (it "converts arrays of scalars, empty and nested"
+    (expect (test-org-canvas-jsonify '("a" "b")) :to-equal ["a" "b"])
+    (expect (test-org-canvas-jsonify '(1 2 3)) :to-equal [1 2 3])
+    (expect (test-org-canvas-jsonify '(("a") ("b"))) :to-equal [["a"] ["b"]]))
+
+  (it "leaves nil, scalars and dotted pairs alone"
+    (expect (test-org-canvas-jsonify nil) :to-be nil)
+    (expect (test-org-canvas-jsonify 7) :to-equal 7)
+    (expect (test-org-canvas-jsonify "x") :to-equal "x")
+    (expect (test-org-canvas-jsonify '(a . b)) :to-equal '(a . b)))
+
+  (it "leaves a plz-response record alone"
+    (let ((response (make-plz-response :status 200 :body "[]")))
+      (expect (test-org-canvas-jsonify response) :to-be response)))
+
+  (it "hands a response-table array to the caller as a vector"
+    (with-test-api-responses '(("items" . (((id . 1)) ((id . 2)))))
+      (let ((reply (org-canvas-api-request 'GET "https://x/api/v1/items")))
+        (expect (vectorp reply) :to-be t)
+        (expect (aref reply 0) :to-equal '((id . 1))))))
+
+  (it "hands a handler's array to the caller as a vector"
+    (with-test-api-handler (lambda (_method _url &rest _args)
+                             '(((id . 1)) ((id . 2))))
+      (expect (org-canvas-api-request 'GET "https://x/api/v1/items")
+              :to-equal [((id . 1)) ((id . 2))]))))
+
 (describe "org-canvas-define-sync generated function"
   (it "syncs entries from file successfully"
     ;; Test using org-canvas-sync-pages which is a real macro-generated function
