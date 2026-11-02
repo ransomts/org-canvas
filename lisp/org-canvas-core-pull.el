@@ -42,7 +42,11 @@ while the deletion exists to clear a value Canvas has since changed
 (defun org-canvas--pull-set-boolean-property (pom property value
                                                  &optional registry-key)
   "Set boolean PROPERTY at POM.
-Convert t to \"true\", :json-false/nil to \"false\".  When the registry
+Convert t to \"true\", :json-false/:null/nil to \"false\".  Canvas's
+JSON null is folded to false here as `org-canvas--registry-normalize-remote'
+and the drift report fold it: treating it as truthy wrote
+\"true\" from a field Canvas left empty, the pull and the report
+disagreeing about the same value (issue #498).  When the registry
 declares PROPERTY as `:type boolean' and the resolved value matches the
 registered (or implicit nil) default, emission is suppressed unless
 `org-canvas-emit-defaults' is non-nil, and a value the heading already
@@ -70,6 +74,7 @@ course's APPLY_WEIGHTS: false does (issue #637)."
          (default (plist-get spec :default))
          (normalized (cond ((eq value t) t)
                            ((eq value :json-false) nil)
+                           ((eq value :null) nil)
                            ((null value) nil)
                            ((stringp value)
                             (cond ((string= value "true") t)
