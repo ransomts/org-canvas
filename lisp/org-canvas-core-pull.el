@@ -28,6 +28,17 @@
 
 ;;;; File Header and Pulled Properties
 
+(defun org-canvas--pull-property-already-says-p (pos property text)
+  "Return non-nil when TEXT is already PROPERTY's value at POS.
+TEXT is the Org spelling of the value Canvas holds.  A suppressed
+default is deleted to keep the drawer terse, but a line that already
+says the same thing is not stale: deleting it dropped an explicit
+PUBLISHED: true from every published heading on a re-pull (issue #498),
+while the deletion exists to clear a value Canvas has since changed
+\(issue #320)."
+  (let ((current (org-entry-get pos property)))
+    (and current (string-equal current text))))
+
 (defun org-canvas--pull-set-boolean-property (pom property value
                                                  &optional registry-key)
   "Set boolean PROPERTY at POM.
@@ -35,9 +46,12 @@ Convert t to \"true\", :json-false/nil to \"false\".  When the registry
 declares PROPERTY as `:type boolean' and the resolved value matches the
 registered (or implicit nil) default, emission is suppressed unless
 `org-canvas-emit-defaults' is non-nil, and a value the heading already
-carries is deleted: a re-pull finds the existing heading with its
-drawer intact, and a suppressed write alone would leave a stale
-\"true\" standing after Canvas turned the setting off (issue #320).
+carries is deleted unless it already spells that default: a re-pull
+finds the existing heading with its drawer intact, and a suppressed
+write alone would leave a stale \"true\" standing after Canvas turned
+the setting off (issue #320).  An agreeing line is left alone rather
+than deleted, so a pull stops stripping an explicit PUBLISHED: true
+from every published heading (issue #498).
 REGISTRY-KEY names the feature being pulled, whose registration alone
 supplies the spec; without it the first registration of PROPERTY in
 any feature is used (see `org-canvas--registry-find-property').  A
@@ -69,6 +83,8 @@ course's APPLY_WEIGHTS: false does (issue #637)."
           (not boolean-spec)
           (not (eq (and normalized t) (and default t))))
       (org-canvas-org-set-property
+       pom property (if normalized "true" "false")))
+     ((org-canvas--pull-property-already-says-p
        pom property (if normalized "true" "false")))
      (t (org-entry-delete pom property)))))
 
@@ -842,14 +858,17 @@ never read (issue #637)."
   "Write the property SPEC describes at POS from the Canvas ITEM.
 A field ITEM does not carry leaves the property untouched.  A value
 that is the property's default is deleted so the drawer stays terse
-\(written out when `org-canvas-emit-defaults' is set).  Anything else
-is written in its Org spelling; a value with no Org spelling — a link
-whose target heading is missing — is logged and left alone rather than
-erased.  A `:local-only' spec is org-canvas's own bookkeeping, never
-Canvas's opinion, and is skipped; so is an `:intent-of' spec, which
-is the file's declaration of what Canvas should hold and would be
-erased by the very observation it exists to be checked against
-\(issue #293)."
+\(written out when `org-canvas-emit-defaults' is set), unless the
+heading already spells that same value: an explicit \"PUBLISHED: true\"
+is not stale when Canvas says the assignment is published, and a pull
+that deleted it stripped the line from every published heading
+\(issue #498).  Anything else is written in its Org spelling; a value
+with no Org spelling — a link whose target heading is missing — is
+logged and left alone rather than erased.  A `:local-only' spec is
+org-canvas's own bookkeeping, never Canvas's opinion, and is skipped;
+so is an `:intent-of' spec, which is the file's declaration of what
+Canvas should hold and would be erased by the very observation it
+exists to be checked against (issue #293)."
   (unless (or (plist-get spec :local-only) (plist-get spec :intent-of))
     (when (org-canvas--registry-remote-present-p spec item)
       (let* ((org-prop (plist-get spec :org-prop))
@@ -857,9 +876,12 @@ erased by the very observation it exists to be checked against
              (text (org-canvas--registry-remote-as-org spec value)))
         (cond
          ((org-canvas--registry-value-default-p spec value)
-          (if (and org-canvas-emit-defaults text)
-              (org-canvas-org-set-property pos org-prop text)
-            (org-entry-delete pos org-prop)))
+          (cond
+           ((and org-canvas-emit-defaults text)
+            (org-canvas-org-set-property pos org-prop text))
+           ((and (eq (plist-get spec :type) 'boolean)
+                 (org-canvas--pull-property-already-says-p pos org-prop text)))
+           (t (org-entry-delete pos org-prop))))
          (text
           (org-canvas-org-set-property pos org-prop text))
          (t

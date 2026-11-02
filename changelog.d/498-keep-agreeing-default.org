@@ -1,0 +1,8 @@
+* Fixed
+- #498 A pull no longer deletes a boolean line that already spells the
+  value Canvas holds.  A published assignment's explicit =PUBLISHED:
+  true= is left in place instead of being stripped as a default on
+  every re-pull; a line that disagrees with Canvas is still deleted, as
+  before (issue #320).  The MUTED half — why a pull wrote =MUTED: true=
+  where the drift row read =false= — still needs a live course to
+  compare =GET assignments= with =GET assignments/:id=.
