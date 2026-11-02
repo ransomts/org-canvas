@@ -12,6 +12,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'plz)
+(require 'url-parse)
 (require 'url-util)
 (require 'auth-source)
 (require 'org-canvas-core-config)
@@ -331,6 +332,33 @@ script (issue #178)."
                             "Bearer ***MASKED***"
                           (concat "Bearer " (org-canvas--api-token))))
     ("Content-Type" . "application/json")))
+
+(defun org-canvas--api-url-on-base-host-p (url)
+  "Return non-nil when URL names the host `org-canvas-base-url' names.
+Both host and port must match.  A URL that cannot be parsed is not on
+the base host.  The upload step-3 GET carries the bearer token, and its
+URL comes from the upload host's reply rather than from a course file;
+following an off-host one would hand the token to that host (issue
+#631)."
+  (condition-case nil
+      (let ((target (url-generic-parse-url url))
+            (base (url-generic-parse-url org-canvas-base-url)))
+        (and (string-equal (downcase (or (url-host target) ""))
+                           (downcase (or (url-host base) "")))
+             (equal (url-port target) (url-port base))))
+    (error nil)))
+
+(defun org-canvas--api-require-base-host (url &optional what)
+  "Signal `org-canvas-api-error' unless URL is on `org-canvas-base-url'.
+WHAT names the request in the message, for the log and the backtrace.
+Call this before a token-bearing request whose URL a remote reply
+supplied, so the bearer token never leaves the course's own host
+\(issue #631)."
+  (unless (org-canvas--api-url-on-base-host-p url)
+    (org-canvas--signal 'org-canvas-api-error
+      "Refusing to send the Canvas token to %s (not on %s)%s"
+      url org-canvas-base-url
+      (if what (format " for %s" what) ""))))
 
 (defun org-canvas--api-curl-patch-config (full-url timeout body-p)
   "Build a curl config string for a PATCH request to FULL-URL.
@@ -1389,7 +1417,13 @@ Otherwise follows the \\='location header for step 3 confirmation."
            (full-url (if (string-prefix-p "http" location)
                          location
                        (concat org-canvas-base-url location)))
-           (response (org-canvas-api-request 'GET full-url)))
+           ;; The location comes from the upload host's reply, so a
+           ;; misbehaving endpoint could name its own host and receive
+           ;; the token.  Follow it only back to Canvas (issue #631).
+           (response (progn
+                       (org-canvas--api-require-base-host
+                        full-url "upload confirmation")
+                       (org-canvas-api-request 'GET full-url))))
       (org-canvas--log-info org-canvas--logger "[Upload] Complete: file ID %s"
                  (alist-get 'id response))
       response)))

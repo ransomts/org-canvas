@@ -4701,6 +4701,8 @@ These are a course's own rules, so they belong with the course, not in your init
 
 =scripts/org-canvas= (=org-canvas-batch-setup=) and =M-x org-canvas-activate-course= load it after the credentials file, so a setting in both takes its value there; a file that signals while loading is named in the echo area and the run carries on.  It holds nothing secret, so it can be committed beside the course's feedback guide.
 
+It is Lisp, so loading it also runs its code: activating a course directory someone else prepared -- a cloned colleague's course, say -- runs their =org-canvas-config.el= without a prompt, exactly as it would run your own.  Read the file before you activate a directory you did not write.  The credentials file is loaded the same way, which is why it is the file that must never be shared.
+
 A course-wide pass from the shell:
 
 #+begin_src sh

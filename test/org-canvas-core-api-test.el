@@ -1977,6 +1977,55 @@ which records the frames from the signalling `signal' out to
           (org-canvas-api-request 'GET "https://example.test/api/v1/x"))
         (expect paced :to-be t)))))
 
+(describe "org-canvas--api-url-on-base-host-p"
+  (it "accepts the base host, with or without an explicit port"
+    (with-org-canvas-test-config
+      (expect (org-canvas--api-url-on-base-host-p
+               "https://test.canvas.example.com/api/v1/files/1")
+              :to-be-truthy)
+      (expect (org-canvas--api-url-on-base-host-p
+               "https://test.canvas.example.com:443/api/v1/files/1")
+              :to-be-truthy)))
+
+  (it "is case-insensitive in the host"
+    (with-org-canvas-test-config
+      (expect (org-canvas--api-url-on-base-host-p
+               "https://TEST.CANVAS.EXAMPLE.COM/api/v1/files/1")
+              :to-be-truthy)))
+
+  (it "refuses another host, another scheme, or an unparseable URL"
+    (with-org-canvas-test-config
+      (expect (org-canvas--api-url-on-base-host-p "https://evil.example/x")
+              :to-be nil)
+      (expect (org-canvas--api-url-on-base-host-p
+               "http://test.canvas.example.com/x")
+              :to-be nil)
+      (expect (org-canvas--api-url-on-base-host-p "/api/v1/files/1")
+              :to-be nil))))
+
+(describe "org-canvas--upload-confirm (issue #631)"
+  (it "follows a same-host location"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method url &rest _args)
+                   (expect url :to-equal
+                           "https://test.canvas.example.com/files/1/confirm")
+                   '((id . 42)))))
+        (expect (alist-get 'id (org-canvas--upload-confirm
+                                '((location .
+                                   "https://test.canvas.example.com/files/1/confirm"))))
+                :to-equal 42))))
+
+  (it "refuses an off-host location without sending the token"
+    (with-org-canvas-test-config
+      (let ((called nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (setq called t) '((id . 1)))))
+          (expect (org-canvas--upload-confirm
+                   '((location . "https://upload.evil.example/confirm")))
+                  :to-throw 'org-canvas-api-error)
+          (expect called :to-be nil))))))
+
 (describe "org-canvas--upload-file"
   (it "performs 3-step upload and returns file alist"
     (let* ((temp-file (make-temp-file "upload-test" nil ".png"))
@@ -2028,7 +2077,7 @@ which records the frames from the signalling `signal' out to
                            (let ((buf (generate-new-buffer " *upload-loc*")))
                              (with-current-buffer buf
                                (insert "HTTP/1.1 301 Redirect\r\n")
-                               (insert "Location: https://canvas.test/files/888/confirm\r\n")
+                               (insert "Location: https://test.canvas.example.com/files/888/confirm\r\n")
                                (insert "\r\n{\"status\":\"pending\"}"))
                              buf))))
                 (let ((result (org-canvas--upload-file temp-file)))

@@ -19,14 +19,30 @@
     "settings.org")
   "List of org files to create in a new course skeleton.")
 
+(defun org-canvas--warn-credentials-modes (file)
+  "Say so when credentials FILE is readable by group or others.
+The token it holds is enough to act as its owner in the course, so a
+mode wider than `0600' is a leak, not a preference (issue #631)."
+  (let ((modes (file-modes file)))
+    (when (and modes (> (logand modes #o077) 0))
+      (org-canvas--user-message
+       "org-canvas: %s is readable by group or others (mode %o); tightening to 600"
+       file (logand modes #o777)))))
+
 (defun org-canvas--write-credentials-file (dir url token course-id &optional read-only)
   "Write org-canvas-credentials.el in DIR with URL, TOKEN, COURSE-ID.
 READ-ONLY non-nil marks the course as one to read and never write,
 which is the safe setting for a course being adopted rather than
-owned (issue #163)."
+owned (issue #163).
+
+The file is written `0600': the token in it is a live credential, and
+a default `0664' would let every account on the machine read it, which
+issue #631 reports."
   (let ((file (expand-file-name "org-canvas-credentials.el" dir)))
+    (when (file-exists-p file)
+      (org-canvas--warn-credentials-modes file))
     (with-temp-file file
-      (insert ";;; org-canvas-credentials.el --- Course credentials  -*- lexical-binding: t; -*-\n\n")
+      (insert ";;; org-canvas-credentials.el --- Course credentials  -*- lexical-binding: t; no-byte-compile: t; -*-\n\n")
       (insert ";; This file is NOT checked into version control.\n")
       (insert ";; It contains sensitive API credentials.\n\n")
       (insert (format "(setq org-canvas-directory %S)\n" dir))
@@ -38,6 +54,7 @@ owned (issue #163)."
         (insert "(setq org-canvas-read-only t)\n"))
       (insert "\n(provide 'org-canvas-credentials)\n")
       (insert ";;; org-canvas-credentials.el ends here\n"))
+    (set-file-modes file #o600)
     file))
 
 (defun org-canvas--gitignore-missing-lines (existing)
@@ -201,7 +218,9 @@ If NAME is nil and called interactively, prompt with completion."
       ;; refuse this course's files, since a file that does not mention
       ;; scoping cannot clear it (issue #550).
       (setq org-canvas-write-allowlist nil)
-      (load cred-file nil t)
+      ;; NOSUFFIX t: load the course's .el itself, never a .elc an
+      ;; earlier compile left beside it (issue #631).
+      (load cred-file nil t t)
       ;; Style settings live apart from the token (issue #499).
       (org-canvas-load-course-config dir)
       ;; A token rotated in authinfo for the same host and course would

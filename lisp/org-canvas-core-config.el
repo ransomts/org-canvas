@@ -351,9 +351,45 @@ carries on."
                                what (error-message-string err))
      nil)))
 
+(defun org-canvas--credentials-source-file ()
+  "Return the org-canvas-credentials.el on `load-path', or nil.
+Locate the source file itself, never whatever `require' would choose.
+`require' prefers an up-to-date .elc, and `org-canvas-credentials.elc'
+is a second on-disk copy of the token: one left behind by an earlier
+compile silently overrides edits to the .el, including a rotated token
+and `(setq org-canvas-read-only t)', which also defeats the read-only
+guard (issue #631)."
+  (locate-file "org-canvas-credentials" load-path '(".el")))
+
+(defun org-canvas--load-credentials-file ()
+  "Load the credentials file from `load-path' by its explicit .el path.
+Return the file loaded, `org-canvas-credentials' when it is already
+provided, or nil when there is no such file.  A file that signals is
+reported and the run carries on, as `org-canvas--require-optional' does
+for the menus.
+
+A .elc beside the .el is named and ignored, never loaded: it is a
+second copy of the token, it can be older than the source, and loading
+it would undo an edit made since the compile (issue #631)."
+  (if (featurep 'org-canvas-credentials)
+      'org-canvas-credentials
+    (let ((file (org-canvas--credentials-source-file)))
+      (when file
+        (let ((compiled (concat (file-name-sans-extension file) ".elc")))
+          (when (file-exists-p compiled)
+            (org-canvas--user-message
+             "org-canvas: ignoring byte-compiled %s; loading %s"
+             compiled file)))
+        (condition-case err
+            (progn (load file nil t t) file)
+          (error
+           (org-canvas--user-message "org-canvas: %s unavailable (%s)"
+                                     "the credentials file"
+                                     (error-message-string err))
+           nil))))))
+
 ;; Attempt to load credentials from a separate file if present
-(org-canvas--require-optional 'org-canvas-credentials
-                              "the credentials file")
+(org-canvas--load-credentials-file)
 
 (defconst org-canvas-course-config-file "org-canvas-config.el"
   "Name of a course directory's optional settings file (issue #499).

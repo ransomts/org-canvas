@@ -1,0 +1,19 @@
+* Security
+- #631 The upload step-3 confirmation GET sends the bearer token only to
+  =org-canvas-base-url='s host.  Its =location= comes from the upload
+  host's reply; an off-host one is refused before any request is made,
+  so a misbehaving endpoint no longer receives the token.
+
+* Fixed
+- #631 The credentials file is loaded from its explicit =.el= path, so a
+  stale =org-canvas-credentials.elc= no longer overrides an edited token
+  or =(setq org-canvas-read-only t)=.  The =.elc= is named and ignored,
+  and the setup wizard marks the file =no-byte-compile= so a compile
+  cannot leave a second copy of the token behind.
+- #631 The setup wizard writes =org-canvas-credentials.el= mode =0600=,
+  and warns when an existing copy is readable by group or others.
+
+* Changed
+- #631 The manual now says that activating a course directory loads its
+  =org-canvas-config.el= as Lisp, so a cloned colleague's settings file
+  runs without a prompt; read it before activating.
