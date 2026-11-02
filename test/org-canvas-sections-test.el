@@ -55,196 +55,156 @@
 
 (describe "org-canvas-pull-sections"
   (it "creates new headings from Canvas sections"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            ;; Create empty file
-            (with-temp-file org-file (insert ""))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           [((id . 100) (name . "Section A")
-                             (start_at . "2026-01-15T00:00:00Z")
-                             (end_at . "2026-05-15T00:00:00Z")
-                             (restrict_enrollments_to_section_dates . t))
-                            ((id . 200) (name . "Section B")
-                             (start_at . nil)
-                             (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))])))
-                (org-canvas-pull-sections)
-                (with-current-buffer (find-file-noselect org-file)
-                  ;; Two headings should exist
-                  (goto-char (point-min))
-                  (expect (org-map-entries (lambda () t) "LEVEL=1" 'file)
-                          :to-have-same-items-as '(t t))
-                  ;; First section
-                  (goto-char (point-min))
-                  (re-search-forward "^\\* " nil t)
-                  (org-back-to-heading)
-                  (expect (org-get-heading t t t t) :to-equal "Section A")
-                  (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100")
-                  (expect (org-entry-get (point) "START_AT") :to-match "^<2026-01-15")
-                  (expect (org-entry-get (point) "END_AT") :to-match "^<2026-05-15")
-                  (expect (org-entry-get (point) "RESTRICT_TO_DATES") :to-equal "true")
-                  ;; Per-entry LAST_SYNCED no longer written; the file-level
-                  ;; #+LAST_SYNCED header is written instead
-                  (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
-                  (expect (org-canvas--pull-read-file-header) :to-be-truthy)))))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files '(("sections.org" . nil)))
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     [((id . 100) (name . "Section A")
+                       (start_at . "2026-01-15T00:00:00Z")
+                       (end_at . "2026-05-15T00:00:00Z")
+                       (restrict_enrollments_to_section_dates . t))
+                      ((id . 200) (name . "Section B")
+                       (start_at . nil)
+                       (end_at . nil)
+                       (restrict_enrollments_to_section_dates . :json-false))])))
+          (org-canvas-pull-sections)
+          (with-current-buffer (find-file-noselect org-canvas-sections-file)
+            ;; Two headings should exist
+            (goto-char (point-min))
+            (expect (org-map-entries (lambda () t) "LEVEL=1" 'file)
+                    :to-have-same-items-as '(t t))
+            ;; First section
+            (goto-char (point-min))
+            (re-search-forward "^\\* " nil t)
+            (org-back-to-heading)
+            (expect (org-get-heading t t t t) :to-equal "Section A")
+            (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100")
+            (expect (org-entry-get (point) "START_AT") :to-match "^<2026-01-15")
+            (expect (org-entry-get (point) "END_AT") :to-match "^<2026-05-15")
+            (expect (org-entry-get (point) "RESTRICT_TO_DATES") :to-equal "true")
+            ;; Per-entry LAST_SYNCED no longer written; the file-level
+            ;; #+LAST_SYNCED header is written instead
+            (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
+            (expect (org-canvas--pull-read-file-header) :to-be-truthy))))))
 
   (it "updates properties on existing headings without changing heading name"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            (with-temp-file org-file
-              (insert "* My Custom Name for Section A
-:PROPERTIES:
-:CANVAS_ID: 100
-:RESTRICT_TO_DATES: false
-:END:
-"))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           [((id . 100) (name . "Section A - MWF")
-                             (start_at . "2026-01-15T00:00:00Z")
-                             (end_at . "2026-05-15T00:00:00Z")
-                             (restrict_enrollments_to_section_dates . t))]))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (org-canvas-pull-sections)
-                (with-current-buffer (find-file-noselect org-file)
-                  (goto-char (point-min))
-                  (re-search-forward "^\\* " nil t)
-                  (org-back-to-heading)
-                  ;; Heading name should be preserved
-                  (expect (org-get-heading t t t t)
-                          :to-equal "My Custom Name for Section A")
-                  ;; Properties should be updated
-                  (expect (org-entry-get (point) "RESTRICT_TO_DATES") :to-equal "true")
-                  (expect (org-entry-get (point) "START_AT") :to-match "^<2026-01-15")
-                  (expect (org-entry-get (point) "END_AT") :to-match "^<2026-05-15")
-                  ;; File-level #+LAST_SYNCED header is written instead of
-                  ;; per-entry property
-                  (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
-                  (expect (org-canvas--pull-read-file-header) :to-be-truthy)))))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("sections.org"
+                       "* My Custom Name for Section A\n:PROPERTIES:\n"
+                       ":CANVAS_ID: 100\n:RESTRICT_TO_DATES: false\n:END:\n")))
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     [((id . 100) (name . "Section A - MWF")
+                       (start_at . "2026-01-15T00:00:00Z")
+                       (end_at . "2026-05-15T00:00:00Z")
+                       (restrict_enrollments_to_section_dates . t))]))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-pull-sections)
+          (with-current-buffer (find-file-noselect org-canvas-sections-file)
+            (goto-char (point-min))
+            (re-search-forward "^\\* " nil t)
+            (org-back-to-heading)
+            ;; Heading name should be preserved
+            (expect (org-get-heading t t t t)
+                    :to-equal "My Custom Name for Section A")
+            ;; Properties should be updated
+            (expect (org-entry-get (point) "RESTRICT_TO_DATES") :to-equal "true")
+            (expect (org-entry-get (point) "START_AT") :to-match "^<2026-01-15")
+            (expect (org-entry-get (point) "END_AT") :to-match "^<2026-05-15")
+            ;; File-level #+LAST_SYNCED header is written instead of
+            ;; per-entry property
+            (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
+            (expect (org-canvas--pull-read-file-header) :to-be-truthy))))))
 
   (it "creates new headings for sections not yet in file"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            (with-temp-file org-file
-              (insert "* Existing Section
-:PROPERTIES:
-:CANVAS_ID: 100
-:END:
-"))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           [((id . 100) (name . "Existing Section")
-                             (start_at . nil) (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))
-                            ((id . 200) (name . "New Section")
-                             (start_at . nil) (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))]))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (org-canvas-pull-sections)
-                (with-current-buffer (find-file-noselect org-file)
-                  (let ((headings nil))
-                    (org-map-entries
-                     (lambda ()
-                       (push (org-get-heading t t t t) headings))
-                     "LEVEL=1" 'file)
-                    (expect (length headings) :to-equal 2)
-                    (expect (member "New Section" headings) :to-be-truthy))))))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("sections.org"
+                       "* Existing Section\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n")))
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     [((id . 100) (name . "Existing Section")
+                       (start_at . nil) (end_at . nil)
+                       (restrict_enrollments_to_section_dates . :json-false))
+                      ((id . 200) (name . "New Section")
+                       (start_at . nil) (end_at . nil)
+                       (restrict_enrollments_to_section_dates . :json-false))]))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (org-canvas-pull-sections)
+          (with-current-buffer (find-file-noselect org-canvas-sections-file)
+            (let ((headings nil))
+              (org-map-entries
+               (lambda ()
+                 (push (org-get-heading t t t t) headings))
+               "LEVEL=1" 'file)
+              (expect (length headings) :to-equal 2)
+              (expect (member "New Section" headings) :to-be-truthy)))))))
 
   (it "warns about stale local headings"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file)
-                 (warning-messages nil))
-            (with-temp-file org-file
-              (insert "* Stale Section
-:PROPERTIES:
-:CANVAS_ID: 999
-:END:
-"))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args) []))
-                        ((symbol-function 'message)
-                         (lambda (fmt &rest args)
-                           (push (apply #'format fmt args) warning-messages)))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (org-canvas-pull-sections)
-                (expect (cl-some (lambda (msg)
-                                   (string-match-p "Stale section" msg))
-                                 warning-messages)
-                        :to-be-truthy))))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("sections.org"
+                       "* Stale Section\n:PROPERTIES:\n:CANVAS_ID: 999\n:END:\n")))
+      (let ((warning-messages nil))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args) []))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (push (apply #'format fmt args) warning-messages)))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-pull-sections)
+            (expect (cl-some (lambda (msg)
+                               (string-match-p "Stale section" msg))
+                             warning-messages)
+                    :to-be-truthy))))))
 
   (it "handles empty API response gracefully"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            (with-temp-file org-file (insert ""))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args) [])))
-                (org-canvas-pull-sections)
-                (with-current-buffer (find-file-noselect org-file)
-                  ;; No headings should have been created
-                  (expect (org-map-entries (lambda () t) "LEVEL=1" 'file)
-                          :to-equal nil)))))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files '(("sections.org" . nil)))
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args) [])))
+          (org-canvas-pull-sections)
+          (with-current-buffer (find-file-noselect org-canvas-sections-file)
+            ;; No headings should have been created
+            (expect (org-map-entries (lambda () t) "LEVEL=1" 'file)
+                    :to-equal nil))))))
 
   (it "creates headings from sections that span multiple pages"
     ;; Regression: the previous implementation hard-coded ?per_page=100&page=1,
     ;; silently truncating courses with more than 100 sections.  Verify that a
     ;; section appearing only on page 2 still ends up in sections.org.
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file)
-                 (calls 0))
-            (with-temp-file org-file (insert ""))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           (cl-incf calls)
-                           (pcase calls
-                             (1 (vconcat
-                                 (cl-loop for i from 1 to 100
-                                          collect `((id . ,i)
-                                                    (name . ,(format "Sec %d" i))
-                                                    (start_at . nil) (end_at . nil)
-                                                    (restrict_enrollments_to_section_dates
-                                                     . :json-false)))))
-                             (2 (vector '((id . 999)
-                                          (name . "Page-2 Only Section")
-                                          (start_at . nil) (end_at . nil)
-                                          (restrict_enrollments_to_section_dates
-                                           . :json-false))))
-                             (_ (vector))))))
-                (org-canvas-pull-sections)
-                (expect calls :to-equal 2)
-                (with-current-buffer (find-file-noselect org-file)
-                  (goto-char (point-min))
-                  (let ((found nil))
-                    (org-map-entries
-                     (lambda ()
-                       (when (string= (org-entry-get (point) "CANVAS_ID") "999")
-                         (setq found (org-get-heading t t t t))))
-                     "LEVEL=1" 'file)
-                    (expect found :to-equal "Page-2 Only Section"))))))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files '(("sections.org" . nil)))
+      (let ((calls 0))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       (cl-incf calls)
+                       (pcase calls
+                         (1 (vconcat
+                             (cl-loop for i from 1 to 100
+                                      collect `((id . ,i)
+                                                (name . ,(format "Sec %d" i))
+                                                (start_at . nil) (end_at . nil)
+                                                (restrict_enrollments_to_section_dates
+                                                 . :json-false)))))
+                         (2 (vector '((id . 999)
+                                      (name . "Page-2 Only Section")
+                                      (start_at . nil) (end_at . nil)
+                                      (restrict_enrollments_to_section_dates
+                                       . :json-false))))
+                         (_ (vector))))))
+            (org-canvas-pull-sections)
+            (expect calls :to-equal 2)
+            (with-current-buffer (find-file-noselect org-canvas-sections-file)
+              (goto-char (point-min))
+              (let ((found nil))
+                (org-map-entries
+                 (lambda ()
+                   (when (string= (org-entry-get (point) "CANVAS_ID") "999")
+                     (setq found (org-get-heading t t t t))))
+                 "LEVEL=1" 'file)
+                (expect found :to-equal "Page-2 Only Section"))))))))
 
   (it "creates sections file when it does not exist on disk"
     ;; Regression: a fresh pull where sections.org is missing AND its path
@@ -252,53 +212,42 @@
     ;; from `org-check-agenda-file'.  The pull must pre-create the file
     ;; before `find-file-noselect' so org-mode never sees a non-existent
     ;; agenda file.
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file)
-                 (org-agenda-files (list org-file)))
-            ;; NOTE: do not pre-create the file.
-            (expect (file-exists-p org-file) :to-be nil)
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           [((id . 100) (name . "Section A")
-                             (start_at . nil) (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))]))
-                        ;; Fail loudly if org tries to validate the agenda
-                        ;; file before the pull pre-creates it.
-                        ((symbol-function 'org-check-agenda-file)
-                         (lambda (file)
-                           (unless (file-exists-p file)
-                             (error "org-check-agenda-file fired on missing file: %s"
-                                    file)))))
-                (org-canvas-pull-sections)
-                (expect (file-exists-p org-file) :to-be-truthy)
-                (with-current-buffer (find-file-noselect org-file)
-                  (goto-char (point-min))
-                  (re-search-forward "^\\* " nil t)
-                  (org-back-to-heading)
-                  (expect (org-entry-get (point) "CANVAS_ID")
-                          :to-equal "100")))))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files nil)
+      (let ((org-agenda-files (list org-canvas-sections-file)))
+        ;; NOTE: do not pre-create the file.
+        (expect (file-exists-p org-canvas-sections-file) :to-be nil)
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       [((id . 100) (name . "Section A")
+                         (start_at . nil) (end_at . nil)
+                         (restrict_enrollments_to_section_dates . :json-false))]))
+                    ;; Fail loudly if org tries to validate the agenda
+                    ;; file before the pull pre-creates it.
+                    ((symbol-function 'org-check-agenda-file)
+                     (lambda (file)
+                       (unless (file-exists-p file)
+                         (error "org-check-agenda-file fired on missing file: %s"
+                                file)))))
+            (org-canvas-pull-sections)
+            (expect (file-exists-p org-canvas-sections-file) :to-be-truthy)
+            (with-current-buffer (find-file-noselect org-canvas-sections-file)
+              (goto-char (point-min))
+              (re-search-forward "^\\* " nil t)
+              (org-back-to-heading)
+              (expect (org-entry-get (point) "CANVAS_ID")
+                      :to-equal "100")))))))
 
   (it "aborts when user declines overwrite of existing file"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            (with-temp-file org-file
-              (insert "* Existing Section\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
-            ;; `noninteractive' is t under the test runner and now skips
-            ;; the prompt (issue #34); bind it off to test the decline.
-            (with-sync-test-env
-              (let ((noninteractive nil))
-                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-                  (expect (org-canvas-pull-sections) :to-throw 'user-error)))))
-        (let ((buf (find-buffer-visiting
-                    (expand-file-name "sections.org" temp-dir))))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("sections.org"
+                       "* Existing Section\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n")))
+      ;; `noninteractive' is t under the test runner and now skips
+      ;; the prompt (issue #34); bind it off to test the decline.
+      (with-sync-test-env
+        (let ((noninteractive nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+            (expect (org-canvas-pull-sections) :to-throw 'user-error))))))
 
   (it "errors when sections file directory does not exist"
     (let ((org-canvas-sections-file "/nonexistent/dir/sections.org"))
@@ -306,46 +255,36 @@
         (expect (org-canvas-pull-sections) :to-throw 'error))))
 
   (it "sets RESTRICT_TO_DATES to false for non-true values"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            (with-temp-file org-file (insert ""))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           [((id . 100) (name . "Test")
-                             (start_at . nil) (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))])))
-                (org-canvas-pull-sections)
-                (with-current-buffer (find-file-noselect org-file)
-                  (goto-char (point-min))
-                  (re-search-forward "^\\* " nil t)
-                  (org-back-to-heading)
-                  (expect (org-entry-get (point) "RESTRICT_TO_DATES")
-                          :to-equal "false")))))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files '(("sections.org" . nil)))
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     [((id . 100) (name . "Test")
+                       (start_at . nil) (end_at . nil)
+                       (restrict_enrollments_to_section_dates . :json-false))])))
+          (org-canvas-pull-sections)
+          (with-current-buffer (find-file-noselect org-canvas-sections-file)
+            (goto-char (point-min))
+            (re-search-forward "^\\* " nil t)
+            (org-back-to-heading)
+            (expect (org-entry-get (point) "RESTRICT_TO_DATES")
+                    :to-equal "false"))))))
 
   (it "skips nil timestamps without setting properties"
-    (let ((temp-dir (make-temp-file "sections-pull" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "sections.org" temp-dir))
-                 (org-canvas-sections-file org-file))
-            (with-temp-file org-file (insert ""))
-            (with-sync-test-env
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           [((id . 100) (name . "No Dates")
-                             (start_at . nil) (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))])))
-                (org-canvas-pull-sections)
-                (with-current-buffer (find-file-noselect org-file)
-                  (goto-char (point-min))
-                  (re-search-forward "^\\* " nil t)
-                  (org-back-to-heading)
-                  (expect (org-entry-get (point) "START_AT") :to-be nil)
-                  (expect (org-entry-get (point) "END_AT") :to-be nil)))))
-        (delete-directory temp-dir t)))))
+    (with-test-course (dir :files '(("sections.org" . nil)))
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     [((id . 100) (name . "No Dates")
+                       (start_at . nil) (end_at . nil)
+                       (restrict_enrollments_to_section_dates . :json-false))])))
+          (org-canvas-pull-sections)
+          (with-current-buffer (find-file-noselect org-canvas-sections-file)
+            (goto-char (point-min))
+            (re-search-forward "^\\* " nil t)
+            (org-back-to-heading)
+            (expect (org-entry-get (point) "START_AT") :to-be nil)
+            (expect (org-entry-get (point) "END_AT") :to-be nil)))))))
 
 ;;;; ================================================================
 ;;;; Override Tests
