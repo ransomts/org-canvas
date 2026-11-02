@@ -1,0 +1,8 @@
+* Changed
+- #574 The sixth fixture slice moves the pull specs' course fixtures
+  onto =with-test-course=: the file-header, file-id cache and unknown-file
+  rewrite specs used to make a private temp file or directory, write one
+  =pages.org= or =files.org= into it and delete it in an =unwind-protect=.
+  They now name that file once and let the shared fixture write it,
+  bind every course file variable and clean up the directory and its
+  buffers.  No spec's assertions or request counts changed.
