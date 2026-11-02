@@ -116,78 +116,42 @@ lisp/
 
 ## 4-Stage Pipeline Pattern
 
-Every feature module follows this consistent pattern:
+Every feature module follows one pattern: **parse** (`--{feature}-parse-entry`) reads
+Org properties, **build** (`--{feature}-build-payload`) makes the Canvas payload,
+**execute** (`--{feature}-push-to-api`) sends it with timeout recovery, and
+**finalize** (`--{feature}-finalize`) stamps the sync state. The macros generate
+all four — design.org, "The 4-Stage Pipeline"; module-developer-guide.org, Step 2
+onward builds one module by hand.
 
-1. **Parse** (`org-canvas--{feature}-parse-entry`) - Extract data from Org heading properties
-2. **Build Payload** (`org-canvas--{feature}-build-payload`) - Convert to Canvas API format
-3. **Execute** (`org-canvas--{feature}-push-to-api`) - Call API with timeout recovery
-4. **Finalize** (`org-canvas--{feature}-finalize`) - Save CANVAS_ID and LAST_SYNCED to Org file
+## Shared Infrastructure
 
-## Shared Infrastructure (one example each)
-
-Option lists, generated names and the reasoning are in `documentation/architecture/module-developer-guide.org` (step by step) and `design.org` (why). These are the real calls from announcements.el and pages.el.
-
-```elisp
-;; Feature registry (core-config): drift check, duplicate guard, diff, prune, pull-at-point.
-;; Must precede the module's org-canvas-define-sync (api-interaction.org, "Feature Registry URL Resolution").
-(org-canvas-register-feature
- :name "Announcements" :endpoint "discussion_topics"
- :file-var 'org-canvas-announcements-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'title
- :list-params '(("only_announcements" . "true")))
-
-;; The property half of the same entry (core-config): one declaration feeds
-;; parse, validate, diff and the manual.  Any spelling of the name lands on the
-;; entry above, and code asks org-canvas--feature-is-p, never the display name.
-(org-canvas-register-properties "announcements"
-  :label "Announcements" :file-var 'org-canvas-announcements-file
-  :query "LEVEL=1"                       ; MUST match the sync's heading level
-  :body-api-key "message"                ; lets org-canvas-diff compare bodies
-  :properties
-  `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
-     :api-key "published" :boolean-json t)))
-
-;; Declarative parse (core-macros): generates read-props / transform-props / parse-entry
-(org-canvas-define-parse announcement
-  :body :message
-  :properties (("PUBLISHED" :published :type boolean :default t)
-               ("DELAYED_POST_AT" :delayed_post_at :type timestamp)))
-
-;; Declarative payload from the registry (core-macros)
-(org-canvas-define-payload group-category
-  :registry-key "group-categories" :format alist :title-key :title :title-api-key name)
-
-;; Sync pipeline (core-sync): generates org-canvas-sync-announcements and -at-point
-(org-canvas-define-sync announcements
-  :file org-canvas-announcements-file
-  :parse #'org-canvas--announcement-parse-entry
-  :build #'org-canvas--announcement-build-payload
-  :endpoint "discussion_topics"          ; auto push/finalize; :push/:finalize override
-  :pull-item-fn #'org-canvas--announcement-pull-item)   ; enables "pull" in the conflict prompt
-;; :hash-extra is REQUIRED for a module whose children sync inside finalize (modules, quizzes,
-;; new-quizzes) — design.org, "Macro Options for Child State".
-
-;; Delete-all + prune, and delete-at-point (core-delete)
-(org-canvas-define-delete-all pages
-  :endpoint "pages" :file org-canvas-pages-file
-  :id-field 'url :id-property "CANVAS_URL"
-  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
-(org-canvas-define-delete-at-point page :endpoint "pages/%s")
-```
-
-Registry keys that bite: `:remote-fn` when Canvas returns a value nested or renamed (without it every item reports drift), `:compare-p` to exclude a property for an entry, `:query` matching the heading level, `:modified-field` for features whose `updated_at` moves on metadata touches (files use `modified_at`), `:web-pages` naming where a heading lives in the Canvas web interface (`org-canvas-register-web-pages` for a file with no feature entry, #292; `org-canvas-register-pull-feature` likewise gives such a file pull-at-point and adopt-at-point, #297, and with `:drift-report` a section of the drift report, #313), `:list-params` and `:item-params` when a read needs a query parameter to answer what Org holds (assignments read with `override_assignment_dates=false`, or one student's extension comes back as the assignment's own dates, #273) — design.org, "One Registry Entry per Feature"; api-interaction.org, "Feature Registry URL Resolution"; decisions.org, "Assignment Reads Ask for the Assignment's Own Dates".
-
-Modules using `org-canvas-define-parse`: announcements, pages, calendar, group-categories, assignment-groups. Using `org-canvas-define-payload`: group-categories, calendar, pages, announcements, grading-schemes. Custom push (non-standard URLs): group-categories, calendar; custom push because Canvas has no update (grading-schemes: a stamped scheme is compared and skipped, never PUT). Custom sync loops (not macro-based): overrides, quiz accommodations (a table under each quiz reconciled against the quiz's submissions; values are absolute, zeros clear), and the child reconcilers inside quizzes, new-quizzes and modules — see Hard Rule 1. Two levels of one file (outcomes): one `org-canvas-define-sync` per level, the second naming the first with `:first`, and `:prepare` for a value the run fetches once (the root group). A push that owns its change detection (files, whose stored hash is bytes and metadata in two halves): `:hash push` keeps the runner from skipping on or stamping PAYLOAD_HASH, the push answers `skip` when nothing is to send, and `:dry-run push` lets it preview its own tiers under a dry run. Pull-only: sections, grading-periods.
+Each piece has one canonical declaration and one example in
+module-developer-guide.org: the feature registry (`org-canvas-register-feature`),
+its property half (`org-canvas-register-properties`), the declarative parse and
+payload macros, `org-canvas-define-sync`, and the delete macros. The reasoning
+for each registry key — `:remote-fn`, `:compare-p`, `:query`, `:modified-field`,
+`:web-pages`, `:list-params`/`:item-params`, `:canvas-owned`, `:pull-only` — is
+design.org, "One Registry Entry per Feature" and the decisions headings it names.
+Which modules use which macro is design.org, "Which Modules Use What".
 
 ## The Run Context
 
-One sync run owns one context plist (`org-canvas--sync-make-ctx`, keys in `org-canvas--sync-ctx-keys`): the remote snapshot, the pipeline functions, the counters, and every flag or list the run sets for itself — the capital answers at conflict and duplicate prompts, the module's pull function, the ids modules moved and files changed. It is threaded, never global, so nothing a run decides can reach the next one (#72, #141). Push, finalize and `:post-fn` take it as an optional last argument; `org-canvas--sync-run-pipeline` returns it, which is how the master sync gets the module items left pending. Add a key to `org-canvas--sync-ctx-keys` before using it, or `plist-put` has nothing to mutate in place. Reads go through `org-canvas--ctx-get` and pushes through `org-canvas--ctx-push`, both of which signal on a key the list does not declare: a typo names itself rather than reading nil.
-
-What stays dynamically bound is the *caller's* seam, set around a command by whoever invokes it: `org-canvas--dry-run`, `org-canvas-conflict-strategy`, `org-canvas--file-force-upload`, `org-canvas--inhibit-log-clear`, and the master sync's aggregates.
+One run owns one context plist (`org-canvas--sync-make-ctx`, keys in
+`org-canvas--sync-ctx-keys`): the remote snapshot, the pipeline functions, the
+counters, and every flag or list the run sets for itself. It is threaded, never
+global, so nothing a run decides can reach the next one (#72, #141); a new key
+must be in `org-canvas--sync-ctx-keys` first. What stays dynamically bound is the
+*caller's* seam around a command (`org-canvas--dry-run`,
+`org-canvas-conflict-strategy`, `org-canvas--file-force-upload`,
+`org-canvas--inhibit-log-clear`) — design.org, "The Run Context".
 
 ## Sync State
 
-`CANVAS_ID` present → UPDATE (PUT); absent → CREATE (POST). Finalize also stamps `LAST_SYNCED`, `CANVAS_UPDATED_AT` (the conflict baseline, Canvas's clock) and the sync runner stores `PAYLOAD_HASH` (skip optimization). Write them with `org-canvas-org-save-sync-state`; pull paths drop `PAYLOAD_HASH` and restamp `CANVAS_UPDATED_AT` via `org-canvas--conflict-pull-local` — by hand, the entry re-flags as drifted forever while looking clean.
+`CANVAS_ID` present → UPDATE (PUT); absent → CREATE (POST). Finalize stamps
+`LAST_SYNCED` and `CANVAS_UPDATED_AT`; the runner stores `PAYLOAD_HASH` for the
+skip. Write them with `org-canvas-org-save-sync-state`, and let a pull restamp
+through `org-canvas--conflict-pull-local` — the table, the reasons and the state
+machine are design.org, "Sync State Properties".
 
 ## Where the Narratives Live
 
@@ -225,6 +189,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - plz and the PATCH fallback (#13)
 - quiz questions API
 - read-only courses (#163)
+- a reply is parsed JSON, so a JSON array is a vector and an empty one is not nil (#153)
 - redaction reaches the user and never a backtrace (#154, #178)
 - the conflict sequence: who moves a heading's baseline and when
 - the shape of an error datum (#152)
