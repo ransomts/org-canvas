@@ -190,18 +190,16 @@
 
 (describe "org-canvas--save-buffer"
   (it "saves the buffer and logs the file path"
-    (let* ((tmp-file (make-temp-file "org-canvas-save-" nil ".org"))
-           (logged nil))
-      (unwind-protect
-          (cl-letf (((symbol-function 'org-canvas--log-info)
-                     (lambda (_logger fmt &rest args)
-                       (setq logged (apply #'format fmt args)))))
-            (with-current-buffer (find-file-noselect tmp-file)
-              (insert "* heading\n")
-              (org-canvas--save-buffer)
-              (kill-buffer))
-            (expect logged :to-equal (format "[Saved] %s" tmp-file)))
-        (delete-file tmp-file))))
+    (with-test-course (dir :files '(("pages.org" . nil)))
+      (let ((logged nil))
+        (cl-letf (((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args)
+                     (setq logged (apply #'format fmt args)))))
+          (with-current-buffer (find-file-noselect org-canvas-pages-file)
+            (insert "* heading\n")
+            (org-canvas--save-buffer)
+            (kill-buffer))
+          (expect logged :to-equal (format "[Saved] %s" org-canvas-pages-file))))))
 
   (it "skips the log when the buffer has no associated file"
     (let ((logged nil))
@@ -215,20 +213,18 @@
         (expect logged :to-be nil))))
 
   (it "is a no-op on an unmodified buffer (no duplicate [Saved] lines)"
-    (let ((tmp-file (make-temp-file "org-canvas-save-" nil ".org"))
-          (logged nil))
-      (unwind-protect
-          (cl-letf (((symbol-function 'org-canvas--log-info)
-                     (lambda (_logger fmt &rest args)
-                       (push (apply #'format fmt args) logged))))
-            (with-current-buffer (find-file-noselect tmp-file)
-              (insert "* heading\n")
-              (org-canvas--save-buffer)
-              ;; Completion-time safety save: buffer unmodified, no write
-              (org-canvas--save-buffer)
-              (kill-buffer))
-            (expect (length logged) :to-equal 1))
-        (delete-file tmp-file)))))
+    (with-test-course (dir :files '(("pages.org" . nil)))
+      (let ((logged nil))
+        (cl-letf (((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) logged))))
+          (with-current-buffer (find-file-noselect org-canvas-pages-file)
+            (insert "* heading\n")
+            (org-canvas--save-buffer)
+            ;; Completion-time safety save: buffer unmodified, no write
+            (org-canvas--save-buffer)
+            (kill-buffer))
+          (expect (length logged) :to-equal 1))))))
 
 (describe "org-canvas-org-save-sync-state"
   (it "saves CANVAS_ID but not per-entry LAST_SYNCED"
@@ -448,19 +444,14 @@ Body text only.
 
 (describe "org-canvas--resolve-link-property"
   (it "resolves link to property value"
-    (let* ((dir (make-temp-file "resolve-test-" t))
-           (groups-file (expand-file-name "assignment-groups.org" dir))
-           (source-file (expand-file-name "quizzes.org" dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file groups-file
-              (insert "* Exams\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
-            (with-temp-file source-file (insert ""))
-            (expect (org-canvas--resolve-link-property
-                     "[[file:assignment-groups.org::*Exams][Exams]]"
-                     "CANVAS_ID" source-file)
-                    :to-equal "42"))
-        (delete-directory dir t))))
+    (with-test-course
+        (dir :files '(("assignment-groups.org"
+                       "* Exams\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n")
+                      ("quizzes.org" . nil)))
+      (expect (org-canvas--resolve-link-property
+               "[[file:assignment-groups.org::*Exams][Exams]]"
+               "CANVAS_ID" org-canvas-quizzes-file)
+              :to-equal "42")))
 
   (it "returns nil for nil link"
     (expect (org-canvas--resolve-link-property nil "CANVAS_ID" "/tmp/dummy.org")
@@ -471,45 +462,37 @@ Body text only.
             :to-be nil))
 
   (it "returns nil when heading not found"
-    (let* ((dir (make-temp-file "resolve-test-" t))
-           (groups-file (expand-file-name "assignment-groups.org" dir))
-           (source-file (expand-file-name "source.org" dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file groups-file
-              (insert "* Other Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
-            (with-temp-file source-file (insert ""))
-            (expect (org-canvas--resolve-link-property
-                     "[[file:assignment-groups.org::*Nonexistent][Nonexistent]]"
-                     "CANVAS_ID" source-file)
-                    :to-be nil))
-        (delete-directory dir t))))
+    (with-test-course
+        (dir :files '(("assignment-groups.org"
+                       "* Other Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n")
+                      ("source.org" . nil)))
+      (expect (org-canvas--resolve-link-property
+               "[[file:assignment-groups.org::*Nonexistent][Nonexistent]]"
+               "CANVAS_ID" (expand-file-name "source.org" dir))
+              :to-be nil)))
 
   (it "resolves correct heading among multiple headings"
-    (let* ((dir (make-temp-file "resolve-test-" t))
-           (groups-file (expand-file-name "assignment-groups.org" dir))
-           (source-file (expand-file-name "assignments.org" dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file groups-file
-              (insert "* Homework\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n\n* Labs\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n\n* Exams\n:PROPERTIES:\n:CANVAS_ID: 300\n:END:\n"))
-            (with-temp-file source-file (insert ""))
-            ;; Should resolve to the second heading's ID, not the first or last
-            (expect (org-canvas--resolve-link-property
-                     "[[file:assignment-groups.org::*Labs][Labs]]"
-                     "CANVAS_ID" source-file)
-                    :to-equal "200")
-            ;; Should resolve to the third heading's ID
-            (expect (org-canvas--resolve-link-property
-                     "[[file:assignment-groups.org::*Exams][Exams]]"
-                     "CANVAS_ID" source-file)
-                    :to-equal "300")
-            ;; Should resolve to the first heading's ID
-            (expect (org-canvas--resolve-link-property
-                     "[[file:assignment-groups.org::*Homework][Homework]]"
-                     "CANVAS_ID" source-file)
-                    :to-equal "100"))
-        (delete-directory dir t)))))
+    (with-test-course
+        (dir :files '(("assignment-groups.org"
+                       "* Homework\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n\n"
+                       "* Labs\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n\n"
+                       "* Exams\n:PROPERTIES:\n:CANVAS_ID: 300\n:END:\n")
+                      ("assignments.org" . nil)))
+      ;; Should resolve to the second heading's ID, not the first or last
+      (expect (org-canvas--resolve-link-property
+               "[[file:assignment-groups.org::*Labs][Labs]]"
+               "CANVAS_ID" org-canvas-assignments-file)
+              :to-equal "200")
+      ;; Should resolve to the third heading's ID
+      (expect (org-canvas--resolve-link-property
+               "[[file:assignment-groups.org::*Exams][Exams]]"
+               "CANVAS_ID" org-canvas-assignments-file)
+              :to-equal "300")
+      ;; Should resolve to the first heading's ID
+      (expect (org-canvas--resolve-link-property
+               "[[file:assignment-groups.org::*Homework][Homework]]"
+               "CANVAS_ID" org-canvas-assignments-file)
+              :to-equal "100")))
 
 ;;;; Cross-file Link Resolution Tests
 
@@ -540,34 +523,24 @@ Body text only.
 
 (describe "org-canvas--resolve-link-property bracket escaping"
   (it "resolves heading with escaped brackets"
-    (let* ((dir (make-temp-file "resolve-test-" t))
-           (target-file (expand-file-name "rubrics.org" dir))
-           (source-file (expand-file-name "assignments.org" dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file target-file
-              (insert "* Criterion [Advanced]\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"))
-            (with-temp-file source-file (insert ""))
-            (expect (org-canvas--resolve-link-property
-                     "[[file:rubrics.org::*Criterion \\[Advanced\\]][Criterion [Advanced]]]"
-                     "CANVAS_ID" source-file)
-                    :to-equal "55"))
-        (delete-directory dir t))))
+    (with-test-course
+        (dir :files '(("rubrics.org"
+                       "* Criterion [Advanced]\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n")
+                      ("assignments.org" . nil)))
+      (expect (org-canvas--resolve-link-property
+               "[[file:rubrics.org::*Criterion \\[Advanced\\]][Criterion [Advanced]]]"
+               "CANVAS_ID" org-canvas-assignments-file)
+              :to-equal "55")))
 
   (it "still resolves headings without brackets"
-    (let* ((dir (make-temp-file "resolve-test-" t))
-           (target-file (expand-file-name "rubrics.org" dir))
-           (source-file (expand-file-name "assignments.org" dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file target-file
-              (insert "* Simple Rubric\n:PROPERTIES:\n:CANVAS_ID: 10\n:END:\n"))
-            (with-temp-file source-file (insert ""))
-            (expect (org-canvas--resolve-link-property
-                     "[[file:rubrics.org::*Simple Rubric][Simple Rubric]]"
-                     "CANVAS_ID" source-file)
-                    :to-equal "10"))
-        (delete-directory dir t)))))
+    (with-test-course
+        (dir :files '(("rubrics.org"
+                       "* Simple Rubric\n:PROPERTIES:\n:CANVAS_ID: 10\n:END:\n")
+                      ("assignments.org" . nil)))
+      (expect (org-canvas--resolve-link-property
+               "[[file:rubrics.org::*Simple Rubric][Simple Rubric]]"
+               "CANVAS_ID" org-canvas-assignments-file)
+              :to-equal "10")))))
 
 ;;;; 38. org-canvas--safe-string-to-number
 
