@@ -829,6 +829,126 @@ Just a description, no override table.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Reading the course's overrides once (issue #635)
+;;
+;; The reconcile used to GET assignments/N/overrides once per table.  The
+;; assignments list already carries `include[]=overrides', so one list read
+;; per run answers every table and the per-assignment GET disappears.
+
+(describe "org-canvas--override-fetch-course-cache (issue #635)"
+  (it "maps every assignment id to the overrides the list carries"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &rest _)
+                   (vector
+                    '((id . 1)
+                      (overrides . [((id . 10) (course_section_id . 7))]))
+                    '((id . 2) (overrides . []))
+                    '((id . 3))))))
+        (let ((cache (org-canvas--override-fetch-course-cache)))
+          (expect (gethash "1" cache) :to-equal
+                  '(((id . 10) (course_section_id . 7))))
+          (expect (gethash "2" cache) :to-be nil)
+          (expect (gethash "3" cache) :to-be nil)
+          (expect (hash-table-count cache) :to-equal 3)))))
+
+  (it "answers nil when the one request fails, leaving per-assignment reads"
+    (with-org-canvas-test-config
+      (spy-on 'org-canvas--log-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (signal 'error '("HTTP 500")))))
+        (expect (org-canvas--override-fetch-course-cache) :to-be nil))
+      (expect (spy-calls-count 'org-canvas--log-warning) :to-be-greater-than 0))))
+
+(describe "org-canvas--override-fetch-existing course-wide cache (issue #635)"
+  (it "answers from this run's map without a per-assignment request"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   (error "Should not read one assignment's overrides"))))
+        (let ((org-canvas--override-course-cache
+               (let ((table (make-hash-table :test 'equal)))
+                 (puthash "42" '(((id . 1))) table)
+                 table)))
+          (expect (org-canvas--override-fetch-existing "ignored" "42")
+                  :to-equal '(((id . 1))))))))
+
+  (it "reads the course once for repeated lookups while unfetched"
+    (let ((reads 0))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _)
+                     (setq reads (1+ reads))
+                     (vector '((id . 7) (overrides . []))))))
+          (let ((org-canvas--override-course-cache :unfetched))
+            (org-canvas--override-fetch-existing "endpoint" "7")
+            (org-canvas--override-fetch-existing "endpoint" "7")
+            (expect reads :to-equal 1))))))
+
+  (it "falls back to the assignment's own endpoint without a run map"
+    (let ((read nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _)
+                     (setq read url)
+                     nil)))
+          (let ((org-canvas--override-course-cache nil))
+            (org-canvas--override-fetch-existing
+             (org-canvas-api-course-endpoint "assignments/%s/overrides" "42")
+             "42")
+            (expect read :to-match "/assignments/42/overrides")))))))
+
+(describe "org-canvas-sync-overrides reads the course once (issue #635)"
+  (it "makes one list request and no per-assignment override request"
+    (let* ((dir (make-temp-file "ovr-cache-" t))
+           (assignments-file (expand-file-name "assignments.org" dir))
+           (list-reads 0)
+           (per-assignment-reads 0))
+      (unwind-protect
+          (progn
+            (with-temp-file assignments-file
+              (insert "* First
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+
+#+NAME: overrides
+| Section | Due At |
+|---------+--------|
+| S1      | <2026-10-19 Mon 23:59> |
+
+* Second
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+
+#+NAME: overrides
+| Section | Due At |
+|---------+--------|
+| S1      | <2026-10-20 Tue 23:59> |
+"))
+            (let ((org-canvas-assignments-file assignments-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (_method url &rest _)
+                               (if (string-match-p "/overrides\\'" url)
+                                   (setq per-assignment-reads
+                                         (1+ per-assignment-reads))
+                                 (setq list-reads (1+ list-reads)))
+                               nil))
+                            ((symbol-function 'org-canvas--override-parse-table)
+                             (lambda (&rest _) nil))
+                            ((symbol-function 'message) #'ignore))
+                    (org-canvas-sync-overrides))))))
+        (let ((buf (find-buffer-visiting assignments-file)))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+        (delete-directory dir t))
+      (expect list-reads :to-equal 1)
+      (expect per-assignment-reads :to-equal 0))))
+
 ;;;; Override Sync Preflight Tests
 
 (describe "org-canvas--override-sync-preflight"

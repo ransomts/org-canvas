@@ -29,7 +29,25 @@
             (expect assignments-pos :to-be-less-than modules-pos))
           ;; modules should be last
           (expect (car (last call-order)) :to-equal 'modules)
-          ;; assignment-groups called twice (first pass and re-sync)
+          ;; assignment-groups once: the first pass deferred nothing, so
+          ;; the drop-rule re-sync has nothing to do (issue #635).
+          (expect (cl-count 'assignment-groups call-order) :to-equal 1)))))
+
+  (it "re-syncs assignment groups when the first pass deferred a drop rule"
+    ;; Canvas rejects a drop rule on a group that holds no assignments,
+    ;; so a deferral is what the Tier 1.5 pass exists for (issue #635).
+    (let ((call-order nil))
+      (with-sync-test-env
+        (with-mocked-sync-fns
+            (:record call-order
+             :overrides
+             ((assignment-groups
+               . (lambda ()
+                   (push 'assignment-groups call-order)
+                   (list :counters (list :success 0 :skip 0 :fail 0
+                                         :deferred 1))))))
+          (org-canvas-sync)
+          (setq call-order (nreverse call-order))
           (expect (cl-count 'assignment-groups call-order) :to-equal 2)))))
 
   (it "emits tier progress messages during sync"

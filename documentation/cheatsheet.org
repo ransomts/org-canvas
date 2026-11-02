@@ -337,7 +337,8 @@ Tier 0:    outcomes, rubrics, assignment-groups (phase 1, no drop rules),
            group-categories, sections (pull), grading-periods (pull),
            files, pages, discussions, announcements, calendar
 Tier 1:    quizzes, new-quizzes, assignments
-Tier 1.5:  assignment-groups (phase 2, with drop rules)
+Tier 1.5:  assignment-groups (phase 2, with drop rules; skipped when
+           phase 1 deferred nothing)
 Tier 1.75: overrides, quiz accommodations
 Tier 2:    modules
 #+end_example

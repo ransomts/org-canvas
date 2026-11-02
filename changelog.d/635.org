@@ -1,0 +1,8 @@
+* Changed
+- #635 A sync no longer reads what it does not need.  The Assignment
+  Groups re-sync at Tier 1.5 is skipped when the first pass deferred no
+  drop rule, since there is nothing left for it to apply.  The override
+  sync reads every assignment's overrides in one =assignments?include[]=overrides=
+  request instead of one =assignments/N/overrides= GET per table.
+  Both changes leave the result identical; a sync of a large course
+  makes fewer requests and finishes sooner.
