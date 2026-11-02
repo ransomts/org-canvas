@@ -767,7 +767,7 @@ The =org-canvas-sync= function syncs files in proper dependency order:
 18. Per-section overrides and quiz accommodations (Tier 1.75)
 19. =modules.org= (Tier 2)
 
-*Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments. Per-section overrides require both sections and assignments/quizzes to exist.
+*Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments; the second pass is skipped when the first deferred nothing. Per-section overrides require both sections and assignments/quizzes to exist.
 
 * File Formats
 

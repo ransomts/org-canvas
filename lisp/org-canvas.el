@@ -265,6 +265,22 @@ returns — the run context for a pipeline sync — or nil when it failed."
   "Return a comma-separated string of labels in TIER."
   (mapconcat #'cadr tier ", "))
 
+(defun org-canvas--tier-skippable-p (tier results)
+  "Return non-nil when TIER has nothing left to do given RESULTS.
+Run Assignment Groups a second time only because Canvas rejects a
+drop rule on a group that holds no assignments yet: the
+first pass defers such a group and the second applies the rule once
+Assignments has filled it.  When the first pass deferred nothing there
+is nothing for the second to do, so skipping it saves a list read and
+an unmanaged-group read without changing the outcome (issue #635).
+RESULTS is what `org-canvas--run-tier' returned for the earlier tiers."
+  (and (equal (mapcar #'car tier) '(org-canvas-sync-assignment-groups))
+       (let ((ctx (alist-get 'org-canvas-sync-assignment-groups results)))
+         (zerop (or (and ctx
+                         (plist-get (org-canvas--ctx-get ctx :counters)
+                                    :deferred))
+                    0)))))
+
 (defun org-canvas--run-tier (tier wrapper-fn)
   "Run each (FUNCTION LABEL) entry in TIER through WRAPPER-FN.
 Returns an alist of FUNCTION to what WRAPPER-FN returned for it, so
@@ -351,11 +367,18 @@ and :deferred, so a batch caller can set its exit status."
     ;; Tiers 1 through 2
     (let ((tier-num 1))
       (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
-        (org-canvas--log-info org-canvas--logger "--- Tier %s: %s ---"
-          (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2"))
-          (org-canvas--tier-description tier))
-        (message "Syncing: %s..." (org-canvas--tier-description tier))
-        (setq results (append results (org-canvas--run-tier tier #'org-canvas--safe-sync)))
+        (let ((label (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2"))))
+          (if (org-canvas--tier-skippable-p tier results)
+              (progn
+                (org-canvas--log-info org-canvas--logger
+                  "--- Tier %s: %s (skipped — the first pass deferred nothing) ---"
+                  label (org-canvas--tier-description tier))
+                (message "Skipping: %s (nothing deferred)..." (org-canvas--tier-description tier)))
+            (org-canvas--log-info org-canvas--logger "--- Tier %s: %s ---"
+              label (org-canvas--tier-description tier))
+            (message "Syncing: %s..." (org-canvas--tier-description tier))
+            (setq results (append results
+                                  (org-canvas--run-tier tier #'org-canvas--safe-sync)))))
         (setq tier-num (1+ tier-num))))
     ;; Heal module items skipped earlier whose targets have IDs by now;
     ;; the modules run left them in its context.

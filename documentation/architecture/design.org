@@ -720,6 +720,12 @@ assignment group that has no assignments yet. The solution:
 The build-payload function checks whether it's a create or update and
 includes rules only on update.
 
+The Tier 1.5 pass runs only when Tier 0 deferred something; a course
+whose groups already hold their assignments defers nothing, so the
+second pass would re-read and re-send the same groups for no change.
+Skipping it saves two list reads and the unmanaged-group check without
+changing the outcome (issue #635).
+
 Canvas rejects drop rules (e.g., =drop_lowest=) when creating a new assignment group that has no assignments yet:
 
 #+begin_example

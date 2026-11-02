@@ -864,18 +864,68 @@ returns."
         'unchanged)
     (org-canvas--override-push-one endpoint override existing-override)))
 
-(defun org-canvas--override-fetch-existing (endpoint assignment-id)
-  "Return the overrides on Canvas at ENDPOINT for ASSIGNMENT-ID, as a list.
-A failed read is warned about and answered with nil: without the
-existing overrides, reconcile treats the remote as empty and
-re-creates everything, so the user should know."
+(defvar org-canvas--override-course-cache nil
+  "Course-wide overrides the current override sync has read, if any.
+Bound by `org-canvas-sync-overrides' to `:unfetched', then replaced on
+first use by a hash table from assignment id to the overrides Canvas
+holds for it.  Nil elsewhere — a push of one heading, say — when each
+assignment reads its own overrides (issue #635).")
+
+(defun org-canvas--override-fetch-course-cache ()
+  "Read every assignment's overrides in one list request.
+Return a hash table from assignment id, as a string, to its overrides
+list, or nil when the read is not possible.  The assignments list
+carries `include[]=overrides', so one request replaces the
+per-assignment `assignments/N/overrides' GETs the reconcile would
+otherwise make (issue #635).  A failure warns and answers nil, leaving
+each assignment to read its own overrides as before."
   (condition-case err
-      (append (org-canvas-api-request-all-pages 'GET endpoint) nil)
+      (let ((feature (org-canvas--registry-find-feature "Assignments")))
+        (when feature
+          (let ((table (make-hash-table :test 'equal)))
+            (dolist (item (append
+                           (org-canvas-api-request-all-pages
+                            'GET (org-canvas--feature-list-url feature)
+                            (append (org-canvas--feature-list-params feature)
+                                    '(("include[]" . "overrides"))))
+                           nil))
+              (puthash (format "%s" (alist-get 'id item))
+                       (append (alist-get 'overrides item) nil)
+                       table))
+            table)))
     (error
      (org-canvas--log-warning org-canvas--logger
-       "[Sections] Failed to fetch existing overrides for assignment %s (%s); treating remote as empty"
-       assignment-id (error-message-string err))
+       "[Sections] Could not read every assignment's overrides in one request (%s); reading them one assignment at a time"
+       (error-message-string err))
      nil)))
+
+(defun org-canvas--override-course-cache-get ()
+  "Return this run's course-wide overrides map, reading it once.
+Nil outside `org-canvas-sync-overrides' and when the read failed; the
+caller then reads the one assignment's overrides instead."
+  (when (eq org-canvas--override-course-cache :unfetched)
+    (setq org-canvas--override-course-cache
+          (org-canvas--override-fetch-course-cache)))
+  org-canvas--override-course-cache)
+
+(defun org-canvas--override-fetch-existing (endpoint assignment-id)
+  "Return the overrides on Canvas at ENDPOINT for ASSIGNMENT-ID, as a list.
+Inside `org-canvas-sync-overrides' the whole course's overrides are
+read once and reused here, so no request is made per assignment, as
+issue #635 asks.  Elsewhere — a push of one heading — ASSIGNMENT-ID's
+overrides are read from ENDPOINT.  A failed read is warned about and
+answered with nil: without the existing overrides, reconcile treats the
+remote as empty and re-creates everything, so the user should know."
+  (let ((cache (org-canvas--override-course-cache-get)))
+    (if cache
+        (gethash (format "%s" assignment-id) cache)
+      (condition-case err
+          (append (org-canvas-api-request-all-pages 'GET endpoint) nil)
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           "[Sections] Failed to fetch existing overrides for assignment %s (%s); treating remote as empty"
+           assignment-id (error-message-string err))
+         nil)))))
 
 (defun org-canvas--override-sync-for-assignment (assignment-id overrides
                                                               &optional confirm)
@@ -1142,7 +1192,12 @@ push of one assignment heading reconciles that heading's table."
   (let* ((assignments-file (org-canvas--override-sync-preflight))
          (source-dir (file-name-directory assignments-file))
           (total-created 0) (total-updated 0) (total-deleted 0)
-          (assignments-processed 0))
+          (assignments-processed 0)
+          ;; Read every assignment's overrides in one request, on the
+          ;; first table this run reaches, and answer each reconcile
+          ;; from it (issue #635).  `:unfetched' keeps a run with no
+          ;; tables from making the request at all.
+          (org-canvas--override-course-cache :unfetched))
 
       (with-current-buffer (org-canvas--find-file-noselect assignments-file)
         (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
