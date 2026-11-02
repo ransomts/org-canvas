@@ -209,6 +209,25 @@ docs: update manual for new quiz properties
 3. Open a PR against `main`; the template's checklist and test plan are the summary.
 4. CI runs tests on Emacs 29.3, 29.4 and 30.2 (the 29.x suites and the run-each-file-alone isolation check in three parallel shards each), plus lint, complexity, coverage and the changelog-fragment check.
 
+## Releasing
+
+Releases follow semantic versioning from 0.x: pre-1.0, a breaking change bumps the minor version and everything else the patch. Cut a release before each term starts, plus a patch release for field fixes.
+
+Only the maintainer cuts a release, and only from a clean `main`:
+
+```bash
+python3 scripts/release.py 0.2.0 --dry-run   # see what would change
+python3 scripts/release.py 0.2.0             # fold the changelog, bump Version
+git add CHANGELOG.org lisp/org-canvas.el changelog.d
+git commit -m "release: 0.2.0"
+git push origin main
+git tag -a v0.2.0 -m "org-canvas 0.2.0"
+git push origin v0.2.0
+gh release create v0.2.0 --title "org-canvas 0.2.0" --notes-from-tag
+```
+
+`scripts/release.py` folds every `changelog.d/` fragment into a dated `* 0.2.0 (YYYY-MM-DD)` section of `CHANGELOG.org`, leaves `* Unreleased` empty for the next PR, and rewrites the `;; Version:` header in `lisp/org-canvas.el`, which `org-canvas-version` reads at runtime. It refuses a dirty tree, a branch other than `main`, a version that is not newer than the last release, and a version or date it cannot parse. `--commit` and `--tag` run the two git steps; pushing and creating the GitHub release stay yours, and the script prints those commands last. `python3 scripts/release.py --check` refuses a `Version` header that disagrees with the newest release section (CI runs it in the `generated-artifacts` job).
+
 ## Pre-push Hook
 
 The `.githooks/pre-push` hook automatically:

@@ -26,7 +26,13 @@ CI runs it in the =generated-artifacts= job.
 
 * At release time
 
-=python3 scripts/changelog-collect.py= folds every fragment into
-=CHANGELOG.org= under =* Unreleased=, at the top of its section, newest
+=python3 scripts/release.py X.Y.Z= folds every fragment into a dated
+=* X.Y.Z (YYYY-MM-DD)= section, leaves =* Unreleased= empty for the next
+PR, and bumps the =;; Version:= header; =scripts/changelog-collect.py
+--release X.Y.Z --date YYYY-MM-DD= does the changelog half alone.
+=python3 scripts/changelog-collect.py= (no =--release=) folds every
+fragment into =* Unreleased= instead, at the top of its section, newest
 (highest number) first, creating a section that is missing, and deletes
 the fragments.  =--dry-run= prints the result without writing.
+=documentation/setup.md= and =CONTRIBUTING.md=, "Releasing", have the
+rest of the steps.
