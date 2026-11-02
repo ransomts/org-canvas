@@ -94,6 +94,42 @@
         (expect keys :not :to-be nil)
         (expect dupes :to-equal nil)))))
 
+;; A suffix whose command lacks `(interactive)' fails when it is chosen:
+;; transient calls it with `call-interactively', so the menu offers a key
+;; that signals "not a command".  `org-canvas-clear-log' was bound to `lc'
+;; in the Log group while being a plain function (issue #632).  The walk
+;; goes through nested groups and columns so a suffix in a sub-group is
+;; checked too, and reads `:command' the way the key walk above reads
+;; `:key', because transient has moved those plists between versions.
+(defun test-org-canvas-transient--commands (prefix-sym)
+  "Return the command of every suffix in PREFIX-SYM's layout, duplicates kept."
+  (let (commands)
+    (cl-labels ((walk (node)
+                  (cond
+                   ((vectorp node) (mapc #'walk (append node nil)))
+                   ((consp node)
+                    (let* ((plist (if (keywordp (car node)) node (cdr node)))
+                           (command (plist-get plist :command)))
+                      (when command (push command commands)))
+                    (mapc (lambda (child)
+                            (when (or (consp child) (vectorp child))
+                              (walk child)))
+                          node)))))
+      (walk (get prefix-sym 'transient--layout)))
+    (nreverse commands)))
+
+(describe "org-canvas transient suffixes"
+  (dolist (prefix '(org-canvas-dispatch
+                    org-canvas-dispatch-sync-at-point
+                    org-canvas-dispatch-pull-single
+                    org-canvas-dispatch-delete-at-point))
+    (it (format "are all commands in %s" prefix)
+      (let ((commands (test-org-canvas-transient--commands prefix)))
+        ;; A shape change that hid every suffix would make the check
+        ;; below vacuous.
+        (expect commands :not :to-be nil)
+        (expect (seq-remove #'commandp commands) :to-equal nil)))))
+
 (describe "org-canvas-dispatch-sync-at-point"
   (it "is defined as a transient prefix"
     (expect (get 'org-canvas-dispatch-sync-at-point 'transient--prefix) :to-be-truthy))
