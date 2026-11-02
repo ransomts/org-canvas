@@ -1419,9 +1419,10 @@ Hello world.
               :to-equal "; a real sync would ask"))))
 
 (describe "org-canvas--sync-dry-run-entry (issue #84)"
-  (defun test-dry-run-84--run (heading data remote-updated titles)
+  (defun test-dry-run-84--run (heading data remote-updated titles &optional items)
     "Run the dry-run branch for HEADING with DATA against a snapshot.
-REMOTE-UPDATED and TITLES are the two halves of the snapshot.
+REMOTE-UPDATED and TITLES are the two halves of the snapshot; ITEMS,
+when given, is the id-to-item index the reason reads (issue #636).
 Returns (COUNTERS . LOG-LINES)."
     (let ((logged nil) (counters nil))
       (with-temp-org-buffer heading
@@ -1433,7 +1434,8 @@ Returns (COUNTERS . LOG-LINES)."
                                           :dry-run 0 :dry-run-conflict 0)
                           :synced-ids (list nil)
                           :baseline nil
-                          :remote-updated remote-updated :remote-titles titles)))
+                          :remote-updated remote-updated :remote-titles titles
+                          :remote-items items)))
           (cl-letf (((symbol-function 'org-canvas--log-info)
                      (lambda (_logger fmt &rest args)
                        (push (apply #'format fmt args) logged)))
@@ -1477,6 +1479,26 @@ Returns (COUNTERS . LOG-LINES)."
         (expect (plist-get (car run) :dry-run) :to-equal 1)
         (expect (plist-get (car run) :dry-run-conflict) :to-equal 0)
         (expect (car (cdr run)) :to-equal "[DRY-RUN] Would UPDATE 'Lab 1'"))))
+
+  (it "says why an update would be sent when the snapshot has the item (issue #636)"
+    (let ((map (make-hash-table :test 'equal))
+          (items (make-hash-table :test 'equal)))
+      (puthash "61" "2026-08-01T00:00:00Z" map)
+      (puthash "61" '((id . "61") (name . "Lab 1")
+                      (points_possible . 10) (published . t))
+               items)
+      ;; The reason reuses the drift report's comparison, whose
+      ;; course-wide GraphQL reads are answered empty here.
+      (cl-letf (((symbol-function 'org-canvas--assignment-schedules-map)
+                 (lambda () (make-hash-table :test 'equal)))
+                ((symbol-function 'org-canvas--assignment-processors-map)
+                 (lambda () (make-hash-table :test 'equal))))
+        (let ((run (test-dry-run-84--run test-dry-run-84--stamped
+                                          (list :title "Lab 1" :canvas-id "61")
+                                          map nil items)))
+          (expect (plist-get (car run) :dry-run) :to-equal 1)
+          (expect (car (cdr run))
+                  :to-match "Would UPDATE 'Lab 1' (local payload changed since the last push")))))
 
   (it "counts a create whose title Canvas already holds as a conflict (issue #85)"
     (let ((titles (make-hash-table :test 'equal))

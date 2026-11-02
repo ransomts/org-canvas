@@ -781,6 +781,7 @@ whose prompt-only item has a list adds
   :push #'org-canvas--new-quiz-push-to-api
   :finalize #'org-canvas--new-quiz-finalize
   :hash-extra #'org-canvas--new-quiz-items-digest
+  :dry-run-uncompared "quiz items"
   :no-at-point t)
 
 ;;;; Sync at Point

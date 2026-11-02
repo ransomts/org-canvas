@@ -6470,6 +6470,17 @@ sync, 10 would conflict, 39 skipped= and the final table gains a =Conflicts=
 column.  Without a snapshot (the list request failed, or conflict detection is
 off) the would-sync lines are unverified, and a warning says how many.
 
+A line that would update an item also says *why*, so a preview is readable
+without a second command.  It names each compared property whose local value
+differs from Canvas's, with both values.  When Canvas matches every compared
+property, it says the local payload changed since the last push -- a stale
+=PAYLOAD_HASH=, or a change in a part the drift report does not compare, such
+as module items or quiz questions, which the feature names where it can.  The
+settings sync has no headings to list one by one, so it prints
+=Settings dry-run: N would sync, 0 would conflict, 0 skipped.= and counts each
+write the run would send, keeping the per-feature lines adding up to the
+global total (#636).
+
 Note for files specifically: Canvas cannot update file content in place, so a real sync of a changed file deletes the old file object and uploads a new one under a new ID.  A dry run reports this as "Would REPLACE" and performs neither step.
 
 ** Unmanaged Assignment Groups

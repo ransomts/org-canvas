@@ -1434,6 +1434,16 @@ Returns (RESULT . WARNINGS)."
         (let ((titles (plist-get (org-canvas--sync-fetch-remote-snapshot "pages") :titles)))
           (expect (alist-get 'url (car (gethash "Welcome" titles))) :to-equal "welcome")))))
 
+  (it "keeps each item itself under its id for the dry run (issue #636)"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 1) (name . "R11") (points_possible . 20))
+                     ((url . "welcome") (title . "Welcome"))))))
+        (let ((items (plist-get (org-canvas--sync-fetch-remote-snapshot "assignments")
+                                :items)))
+          (expect (alist-get 'name (gethash "1" items)) :to-equal "R11")))))
+
   (it "warns that creates go unchecked when the list request fails"
     (with-org-canvas-test-config
       (let ((warnings nil))
@@ -1444,6 +1454,88 @@ Returns (RESULT . WARNINGS)."
                      (push (apply #'format fmt args) warnings))))
           (expect (org-canvas--sync-fetch-remote-snapshot "assignments") :to-be nil)
           (expect (car warnings) :to-match "creates will not be checked"))))))
+
+(describe "org-canvas--sync-dry-run-reason (issue #636)"
+  (defun test-dry-run-636--ctx (item &optional uncompared)
+    "Return a dry-run context whose snapshot holds ITEM, or none when nil.
+UNCOMPARED is the feature's :dry-run-uncompared phrase."
+    (let ((items (make-hash-table :test 'equal)))
+      (when item (puthash "61" item items))
+      (list :feature-name "assignments" :remote-items items
+            :dry-run-uncompared uncompared)))
+
+  (defconst test-dry-run-636--heading
+    "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:POINTS: 10
+:END:
+")
+
+  (defun test-dry-run-636--reason (canvas-id ctx)
+    "Return the dry-run reason for CANVAS-ID under CTX.
+The assignment comparisons that read Canvas course-wide (schedules,
+processors) are answered with empty maps: the reason must work from
+the snapshot it was given, and these tests name no such field."
+    (cl-letf (((symbol-function 'org-canvas--assignment-schedules-map)
+               (lambda () (make-hash-table :test 'equal)))
+              ((symbol-function 'org-canvas--assignment-processors-map)
+               (lambda () (make-hash-table :test 'equal))))
+      (org-canvas--sync-dry-run-reason canvas-id ctx)))
+
+  (it "names each compared property whose local value differs"
+    (with-temp-org-buffer test-dry-run-636--heading
+      (org-back-to-heading)
+      (let ((reason (test-dry-run-636--reason
+                     "61" (test-dry-run-636--ctx
+                           '((id . "61") (name . "Lab 1")
+                             (points_possible . 20) (published . t))))))
+        (expect reason :to-match "POINTS: local 10, Canvas 20"))))
+
+  (it "says the payload changed when every compared property matches"
+    (with-temp-org-buffer test-dry-run-636--heading
+      (org-back-to-heading)
+      (let ((reason (test-dry-run-636--reason
+                     "61" (test-dry-run-636--ctx
+                           '((id . "61") (name . "Lab 1")
+                             (points_possible . 10) (published . t))))))
+        (expect reason :to-match "local payload changed since the last push")
+        (expect reason :to-match "stale PAYLOAD_HASH"))))
+
+  (it "names the parts the report does not compare, when the feature says"
+    (with-temp-org-buffer test-dry-run-636--heading
+      (org-back-to-heading)
+      (let ((reason (test-dry-run-636--reason
+                     "61" (test-dry-run-636--ctx
+                           '((id . "61") (name . "Lab 1")
+                             (points_possible . 10) (published . t))
+                           "module items"))))
+        (expect reason :to-match "; module items are not compared"))))
+
+  (it "names a rewritten body among the differing rows"
+    (with-temp-org-buffer
+        "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:POINTS: 10
+:END:
+
+Write about chapter one.
+"
+      (org-back-to-heading)
+      (let ((reason (test-dry-run-636--reason
+                     "61" (test-dry-run-636--ctx
+                           '((id . "61") (name . "Lab 1")
+                             (points_possible . 10) (published . t)
+                             (description . "<p>Write about chapter two.</p>"))))))
+        (expect reason :to-match "DESCRIPTION: local .*chapter one"))))
+
+  (it "says nothing when the snapshot holds no copy of the item"
+    (with-temp-org-buffer test-dry-run-636--heading
+      (org-back-to-heading)
+      (expect (org-canvas--sync-dry-run-reason
+               "61" (test-dry-run-636--ctx nil))
+              :to-be nil))))
 
 (describe "org-canvas--sync-remote-items-titled"
   (it "is nil without a snapshot"

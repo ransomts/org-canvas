@@ -644,6 +644,7 @@ finalize must not dirty the hash for the next run."
   ;; Module attributes alone miss item-level edits — fold an items
   ;; digest into the payload hash so they dirty the module (issue #26).
   :hash-extra #'org-canvas--module-items-digest
+  :dry-run-uncompared "module items"
   :pull-item-fn #'org-canvas--module-pull-item)
 
 ;;;; Delete Functions

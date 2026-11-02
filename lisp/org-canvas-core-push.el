@@ -24,6 +24,17 @@
 (require 'org-canvas-core-conflict)
 (require 'org-canvas-core-sync)
 
+;; The dry run names the fields that differ by reusing the drift report's
+;; comparison.  The report's files require `org-canvas-core', which
+;; requires this one, so they are declared rather than required (issue
+;; #636).
+(declare-function org-canvas--diff-find-properties "org-canvas-diff"
+                  (feature-name))
+(declare-function org-canvas--diff-compare-fields "org-canvas-diff-fields"
+                  (specs pom item))
+(declare-function org-canvas--diff-compare-body "org-canvas-diff-fields"
+                  (props pom item))
+
 ;;;; 0. Option Bundles
 ;;
 ;; The runtimes on the push path took a tail of arguments that only ever
@@ -123,6 +134,17 @@ Files read `modified_at', the content timestamp — Canvas bumps their
           (puthash (format "%s" id) updated map))))
     map))
 
+(defun org-canvas--sync-remote-item-index (items id-field)
+  "Return a hash of each of ITEMS' ID-FIELD, as a string, to the item.
+The dry run reads it to say why an entry would be pushed: the field
+comparison needs Canvas's own copy of the item, not just its id."
+  (let ((map (make-hash-table :test 'equal)))
+    (dolist (item items)
+      (let ((id (alist-get id-field item)))
+        (when (and id (not (equal id :null)))
+          (puthash (format "%s" id) item map))))
+    map))
+
 (defun org-canvas--sync-remote-title-index (items title-field)
   "Return a hash of each of ITEMS' TITLE-FIELD to the items carrying it.
 Titles are not unique on Canvas, so a value is a list, in list order;
@@ -144,6 +166,9 @@ One list request per feature.  The result is a plist:
   :titles   remote title to the items carrying it, consulted before a
             POST so a heading that lost its stamp is not created a
             second time (issue #85)
+  :items    remote id to the item itself, read by the dry run to name
+            the fields that differ when it says an entry would be
+            pushed (issue #636)
 
 Both key by the feature's registered fields, so pages key on `url' to
 match their CANVAS_URL and assignments on `name'.
@@ -161,12 +186,48 @@ fails; the caller then falls back to skipping unverified and says so."
                             items (or (plist-get feature :id-field) 'id)
                             (org-canvas--feature-modified-field feature))
                   :titles (org-canvas--sync-remote-title-index
-                           items (or (plist-get feature :title-field) 'title))))
+                           items (or (plist-get feature :title-field) 'title))
+                  :items (org-canvas--sync-remote-item-index
+                          items (or (plist-get feature :id-field) 'id))))
         (error
          (org-canvas--log-warning org-canvas--logger
            "[Conflict] Could not fetch the remote %s snapshot (%s); unchanged entries will be skipped without checking Canvas, and creates will not be checked for a title Canvas already holds"
            feature-name (error-message-string err))
          nil)))))
+
+(defun org-canvas--sync-dry-run-reason (canvas-id ctx)
+  "Return a parenthetical phrase saying why CANVAS-ID would be pushed.
+Called with point on the entry's heading.  CTX carries the remote
+snapshot.  When Canvas's copy differs on a property the drift report
+compares, the phrase names each one with both values; otherwise the
+local payload changed since the last push while Canvas matches every
+compared property, which is a stale PAYLOAD_HASH or a part the report
+does not compare — the feature names that part in its
+`:dry-run-uncompared' option, where it has one (issue #636).  Nil when
+there is no snapshot or no remote copy of CANVAS-ID, so the caller
+never states a reason it cannot support."
+  (let* ((items (org-canvas--ctx-get ctx :remote-items))
+         (item (and canvas-id items (gethash (format "%s" canvas-id) items)))
+         (pom (point-marker))
+         (props (and item (org-canvas--diff-find-properties
+                           (or (org-canvas--ctx-get ctx :feature-name) ""))))
+         (specs (plist-get props :properties))
+         (body (and props (org-canvas--diff-compare-body props pom item)))
+         (rows (append (and specs
+                            (org-canvas--diff-compare-fields specs pom item))
+                       (and (cdr body) (list (cdr body)))))
+         (part (org-canvas--ctx-get ctx :dry-run-uncompared)))
+    (when item
+      (if rows
+          (format " (%s)"
+                  (mapconcat (lambda (row)
+                               (format "%s: local %s, Canvas %s"
+                                       (nth 0 row) (nth 1 row) (nth 2 row)))
+                             rows "; "))
+        (format " (local payload changed since the last push but Canvas matches every compared property%s)"
+                (if part
+                    (format "; %s are not compared" part)
+                  " — a stale PAYLOAD_HASH, or a change the report does not compare"))))))
 
 (defun org-canvas--sync-remote-newer-at (canvas-id ctx)
   "Return the remote `updated_at' of CANVAS-ID if it postdates the baseline.

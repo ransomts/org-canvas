@@ -1064,6 +1064,7 @@ as issue #26."
   :push #'org-canvas--quiz-push-to-api
   :finalize #'org-canvas--quiz-finalize
   :hash-extra #'org-canvas--quiz-questions-digest
+  :dry-run-uncompared "quiz questions"
   ;; The pull-item function is registered with the pull below, so ask
   ;; for org-canvas-pull-quiz by name (issue #346).
   :pull-heading t)
