@@ -140,6 +140,54 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
     (let ((org-canvas-write-allowlist nil))
       (expect (org-canvas--check-write-feature 'submissions) :not :to-throw))))
 
+;;;; Body uploads (issue #630)
+;;
+;; An inline image is uploaded into Canvas Files during the parse, so a
+;; scoped credentials file that names a page but not the files feature
+;; would still get a write it never granted.
+
+(describe "org-canvas--check-body-upload-scope"
+  (it "refuses when the allowlist names neither files nor files.org"
+    (let ((org-canvas-write-allowlist '("pages.org")))
+      (let ((msg (test-write-scope--refusal
+                  (lambda () (org-canvas--check-body-upload-scope)))))
+        (expect msg :to-match "an inline image upload was refused")
+        (expect msg :to-match "files is not in it")
+        (expect msg :to-match
+                "add files to org-canvas-write-allowlist in org-canvas-credentials.el"))))
+
+  (it "allows either spelling of the files feature"
+    (dolist (entry '("files" "files.org"))
+      (let ((org-canvas-write-allowlist (list entry)))
+        (expect (org-canvas--check-body-upload-scope) :not :to-throw))))
+
+  (it "checks nothing when the allowlist is empty or unset"
+    (let ((org-canvas-write-allowlist nil))
+      (expect (org-canvas--check-body-upload-scope) :not :to-throw)))
+
+  (it "stops an inline image before it is uploaded"
+    (let* ((dir (make-temp-file "ws-body-" t))
+           (org-file (expand-file-name "pages.org" dir))
+           (buf nil)
+           (uploads 0)
+           (org-canvas-write-allowlist '("pages.org"))
+           (org-canvas--image-cache (make-hash-table :test 'equal)))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name "fig.png" dir) (insert "PNG"))
+            (with-temp-file org-file (insert "* Page\n[[file:fig.png]]\n"))
+            (setq buf (find-file-noselect org-file))
+            (with-current-buffer buf
+              (org-mode)
+              (goto-char (point-min))
+              (cl-letf (((symbol-function 'org-canvas--upload-file)
+                         (lambda (&rest _) (setq uploads (1+ uploads)))))
+                (should-error (org-canvas--export-subtree-body-to-html)
+                              :type 'org-canvas-write-scope-error))))
+        (when (buffer-live-p buf) (kill-buffer buf))
+        (delete-directory dir t))
+      (expect uploads :to-equal 0))))
+
 ;;;; The sync layer
 
 (describe "org-canvas--sync-run-pipeline write scope"

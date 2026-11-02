@@ -249,11 +249,26 @@ whose paragraph names no :alt gets one, so the `<img>' does not read
     info)
   tree)
 
+(defun org-canvas--check-body-upload-scope ()
+  "Refuse an inline image upload outside the files scope (issue #630).
+An image upload writes into Canvas Files, so a scoped credentials file
+must name the files feature, =files= or =files.org=, in
+`org-canvas-write-allowlist'; a page or assignment entry alone does
+not quietly grant it."
+  (when (and org-canvas-write-allowlist
+             (org-canvas--write-scope-refused-p "files")
+             (org-canvas--write-scope-refused-p "files.org"))
+    (org-canvas--write-scope-signal "files" "an inline image upload")))
+
 (defun org-canvas--resolve-single-image (rep source-dir folder-id-ref count total)
   "Process a single image link REP in SOURCE-DIR.
 FOLDER-ID-REF is a cons cell whose car is the folder ID (lazily initialized).
 COUNT and TOTAL are for progress logging.
-Checks cache first, then uploads if file exists."
+Checks cache first, then uploads if file exists.
+
+Under a dry run (issue #630), an uncached image is named in the log as
+one a real run would upload and the link is left as it is: the parse
+stage must not create the image folder or POST the file."
   (let* ((rel-path (plist-get rep :path))
          (abs-path (expand-file-name rel-path source-dir))
          (filename (file-name-nondirectory rel-path))
@@ -262,7 +277,14 @@ Checks cache first, then uploads if file exists."
      (cached-url
       (org-canvas--log-debug org-canvas--logger "[Images] Cache hit: %s" filename)
       (org-canvas--image-replace-link rep cached-url))
+     ((and (bound-and-true-p org-canvas--dry-run)
+           (file-exists-p abs-path))
+      (org-canvas--log-info org-canvas--logger
+        "[Images] Would upload %s (%d/%d) (dry run)" filename count total)
+      (message "Images (dry run): would upload %s" filename)
+      t)
      ((file-exists-p abs-path)
+      (org-canvas--check-body-upload-scope)
       (condition-case err
           (progn
             (org-canvas--log-info org-canvas--logger
@@ -462,22 +484,34 @@ href would only 404 on Canvas.
 With a run context CTX, a file files.org has but has not uploaded
 yet is recorded under its :file-links-unsynced as (PATH . SOURCE-DIR)
 instead of warned about: the caller syncs files later in the same
-run and decides then (issue #477)."
+run and decides then (issue #477).
+
+Under a dry run (issue #630) a file with no Canvas URL yet is named
+in the log as one a real run would upload, and the link is left as it
+is; nothing is recorded for a files sync that will not run."
   (let* ((path (plist-get rep :path))
          (display (or (plist-get rep :display)
                       (file-name-nondirectory path)))
          (id (org-canvas--local-file-canvas-id path source-dir)))
-    (goto-char (plist-get rep :start))
-    (delete-region (plist-get rep :start) (plist-get rep :end))
     (cond
      ((stringp id)
+      (goto-char (plist-get rep :start))
+      (delete-region (plist-get rep :start) (plist-get rep :end))
       (insert (format "[[%s][%s]]" (org-canvas--local-file-url id) display)))
+     ((and (bound-and-true-p org-canvas--dry-run)
+           (file-exists-p (expand-file-name path source-dir)))
+      (org-canvas--log-info org-canvas--logger
+        "[Links] Would upload %s (dry run)" path))
      ((and ctx (eq id 'unsynced))
+      (goto-char (plist-get rep :start))
+      (delete-region (plist-get rep :start) (plist-get rep :end))
       (org-canvas--log-debug org-canvas--logger
         "[Links] File link %s waits for the files sync" path)
       (org-canvas--ctx-push ctx :file-links-unsynced (cons path source-dir))
       (insert display))
      (t
+      (goto-char (plist-get rep :start))
+      (delete-region (plist-get rep :start) (plist-get rep :end))
       (org-canvas--warn-unresolved-file-link path source-dir)
       (insert display)))))
 
