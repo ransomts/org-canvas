@@ -61,6 +61,20 @@ Or create =org-canvas-credentials.el= manually in your course directory:
 
 *Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token — the wizard offers to do it for you, and it offers the same for the student-data files a pull writes (see [[*Student Data and Version Control][Student Data and Version Control]]).
 
+** Other Options
+
+Each of these is a =defcustom=; set it in your init file or the
+credentials file.
+
+| Option                                    | Default                  | Meaning |
+|-------------------------------------------+--------------------------+---------|
+| =org-canvas-image-folder=                   | ="org-canvas-images"=      | Canvas folder that inline images from a heading's body are uploaded into |
+| =org-canvas-max-file-size-mb=               | =500=                      | Largest file to upload; a larger one is skipped with a warning |
+| =org-canvas-upload-timeout=                 | =120=                      | Seconds a Canvas file upload may take, separate from =org-canvas-request-timeout= |
+| =org-canvas-submissions-notes-template=     | a one-line reminder       | Text placed under each student's =Notes= heading at pull time; nil omits the heading |
+| =org-canvas-assignment-sort=                | =position=                 | Order assignments within their group on pull: =position= (Canvas's UI order) or =due-at= |
+| =org-canvas-emit-defaults=                  | =nil=                      | When non-nil, write properties whose values are the registry defaults too |
+
 ** Keeping the Token in authinfo
 
 The token does not have to sit in the credentials file.  When =org-canvas-api-token= is empty, org-canvas asks Emacs's =auth-source= library for it, so one line in =~/.authinfo.gpg= (or =~/.authinfo=) serves instead:
@@ -5887,6 +5901,9 @@ rather than the report.
 | =org-canvas-sync-discussions=         | Sync discussion topics                       |
 | =org-canvas-sync-announcements=       | Sync announcements                           |
 | =org-canvas-sync-files=               | Upload files                                 |
+| =org-canvas-files-force-reupload=      | Re-upload every file, ignoring what Canvas already holds (=F= in the menu) |
+| =org-canvas-force-reupload-file-at-point= | Re-upload the file at point, ignoring what Canvas already holds (=z=) |
+| =org-canvas-sync-final-grade-overrides= | Push the final grade overrides in gradebook.org (=l= in the menu) |
 | =org-canvas-sync-calendar-events=      | Sync calendar events                         |
 | =org-canvas-sync-overrides=           | Sync the date overrides (section, group, students) |
 | =org-canvas-extend-student=           | Give one student a new deadline on the assignment at point, sending that override alone |
@@ -5993,7 +6010,7 @@ Each at-point command has a twin that takes its target as an argument, for a scr
 
 | Command | Description |
 |---|---|
-| =org-canvas-sync-headings= | Sync a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each |
+| =org-canvas-sync-headings= | Sync a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each (Lisp and batch) |
 
 ** Pull by Heading Commands
 
@@ -6002,7 +6019,7 @@ Each feature with a single-item pull has a pull by heading, the twin of its sync
 | Command | Description |
 |---|---|
 | =org-canvas-pull-at-point= | Replace the heading at point with Canvas's version, after asking |
-| =org-canvas-pull-headings= | Pull a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each |
+| =org-canvas-pull-headings= | Pull a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each (Lisp and batch) |
 
 ** Delete at Point Commands
 
@@ -6021,7 +6038,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
 | =org-canvas-delete-grading-scheme-at-point=  | Delete grading scheme at point   |
-| =org-canvas-delete-headings=                 | Delete a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries, each by its delete at point |
+| =org-canvas-delete-headings=                 | Delete a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries, each by its delete at point (Lisp and batch) |
 
 ** Submission Commands
 
@@ -6033,11 +6050,11 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-status= | The grading queue: which columns need pulling, grading or posting, one read-only table (=Q=) |
 | =org-canvas-submissions-pull-queue= | Pull every column the grading queue marks =pull= or =refresh=, with attachments, and report each one's changes (=U=) |
 | =org-canvas-submissions-reports= | Similarity and AI Writing across every column with a document processor, one row per student, read-only; with a prefix argument also saved under the submissions directory (=y=) |
-| =org-canvas-submissions-status-rows= | The grading queue's rows as plists (=:name=, =:id=, =:next=, ...), for scripts |
+| =org-canvas-submissions-status-rows= | The grading queue's rows as plists (=:name=, =:id=, =:next=, ...), for scripts (Lisp and batch) |
 | =org-canvas-open-submissions= | Reopen a saved grading file; from Lisp, by path or name |
 | =org-canvas-submissions-refresh-file= | Reopen a grading file and re-pull it in one step, returning the buffer (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
-| =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, or only some students' rows, posting only when asked; returns what was done (see [[*Batch Use][Batch Use]]) |
+| =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, or only some students' rows, posting only when asked; returns what was done (Lisp and batch; see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-push-at-point= | Push the student heading at point alone, confirmed as =S= is (=s=) |
 | =org-canvas-push-submission-comment-edits= | Push only the sent comments rewritten or marked =DELETE=, nothing else (=C=); from Lisp, by id or name |
 | =org-canvas-submissions-verify= | Read pushed columns back from Canvas and count what differs from the files, read-only (=Y=; see [[*Verifying a Push][Verifying a Push]]) |
@@ -6046,7 +6063,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-post-grades= | Post the grades of columns by id or name, no grading file needed; returns whether Canvas accepted each |
 | =org-canvas-submissions-post-queue= | Post every column the grading queue marks =post= |
-| =org-canvas-submissions-resolve-conflicts= | Take or keep the =CONFLICT= of listed students in a grading file, by user id |
+| =org-canvas-submissions-resolve-conflicts= | Take or keep the =CONFLICT= of listed students in a grading file, by user id (Lisp and batch) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-score-by-window= | Score by submission time against each student's section window, outliers listed first (=W=) |
 | =org-canvas-submissions-export-comments= | A grading file's row comments, drafts, sent comments and notes as data, or JSON (=H=) |
@@ -6091,33 +6108,33 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
 | =org-canvas-gradebook-student=    | Print one student's standing: every column, what is still open, the best possible total (read-only; see [[*One Student's Standing][One Student's Standing]]) |
 | =org-canvas-people-person=       | Print one person's roster entry and institution ids, from people.org (read-only; see [[*Looking One Person Up][Looking One Person Up]]) |
-| =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (see [[*Running from the Shell][Running from the Shell]]) |
+| =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (Lisp and batch; see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
 | =org-canvas-unpublish-module=     | The reverse                                   |
 | =org-canvas-publish-at-point=     | Publish the heading at point on Canvas, sending only the flag (see [[*Publishing One Heading][Publishing One Heading]]) |
 | =org-canvas-unpublish-at-point=   | Unpublish it, refusing what Canvas would refuse |
-| =org-canvas-set-published=        | The same for a heading named by title or Canvas id |
-| =org-canvas-set-published-at-point= | The same at point, publishing or unpublishing as the argument says |
+| =org-canvas-set-published=        | The same for a heading named by title or Canvas id (Lisp and batch) |
+| =org-canvas-set-published-at-point= | Publish or unpublish the heading at point; PUBLISHED is required, so this is Lisp and batch, not a command |
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
-| =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
+| =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found (Lisp and batch) |
 | =org-canvas-browse-at-point=      | Open the heading at point on Canvas in a browser; =C-u= for the edit page (no API calls) |
 | =org-canvas-browse-edit-at-point= | Open the heading's edit page on Canvas         |
 | =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= / =-stamp-move= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
-| =org-canvas-diff-delete-rows=     | Delete the Canvas objects of the EXTRA rows named, without asking, after safety checks and a JSON snapshot (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
+| =org-canvas-diff-delete-rows=     | Delete the Canvas objects of the EXTRA rows named, without asking, after safety checks and a JSON snapshot (Lisp and batch; see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =org-canvas-diff-stamp-moves=     | Stamp the item id of every MOVED row on the heading it paired (local write only; see [[*Stamping a Moved Item][Stamping a Moved Item]]) |
 | =org-canvas-diff-adopt-drift= / =-show-row= | Row actions =A= and ~=~: write what a CHANGED row names into its heading, or show its Canvas version in full (see [[*Adopting the Drift][Adopting the Drift]]) |
-| =org-canvas-diff-adopt-drifts=    | Adopt the rows named, or every CHANGED row, without asking (local write only; see [[*Adopting the Drift][Adopting the Drift]]) |
+| =org-canvas-diff-adopt-drifts=    | Adopt the rows named, or every CHANGED row, without asking (local write only; Lisp and batch; see [[*Adopting the Drift][Adopting the Drift]]) |
 | =org-canvas-diff-adopt-all-drifts= | The same for every CHANGED row, after confirming, bodies held back |
 | =org-canvas-show-at-point=        | Show the Canvas version of the heading at point, writing nothing (see [[*Showing the Canvas Version][Showing the Canvas Version]]) |
-| =org-canvas-show-headings=        | The same for headings named by title or Canvas id |
+| =org-canvas-show-headings=        | The same for headings named by title or Canvas id (Lisp and batch) |
 | =org-canvas-verify-announcements= | Read pushed announcements back and compare them with their headings, writing nothing (see [[*Verifying an Announcement][Verifying an Announcement]]) |
 | =org-canvas-verify-headings= | Read pushed assignments, rubrics, modules and files back and compare them with their headings, writing nothing (see [[*Verifying Assignments, Rubrics, Modules and Files][Verifying Assignments, Rubrics, Modules and Files]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
-| =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
+| =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors (Lisp and batch) |
 | =org-canvas-validate-all=         | Validate without suppressing push-only findings on a read-only course |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
@@ -6143,18 +6160,18 @@ The menu is organized into groups, each key a single keystroke:
 |-------------+-----------------------+--------------------------------------------------|
 | Sync        | =s= =d= =f= =@= =b= =B=   | Sync all, dry-run preview, force push, sync at point..., open the heading on Canvas / its edit page |
 | Files       | =F= =z=                 | Force re-upload of every file / the file at point |
-| Pull        | =p= =P= =u= =A=           | Pull all, pull single..., pull the heading at point, adopt the Canvas item for the heading at point |
+| Pull        | =p= =P= =u= ~=~ =A=       | Pull all, pull single..., pull the heading at point, show the Canvas version of the heading at point, adopt the Canvas item for the heading at point |
 | Delete      | =D= =O= =X=              | Delete all, cleanup orphans, delete at point...  |
 | Publish     | =m= =M= =n= =N= =R=        | Publish / unpublish a module and its contents, publish / unpublish the heading at point (only the flag), apply =PUBLISH_AT= releases |
-| Submissions | =g= =Q= =U= =o= =q= =w= =a= =W= =G= =C= =T= | Pull submissions, grading queue, pull the queue, open a grading file, quiz attempts, peer reviews, completion rule, score by section window, push grades, push only sent comment edits, post grades |
+| Submissions | =g= =Q= =U= =y= =o= =q= =w= =a= =W= =K= =H= =I= =Y= =L= =G= =C= =T= =l= | Pull submissions, grading queue, pull the queue, similarity and AI Writing reports, open a grading file, quiz attempts, peer reviews, completion rule, score by section window, check comments, export comments, import comments, verify a push, uploaded text, push grades, push only sent comment edits, post grades, push final grade overrides |
 | Messages    | =e= =E=                 | Send unsent messages / the message at point      |
-| Tools       | =i= =c= =t= =v= =V= =S= =r= =j= =J= =x= =/= =%= | Init, switch course, test connection, validate, validate all, status, drift report, adopt stamps, stamp moves, list external tools, search the live course, list every date it says |
+| Tools       | =i= =c= =k= =t= =v= =V= =S= =h= =r= =j= =J= =Z= =x= =/= =%= | Init, switch course, new semester, test connection, validate, validate all, status, gradebook what-if, drift report, adopt stamps, stamp moves, adopt all drifts, list external tools, search the live course, list every date it says |
 | Log         | =ll= =ld= =lc=           | Set log level, set log destination, clear log    |
 | Learn       | =?=                     | Demo conflict resolution UI                      |
 
 Sub-menus are available for per-item operations:
 
-- *Sync at point* (=@=): Sync a single heading -- page, assignment, discussion, announcement, module, rubric, assignment group, calendar event, quiz, new quiz, group category, grading scheme, or a quiz's accommodations.
+- *Sync at point* (=@=): Sync a single heading -- page, assignment, discussion, announcement, module, rubric, assignment group, calendar event, quiz, new quiz, group category, grading scheme, a quiz's accommodations, or extend one student's deadline (=x=).
 - *Pull single* (=P=): Pull one content type from Canvas, including the read-only pulls (people, gradebook, rubric and quiz results, grading periods, submissions, quiz attempts, peer reviews).
 - *Delete at point* (=X=): Delete a single item from Canvas.
 
@@ -6568,8 +6585,19 @@ curl -X POST 'https://canvas.example.com/api/v1/courses/12345/assignments' \
 
 #+begin_example
 lisp/
-├── org-canvas.el             ; Main entry point, orchestrates all modules
-├── org-canvas-core.el        ; Shared infrastructure
+├── org-canvas.el             ; Main entry point, loads and orchestrates all modules
+├── org-canvas-core-api.el    ; HTTP, retries and error signalling
+├── org-canvas-core-config.el ; Options and the feature/property registries
+├── org-canvas-core-conflict.el ; Conflict detection and resolution
+├── org-canvas-core-delete.el ; Delete and prune pipeline
+├── org-canvas-core-heading.el ; Heading lookup and stamps
+├── org-canvas-core-html.el   ; Org-to-HTML and body uploads
+├── org-canvas-core-log.el    ; Logging
+├── org-canvas-core-macros.el ; Declarative payload/sync macros
+├── org-canvas-core-org.el    ; Org file helpers
+├── org-canvas-core-pull.el   ; Pull pipeline
+├── org-canvas-core-push.el   ; Push pipeline
+├── org-canvas-core-sync.el   ; Sync pipeline
 ├── org-canvas-credentials.el ; API credentials (not in git)
 └── org-canvas-{feature}.el   ; Feature modules
 #+end_example
@@ -6589,7 +6617,7 @@ Items are tracked via the =CANVAS_ID= property:
 - Present: UPDATE (PUT) operation
 - Absent: CREATE (POST) operation
 
-After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On the next push, the =LAST_SYNCED= timestamp is compared against the remote =updated_at= to detect conflicts (see [[*Conflict Detection]]).
+After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On the next push, the entry's =CANVAS_UPDATED_AT= (falling back to the file's =#+LAST_SYNCED=) is compared against the remote =updated_at= to detect conflicts (see [[*Conflict Detection]]).
 
 * Property Reference
 :PROPERTIES:

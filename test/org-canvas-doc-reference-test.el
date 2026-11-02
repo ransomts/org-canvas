@@ -23,21 +23,26 @@
 (require 'test-helper)
 (require 'org-canvas)
 
+(defun org-canvas-doc-ref--locate (rel)
+  "Return the absolute path of REL, looking beside the project root too.
+When Eldev runs a test file by itself the default directory is the
+project root; some callers have it one level up."
+  (cond ((file-exists-p rel) (expand-file-name rel))
+        ((file-exists-p (expand-file-name rel default-directory))
+         (expand-file-name rel default-directory))
+        (t rel)))
+
 (defconst org-canvas-doc-ref--generator
-  (let ((rel "test/docgen/generate-property-reference.el"))
-    (cond ((file-exists-p rel) (expand-file-name rel))
-          ((file-exists-p (expand-file-name rel default-directory))
-           (expand-file-name rel default-directory))
-          (t rel)))
+  (org-canvas-doc-ref--locate "test/docgen/generate-property-reference.el")
   "Path to the property-reference generator.")
 
 (defconst org-canvas-doc-ref--manual
-  (let ((rel "documentation/manual.org"))
-    (cond ((file-exists-p rel) (expand-file-name rel))
-          ((file-exists-p (expand-file-name rel default-directory))
-           (expand-file-name rel default-directory))
-          (t rel)))
+  (org-canvas-doc-ref--locate "documentation/manual.org")
   "Path to the user manual.")
+
+(defconst org-canvas-doc-ref--transient
+  (org-canvas-doc-ref--locate "lisp/org-canvas-transient.el")
+  "Path to the transient menu definitions.")
 
 (when (file-exists-p org-canvas-doc-ref--generator)
   (load org-canvas-doc-ref--generator nil t))
@@ -65,6 +70,87 @@ Trims each line, collapses internal whitespace runs, drops blank lines."
           (buffer-substring-no-properties
            beg (line-beginning-position)))))))
 
+(defun org-canvas-doc-ref--table-rows (section)
+  "Return the first two cells of each Org table row in SECTION.
+SECTION is the full heading line, e.g. \"** Sync Commands\".
+Separator and header rows are dropped; the cells are trimmed."
+  (with-temp-buffer
+    (insert-file-contents org-canvas-doc-ref--manual)
+    (goto-char (point-min))
+    (unless (re-search-forward (concat "^" (regexp-quote section)) nil t)
+      (error "Manual has no section %s" section))
+    (let* ((beg (line-end-position))
+           (end (save-excursion
+                  (if (re-search-forward "^\\*" nil t)
+                      (line-beginning-position)
+                    (point-max))))
+           (rows nil))
+      (goto-char beg)
+      (while (re-search-forward "^|.*$" end t)
+        (let ((cells (mapcar #'string-trim
+                             (split-string (match-string-no-properties 0) "|"))))
+          (unless (string-match-p "\\`[-+]+\\'" (or (nth 1 cells) ""))
+            (push (list (or (nth 1 cells) "") (or (nth 2 cells) "")) rows))))
+      (nreverse rows))))
+
+(defun org-canvas-doc-ref--symbols (text)
+  "Return every `org-canvas-*' symbol named in TEXT, in order."
+  (let ((pos 0) out)
+    (while (string-match "org-canvas-[a-z0-9-]+" text pos)
+      (push (intern (match-string 0 text)) out)
+      (setq pos (match-end 0)))
+    (nreverse out)))
+
+(defun org-canvas-doc-ref--commands-reference-rows ()
+  "Rows of the table under the Commands Reference's first-level chapters."
+  (with-temp-buffer
+    (insert-file-contents org-canvas-doc-ref--manual)
+    (goto-char (point-min))
+    (unless (search-forward "* Commands Reference" nil t)
+      (error "Manual has no Commands Reference"))
+    (let* ((beg (line-end-position))
+           (end (save-excursion
+                  (if (re-search-forward "^\\* " nil t)
+                      (line-beginning-position)
+                    (point-max))))
+           (rows nil))
+      (goto-char beg)
+      (while (re-search-forward "^|.*$" end t)
+        (let ((cells (mapcar #'string-trim
+                             (split-string (match-string-no-properties 0) "|"))))
+          (unless (string-match-p "\\`[-+]+\\'" (or (nth 1 cells) ""))
+            (push (list (or (nth 1 cells) "") (or (nth 2 cells) "")) rows))))
+      (nreverse rows))))
+
+(defun org-canvas-doc-ref--menu-table-keys ()
+  "Keys listed in the manual's Command Menu table, in order."
+  (let (keys)
+    (dolist (row (org-canvas-doc-ref--table-rows "** Command Menu (Transient)"))
+      ;; Every key cell marks each key verbatim, e.g. =s= or ~=~; the
+      ;; header row does not, so it drops out here.
+      (dolist (tok (split-string (nth 1 row) "[ \t]+" t))
+        (when (string-match "\\`[=~]\\(.+\\)[=~]\\'" tok)
+          (push (match-string 1 tok) keys))))
+    (nreverse keys)))
+
+(defun org-canvas-doc-ref--transient-keys ()
+  "Top-level keys defined by `org-canvas-dispatch', in order."
+  (with-temp-buffer
+    (insert-file-contents org-canvas-doc-ref--transient)
+    (goto-char (point-min))
+    (unless (search-forward "(transient-define-prefix org-canvas-dispatch ()" nil t)
+      (error "Manual drift guard: no org-canvas-dispatch definition"))
+    (let* ((beg (line-end-position))
+           (end (save-excursion
+                  (if (search-forward "(provide 'org-canvas-transient)" nil t)
+                      (line-beginning-position)
+                    (point-max))))
+           (keys nil))
+      (goto-char beg)
+      (while (re-search-forward "(\"\\([^\"]+\\)\" \"" end t)
+        (push (match-string-no-properties 1) keys))
+      (nreverse keys))))
+
 (describe "manual Property Reference (SSOT drift guard)"
   (it "loads the generator"
     (expect (fboundp 'org-canvas-docgen-body) :to-be-truthy))
@@ -80,6 +166,26 @@ Trims each line, collapses internal whitespace runs, drops blank lines."
           (generated (org-canvas-doc-ref--normalize
                       (org-canvas-docgen-body))))
       (expect committed :to-equal generated))))
+
+(describe "manual Commands Reference (drift guard)"
+  (it "has the section it guards"
+    (expect (org-canvas-doc-ref--commands-reference-rows) :to-be-truthy))
+
+  (it "lists a command, or a row marked Lisp and batch, for every name"
+    (let (offenders)
+      (dolist (row (org-canvas-doc-ref--commands-reference-rows))
+        (let ((description (nth 1 row))
+              (lisp-only (string-match-p "Lisp and batch" (nth 1 row))))
+          (dolist (sym (org-canvas-doc-ref--symbols (nth 0 row)))
+            (unless (or lisp-only (commandp sym))
+              (push (format "%s (%s)" sym description) offenders)))))
+      (expect (nreverse offenders) :to-equal nil))))
+
+(describe "manual Command Menu table (drift guard)"
+  (it "names every key the transient menu defines, and no others"
+    (let ((documented (sort (org-canvas-doc-ref--menu-table-keys) #'string<))
+          (defined (sort (org-canvas-doc-ref--transient-keys) #'string<)))
+      (expect documented :to-equal defined))))
 
 (provide 'org-canvas-doc-reference-test)
 ;;; org-canvas-doc-reference-test.el ends here
