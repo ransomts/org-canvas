@@ -1,0 +1,11 @@
+* Changed
+- #574 The settings slice moves the remaining course-directory specs onto
+  =with-test-course=: seventeen specs built private temp directories with
+  =make-temp-file=, wrote a =settings.org= into them and deleted the
+  directory and its buffers in an =unwind-protect=.  They now name that
+  file once and let the shared fixture write it and clean up, including
+  the pull specs that read the file back after Canvas answers.  The
+  =test-org-canvas-settings--pull-with= helper likewise takes its
+  directory from the fixture, and keeps its =when initial= write as an
+  expression the fixture evaluates after binding the directory.  File
+  contents, assertions and request counts are unchanged.
