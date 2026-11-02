@@ -1,0 +1,9 @@
+* Changed
+- #574 The seventh fixture slice moves the file sync specs onto
+  =with-test-course=: the folder-path collection specs and the three
+  sync-pipeline specs each built a private temp directory, wrote a
+  =files.org= (and the PDFs it links to) into it, and deleted it in an
+  =unwind-protect=.  They now name those files once and let the shared
+  fixture write them and clean up the directory and its buffers.  The
+  org text and the uploaded bytes are unchanged, as are the assertions
+  and the request counts.

@@ -308,60 +308,44 @@
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "collects unique folder paths from file"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Labs
-** [[file:lab1.pdf][Lab 1]]
-** [[file:lab2.pdf][Lab 2]]
-* Homework
-** [[file:hw1.pdf][HW 1]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              (expect (length paths) :to-equal 2)
-              (expect paths :to-contain "Labs")
-              (expect paths :to-contain "Homework")))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* Labs\n"
+                       "** [[file:lab1.pdf][Lab 1]]\n"
+                       "** [[file:lab2.pdf][Lab 2]]\n"
+                       "* Homework\n"
+                       "** [[file:hw1.pdf][HW 1]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        (expect (length paths) :to-equal 2)
+        (expect paths :to-contain "Labs")
+        (expect paths :to-contain "Homework"))))
 
   (it "handles nested folder paths"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Materials
-** Week 01
-*** [[file:notes.pdf][Notes]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              (expect paths :to-contain "Materials/Week 01")))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* Materials\n"
+                       "** Week 01\n"
+                       "*** [[file:notes.pdf][Notes]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        (expect paths :to-contain "Materials/Week 01"))))
 
   (it "excludes root level files"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* [[file:syllabus.pdf][Syllabus]]
-* Folder
-** [[file:nested.pdf][Nested]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              ;; Only "Folder" should be collected, not empty string for root
-              (expect paths :to-equal '("Folder"))))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* [[file:syllabus.pdf][Syllabus]]\n"
+                       "* Folder\n"
+                       "** [[file:nested.pdf][Nested]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        ;; Only "Folder" should be collected, not empty string for root
+        (expect paths :to-equal '("Folder")))))
 
   (it "returns empty list for file with no folders"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* [[file:doc1.pdf][Doc 1]]
-* [[file:doc2.pdf][Doc 2]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              (expect paths :to-equal '())))
-        (delete-file temp-file)))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* [[file:doc1.pdf][Doc 1]]\n"
+                       "* [[file:doc2.pdf][Doc 2]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        (expect paths :to-equal '())))))
 
 ;;;; Ensure Folders Exist
 
@@ -572,131 +556,101 @@
       (expect (org-canvas-sync-files) :to-throw 'error)))
 
   (it "processes files and updates CANVAS_ID"
-    (let ((temp-dir (make-temp-file "files-test" t))
-          (files-processed nil))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "files.org" temp-dir))
-                 (pdf-file (expand-file-name "test.pdf" temp-dir)))
-            ;; Create test file
-            (with-temp-file pdf-file (insert "PDF content"))
-            ;; Create org file
-            (with-temp-file org-file
-              (insert (format "* [[file:%s][Test PDF]]
-:PROPERTIES:
-:END:
-" (file-name-nondirectory pdf-file))))
-            (let ((org-canvas-files-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ;; Course access check
-                              ((string-match "courses/99999$" url) '((id . 99999)))
-                              ;; Root folder
-                              ((string-match "folders/root" url)
-                               '((id . 100) (name . "course files")))
-                              ;; Upload step 1
-                              ((and (eq method 'POST) (string-match "folders/100/files" url))
-                               '((upload_url . "https://s3.example.com/upload")
-                                 (upload_params . ((key . "abc123")))))
-                              (t nil))))
-                          ((symbol-function 'org-canvas--file-upload-step2-send)
-                           (lambda (_info _path)
-                             (push "uploaded" files-processed)
-                             '((id . 77777) (display_name . "test.pdf"))))
-                          ((symbol-function 'org-canvas--file-upload-step3-confirm)
-                           (lambda (resp) resp)))
-                  (org-canvas-sync-files)
-                  (expect files-processed :to-contain "uploaded")
-                  ;; Check that CANVAS_ID was saved
-                  (with-current-buffer (find-file-noselect org-file)
-                    (goto-char (point-min))
-                    (org-back-to-heading)
-                    (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77777"))))))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("test.pdf" . "PDF content")
+                      ("files.org"
+                       "* [[file:test.pdf][Test PDF]]\n:PROPERTIES:\n:END:\n")))
+      (let ((files-processed nil)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ;; Course access check
+                        ((string-match "courses/99999$" url) '((id . 99999)))
+                        ;; Root folder
+                        ((string-match "folders/root" url)
+                         '((id . 100) (name . "course files")))
+                        ;; Upload step 1
+                        ((and (eq method 'POST) (string-match "folders/100/files" url))
+                         '((upload_url . "https://s3.example.com/upload")
+                           (upload_params . ((key . "abc123")))))
+                        (t nil))))
+                    ((symbol-function 'org-canvas--file-upload-step2-send)
+                     (lambda (_info _path)
+                       (push "uploaded" files-processed)
+                       '((id . 77777) (display_name . "test.pdf"))))
+                    ((symbol-function 'org-canvas--file-upload-step3-confirm)
+                     (lambda (resp) resp)))
+            (org-canvas-sync-files)
+            (expect files-processed :to-contain "uploaded")
+            ;; Check that CANVAS_ID was saved
+            (with-current-buffer (find-file-noselect org-canvas-files-file)
+              (goto-char (point-min))
+              (org-back-to-heading)
+              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77777")))))))
 
   (it "skips folder headings"
-    (let ((temp-dir (make-temp-file "files-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "files.org" temp-dir))
-                 (pdf-file (expand-file-name "test.pdf" temp-dir))
-                 (upload-count 0))
-            (with-temp-file pdf-file (insert "content"))
-            (with-temp-file org-file
-              (insert (format "* Folder Only
-* [[file:%s][File]]
-:PROPERTIES:
-:END:
-" (file-name-nondirectory pdf-file))))
-            (let ((org-canvas-files-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method url &rest _args)
-                             (cond
-                              ((string-match "courses/99999$" url) '((id . 99999)))
-                              ((string-match "folders/root" url) '((id . 100)))
-                              (t nil))))
-                          ((symbol-function 'org-canvas--file-push-to-api)
-                           (lambda (_data &optional _ctx)
-                             (setq upload-count (1+ upload-count))
-                             '((id . 88888))))
-                          ((symbol-function 'org-canvas--file-apply-settings)
-                           (lambda (_fid _data) nil))
-                          ((symbol-function 'org-canvas--file-finalize)
-                           (lambda (_data _resp) nil)))
-                  (org-canvas-sync-files)
-                  ;; Only 1 file should be uploaded (folder is skipped)
-                  (expect upload-count :to-equal 1)))))
-        (delete-directory temp-dir t))))
+    (with-test-course
+        (dir :files '(("test.pdf" . "content")
+                      ("files.org"
+                       "* Folder Only\n* [[file:test.pdf][File]]\n:PROPERTIES:\n:END:\n")))
+      (let ((upload-count 0)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest _args)
+                       (cond
+                        ((string-match "courses/99999$" url) '((id . 99999)))
+                        ((string-match "folders/root" url) '((id . 100)))
+                        (t nil))))
+                    ((symbol-function 'org-canvas--file-push-to-api)
+                     (lambda (_data &optional _ctx)
+                       (setq upload-count (1+ upload-count))
+                       '((id . 88888))))
+                    ((symbol-function 'org-canvas--file-apply-settings)
+                     (lambda (_fid _data) nil))
+                    ((symbol-function 'org-canvas--file-finalize)
+                     (lambda (_data _resp) nil)))
+            (org-canvas-sync-files)
+            ;; Only 1 file should be uploaded (folder is skipped)
+            (expect upload-count :to-equal 1))))))
 
   (it "continues processing after individual file errors"
-    (let ((temp-dir (make-temp-file "files-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "files.org" temp-dir))
-                 (pdf1 (expand-file-name "test1.pdf" temp-dir))
-                 (pdf2 (expand-file-name "test2.pdf" temp-dir))
-                 (push-attempts 0))
-            (with-temp-file pdf1 (insert "content1"))
-            (with-temp-file pdf2 (insert "content2"))
-            (with-temp-file org-file
-              (insert (format "* [[file:%s][File 1]]
-:PROPERTIES:
-:END:
-* [[file:%s][File 2]]
-:PROPERTIES:
-:END:
-" (file-name-nondirectory pdf1) (file-name-nondirectory pdf2))))
-            (let ((org-canvas-files-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_method url &rest _args)
-                             (cond
-                              ((string-match "courses/99999$" url) '((id . 99999)))
-                              ((string-match "folders/root" url) '((id . 100)))
-                              (t nil))))
-                          ((symbol-function 'org-canvas--file-push-to-api)
-                           (lambda (_data &optional _ctx)
-                             (setq push-attempts (1+ push-attempts))
-                             (if (= push-attempts 1)
-                                 (signal 'error '("First file failed"))
-                               '((id . 99999)))))
-                          ((symbol-function 'org-canvas--file-apply-settings)
-                           (lambda (_fid _data) nil))
-                          ((symbol-function 'org-canvas--file-finalize)
-                           (lambda (_data _resp) nil)))
-                  (org-canvas-sync-files)
-                  ;; Both files should be attempted
-                  (expect push-attempts :to-equal 2)))))
-        (delete-directory temp-dir t)))))
+    (with-test-course
+        (dir :files '(("test1.pdf" . "content1")
+                      ("test2.pdf" . "content2")
+                      ("files.org"
+                       "* [[file:test1.pdf][File 1]]\n:PROPERTIES:\n:END:\n"
+                       "* [[file:test2.pdf][File 2]]\n:PROPERTIES:\n:END:\n")))
+      (let ((push-attempts 0)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest _args)
+                       (cond
+                        ((string-match "courses/99999$" url) '((id . 99999)))
+                        ((string-match "folders/root" url) '((id . 100)))
+                        (t nil))))
+                    ((symbol-function 'org-canvas--file-push-to-api)
+                     (lambda (_data &optional _ctx)
+                       (setq push-attempts (1+ push-attempts))
+                       (if (= push-attempts 1)
+                           (signal 'error '("First file failed"))
+                         '((id . 99999)))))
+                    ((symbol-function 'org-canvas--file-apply-settings)
+                     (lambda (_fid _data) nil))
+                    ((symbol-function 'org-canvas--file-finalize)
+                     (lambda (_data _resp) nil)))
+            (org-canvas-sync-files)
+            ;; Both files should be attempted
+            (expect push-attempts :to-equal 2)))))))
 
 ;;;; Delete All Files
 
@@ -917,46 +871,34 @@
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "handles file with only root-level files"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* [[file:a.pdf][A]]
-* [[file:b.pdf][B]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              (expect paths :to-equal '())))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* [[file:a.pdf][A]]\n"
+                       "* [[file:b.pdf][B]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        (expect paths :to-equal '()))))
 
   (it "handles deeply nested structure"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Level1
-** Level2
-*** Level3
-**** [[file:deep.pdf][Deep File]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              (expect paths :to-contain "Level1/Level2/Level3")))
-        (delete-file temp-file))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* Level1\n"
+                       "** Level2\n"
+                       "*** Level3\n"
+                       "**** [[file:deep.pdf][Deep File]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        (expect paths :to-contain "Level1/Level2/Level3"))))
 
   (it "deduplicates folder paths"
-    (let ((temp-file (make-temp-file "files" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Folder
-** [[file:a.pdf][A]]
-** [[file:b.pdf][B]]
-** [[file:c.pdf][C]]
-"))
-            (let ((paths (org-canvas--file-collect-folder-paths temp-file)))
-              ;; Should only have "Folder" once, not 3 times
-              (expect (length paths) :to-equal 1)
-              (expect (car paths) :to-equal "Folder")))
-        (delete-file temp-file)))))
+    (with-test-course
+        (dir :files '(("files.org"
+                       "* Folder\n"
+                       "** [[file:a.pdf][A]]\n"
+                       "** [[file:b.pdf][B]]\n"
+                       "** [[file:c.pdf][C]]\n")))
+      (let ((paths (org-canvas--file-collect-folder-paths org-canvas-files-file)))
+        ;; Should only have "Folder" once, not 3 times
+        (expect (length paths) :to-equal 1)
+        (expect (car paths) :to-equal "Folder")))))
 
 ;;;; Coverage Gap Tests
 
