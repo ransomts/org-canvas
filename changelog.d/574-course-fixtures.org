@@ -1,0 +1,9 @@
+* Changed
+- #574 The fifth fixture slice moves the quizzes and new-quizzes specs
+  onto =with-test-course=: thirty-three specs that each made a private
+  temp directory, wrote one =quizzes.org= (or =new-quizzes.org=) into
+  it and deleted it in an =unwind-protect= now name that file once and
+  let the shared fixture write it and clean it up.  The shared content
+  reader also accepts a list of strings, joined in order, for the long
+  documents those specs write across several =insert= lines.  No spec's
+  assertions changed.

@@ -1981,12 +1981,8 @@ Click the heart.
 
 (describe "org-canvas-sync-new-quizzes"
   (it "syncs quizzes and items from file"
-    (let* ((temp-dir (make-temp-file "nq-sync-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file
-              (insert "* Test Quiz
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Test Quiz
 :PROPERTIES:
 :END:
 
@@ -1997,49 +1993,38 @@ Click the heart.
 
 - [X] Yes
 - [ ] No
-"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_m _u &rest _)
-                           '((assignment_id . 42) (id . "item-1")))))
-                (with-sync-test-env
-                  (org-canvas-sync-new-quizzes)
-                  (let ((content (with-temp-buffer
-                                   (insert-file-contents test-file)
-                                   (buffer-string))))
-                    (expect content :to-match "CANVAS_ASSIGNMENT_ID"))))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+")))
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_m _u &rest _)
+                       '((assignment_id . 42) (id . "item-1")))))
+            (with-sync-test-env
+              (org-canvas-sync-new-quizzes)
+              (let ((content (with-temp-buffer
+                               (insert-file-contents test-file)
+                               (buffer-string))))
+                (expect content :to-match "CANVAS_ASSIGNMENT_ID"))))))))
 
   (it "uses id fallback when assignment_id absent in sync response"
-    (let* ((temp-dir (make-temp-file "nq-id-fb-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file
-              (insert "* ID Fallback Quiz\n:PROPERTIES:\n:END:\n\n** Q1\n:PROPERTIES:\n:TYPE: choice\n:END:\n\n- [X] Yes\n- [ ] No\n"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_m _u &rest _)
-                           ;; Response has id but no assignment_id
-                           '((id . "fallback-77")))))
-                (with-sync-test-env
-                  (org-canvas-sync-new-quizzes)
-                  (let ((content (with-temp-buffer
-                                   (insert-file-contents test-file)
-                                   (buffer-string))))
-                    (expect content :to-match "CANVAS_ASSIGNMENT_ID"))))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* ID Fallback Quiz\n:PROPERTIES:\n:END:\n\n** Q1\n:PROPERTIES:\n:TYPE: choice\n:END:\n\n- [X] Yes\n- [ ] No\n")))
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_m _u &rest _)
+                       ;; Response has id but no assignment_id
+                       '((id . "fallback-77")))))
+            (with-sync-test-env
+              (org-canvas-sync-new-quizzes)
+              (let ((content (with-temp-buffer
+                               (insert-file-contents test-file)
+                               (buffer-string))))
+                (expect content :to-match "CANVAS_ASSIGNMENT_ID"))))))))
 
   (it "sends a create payload whose wrapped body reflects the org input"
-    (let ((temp-dir (make-temp-file "nq-body-test" t)))
-      (unwind-protect
-          (let ((org-file (expand-file-name "new-quizzes.org" temp-dir)))
-            (with-temp-file org-file
-              (insert "* Cellular Respiration Quiz
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Cellular Respiration Quiz
 :PROPERTIES:
 :TIME_LIMIT: 45
 :SHUFFLE_ANSWERS: true
@@ -2054,42 +2039,37 @@ Click the heart.
 
 - [X] Yes
 - [ ] No
-"))
-            (let ((org-canvas-new-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (with-mock-api
-                  ;; Quiz-create POST must return assignment_id so the
-                  ;; pipeline can finalize and proceed to items.
-                  (setq test-org-canvas-api-responses
-                        '(("/quizzes" . ((assignment_id . 555) (id . "item-1")))))
-                  (org-canvas-sync-new-quizzes)
-                  ;; "/quizzes$" matches only the create call, not the
-                  ;; ".../quizzes/555/items" item call.
-                  (let* ((body (test-org-canvas-api-call-data 'POST "/quizzes$"))
-                         (quiz (and (hash-table-p body) (gethash "quiz" body))))
-                    (expect (hash-table-p body) :to-be t)
-                    (expect (hash-table-p quiz) :to-be t)
-                    (expect (gethash "title" quiz)
-                            :to-equal "Cellular Respiration Quiz")
-                    (let* ((settings (gethash "quiz_settings" quiz))
-                           (attempts (gethash "multiple_attempts" settings)))
-                      (expect (gethash "time_limit" quiz 'absent)
-                              :to-be 'absent)
-                      (expect (gethash "session_time_limit_in_seconds" settings)
-                              :to-equal 2700)
-                      (expect (gethash "shuffle_answers" settings) :to-be t)
-                      (expect (gethash "one_at_a_time_type" settings 'absent)
-                              :to-be 'absent)
-                      (expect (gethash "max_attempts" attempts) :to-equal 2)
-                      (expect (gethash "score_to_keep" attempts)
-                              :to-equal "latest")))))))
-        (let ((buf (find-buffer-visiting
-                    (expand-file-name "new-quizzes.org" temp-dir))))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+")))
+      (let ((org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (with-mock-api
+            ;; Quiz-create POST must return assignment_id so the
+            ;; pipeline can finalize and proceed to items.
+            (setq test-org-canvas-api-responses
+                  '(("/quizzes" . ((assignment_id . 555) (id . "item-1")))))
+            (org-canvas-sync-new-quizzes)
+            ;; "/quizzes$" matches only the create call, not the
+            ;; ".../quizzes/555/items" item call.
+            (let* ((body (test-org-canvas-api-call-data 'POST "/quizzes$"))
+                   (quiz (and (hash-table-p body) (gethash "quiz" body))))
+              (expect (hash-table-p body) :to-be t)
+              (expect (hash-table-p quiz) :to-be t)
+              (expect (gethash "title" quiz)
+                      :to-equal "Cellular Respiration Quiz")
+              (let* ((settings (gethash "quiz_settings" quiz))
+                     (attempts (gethash "multiple_attempts" settings)))
+                (expect (gethash "time_limit" quiz 'absent)
+                        :to-be 'absent)
+                (expect (gethash "session_time_limit_in_seconds" settings)
+                        :to-equal 2700)
+                (expect (gethash "shuffle_answers" settings) :to-be t)
+                (expect (gethash "one_at_a_time_type" settings 'absent)
+                        :to-be 'absent)
+                (expect (gethash "max_attempts" attempts) :to-equal 2)
+                (expect (gethash "score_to_keep" attempts)
+                        :to-equal "latest"))))))))
 
   (it "errors when file not found"
     (let ((org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org"))
@@ -2097,33 +2077,26 @@ Click the heart.
         (expect (org-canvas-sync-new-quizzes) :to-throw 'error))))
 
   (it "handles quiz sync failures gracefully"
-    (let* ((temp-dir (make-temp-file "nq-fail-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file
-              (insert "* Quiz A
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Quiz A
 :PROPERTIES:
 :END:
 
 * Quiz B
 :PROPERTIES:
 :END:
-"))
-            (with-org-canvas-test-config
-              (let ((fail-first t))
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_m _u &rest _)
-                             (if fail-first
-                                 (progn (setq fail-first nil)
-                                        (error "API Error"))
-                               '((assignment_id . 999))))))
-                  (with-sync-test-env
-                    ;; Should not throw; first quiz fails, second succeeds
-                    (org-canvas-sync-new-quizzes))))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+")))
+      (with-org-canvas-test-config
+        (let ((fail-first t))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_m _u &rest _)
+                       (if fail-first
+                           (progn (setq fail-first nil)
+                                  (error "API Error"))
+                         '((assignment_id . 999))))))
+            (with-sync-test-env
+              ;; Should not throw; first quiz fails, second succeeds
+              (org-canvas-sync-new-quizzes))))))))
 
 ;;;; Sync at Point
 
@@ -2202,13 +2175,8 @@ Click the heart.
 
 (describe "org-canvas-delete-all-new-quizzes"
   (it "deletes all new quizzes from Canvas"
-    (let* ((temp-dir (make-temp-file "nq-delete-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file)
-                (deleted-urls nil))
-            (with-temp-file test-file
-              (insert "* Quiz A
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Quiz A
 :PROPERTIES:
 :CANVAS_ASSIGNMENT_ID: 100
 :END:
@@ -2217,24 +2185,22 @@ Click the heart.
 :PROPERTIES:
 :CANVAS_ASSIGNMENT_ID: 200
 :END:
-"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_m _u &optional _p)
-                           '(((assignment_id . 100) (title . "Quiz A"))
-                             ((assignment_id . 200) (title . "Quiz B")))))
-                        ((symbol-function 'org-canvas-api-request)
-                         (lambda (method url &rest _)
-                           (when (eq method 'DELETE)
-                             (push url deleted-urls))
-                           nil))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (with-sync-test-env
-                  (org-canvas-delete-all-new-quizzes)
-                  (expect (length deleted-urls) :to-equal 2)))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+")))
+      (let ((deleted-urls nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_m _u &optional _p)
+                       '(((assignment_id . 100) (title . "Quiz A"))
+                         ((assignment_id . 200) (title . "Quiz B")))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (when (eq method 'DELETE)
+                         (push url deleted-urls))
+                       nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (with-sync-test-env
+              (org-canvas-delete-all-new-quizzes)
+              (expect (length deleted-urls) :to-equal 2)))))))
 
   (it "snapshots the quizzes it is about to delete (issue #555)"
     (with-org-canvas-test-config
@@ -2262,125 +2228,99 @@ Click the heart.
                 :to-throw 'user-error))))
 
   (it "handles delete failures gracefully"
-    (let* ((temp-dir (make-temp-file "nq-delete-fail" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file
-              (insert "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n:END:\n"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_m _u &optional _p)
-                           '(((assignment_id . 100) (title . "Quiz")))))
-                        ((symbol-function 'org-canvas-api-request)
-                         (lambda (_m _u &rest _)
-                           (error "DELETE failed")))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (with-sync-test-env
-                  ;; Should not throw
-                  (org-canvas-delete-all-new-quizzes)))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n:END:\n")))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_m _u &optional _p)
+                     '(((assignment_id . 100) (title . "Quiz")))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (_m _u &rest _)
+                     (error "DELETE failed")))
+                  ((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (with-sync-test-env
+            ;; Should not throw
+            (org-canvas-delete-all-new-quizzes))))))
 
   (it "keeps the stamps of a quiz whose delete failed (#324)"
-    (let* ((temp-dir (make-temp-file "nq-delete-keep" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file
-              (insert "* Kept\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n"
-                      ":PAYLOAD_HASH: aaa\n:END:\n"
-                      "* Gone\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 200\n"
-                      ":PAYLOAD_HASH: bbb\n:END:\n"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _)
-                           '(((assignment_id . 100) (title . "Kept"))
-                             ((assignment_id . 200) (title . "Gone")))))
-                        ((symbol-function 'org-canvas-api-request)
-                         (lambda (_m url &rest _)
-                           (when (string-match-p "quizzes/100" url)
-                             (error "DELETE failed"))
-                           nil))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (with-sync-test-env
-                  (org-canvas-delete-all-new-quizzes))))
-            (with-current-buffer (find-buffer-visiting test-file)
-              (expect (org-map-entries
-                       (lambda () (org-entry-get (point) "PAYLOAD_HASH"))
-                       nil 'file)
-                      :to-equal '("aaa" nil))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" "* Kept\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n"
+                              ":PAYLOAD_HASH: aaa\n:END:\n"
+                              "* Gone\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 200\n"
+                              ":PAYLOAD_HASH: bbb\n:END:\n")))
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (&rest _)
+                       '(((assignment_id . 100) (title . "Kept"))
+                         ((assignment_id . 200) (title . "Gone")))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_m url &rest _)
+                       (when (string-match-p "quizzes/100" url)
+                         (error "DELETE failed"))
+                       nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (with-sync-test-env
+              (org-canvas-delete-all-new-quizzes))))
+        (with-current-buffer (find-file-noselect test-file)
+          (expect (org-map-entries
+                   (lambda () (org-entry-get (point) "PAYLOAD_HASH"))
+                   nil 'file)
+                  :to-equal '("aaa" nil))))))
 
   (it "clears a deleted quiz's CANVAS_ASSIGNMENT_ID and its items' CANVAS_ITEM_ID (#331)"
-    (let* ((temp-dir (make-temp-file "nq-delete-ids" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file
-              (insert "* Kept\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n:END:\n"
-                      "** Kept item\n:PROPERTIES:\n:CANVAS_ITEM_ID: k-1\n:END:\n"
-                      "* Gone\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 200\n"
-                      ":CANVAS_UPDATED_AT: 2026-01-01T00:00:00Z\n:END:\n"
-                      "** Gone item\n:PROPERTIES:\n:CANVAS_ITEM_ID: g-1\n"
-                      ":POINTS: 2\n:END:\n"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _)
-                           '(((assignment_id . 100) (title . "Kept"))
-                             ((assignment_id . 200) (title . "Gone")))))
-                        ((symbol-function 'org-canvas-api-request)
-                         (lambda (_m url &rest _)
-                           (when (string-match-p "quizzes/100" url)
-                             (error "DELETE failed"))
-                           nil))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (with-sync-test-env
-                  (org-canvas-delete-all-new-quizzes))))
-            (with-current-buffer (find-buffer-visiting test-file)
-              (expect (org-map-entries
-                       (lambda ()
-                         (list (org-entry-get (point) "CANVAS_ASSIGNMENT_ID")
-                               (org-entry-get (point) "CANVAS_ITEM_ID")
-                               (org-entry-get (point) "CANVAS_UPDATED_AT")
-                               (org-entry-get (point) "POINTS")))
-                       nil 'file)
-                      :to-equal '(("100" nil nil nil) (nil "k-1" nil nil)
-                                  (nil nil nil nil) (nil nil nil "2")))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" "* Kept\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n:END:\n"
+                              "** Kept item\n:PROPERTIES:\n:CANVAS_ITEM_ID: k-1\n:END:\n"
+                              "* Gone\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 200\n"
+                              ":CANVAS_UPDATED_AT: 2026-01-01T00:00:00Z\n:END:\n"
+                              "** Gone item\n:PROPERTIES:\n:CANVAS_ITEM_ID: g-1\n"
+                              ":POINTS: 2\n:END:\n")))
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (&rest _)
+                       '(((assignment_id . 100) (title . "Kept"))
+                         ((assignment_id . 200) (title . "Gone")))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_m url &rest _)
+                       (when (string-match-p "quizzes/100" url)
+                         (error "DELETE failed"))
+                       nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (with-sync-test-env
+              (org-canvas-delete-all-new-quizzes))))
+        (with-current-buffer (find-file-noselect test-file)
+          (expect (org-map-entries
+                   (lambda ()
+                     (list (org-entry-get (point) "CANVAS_ASSIGNMENT_ID")
+                           (org-entry-get (point) "CANVAS_ITEM_ID")
+                           (org-entry-get (point) "CANVAS_UPDATED_AT")
+                           (org-entry-get (point) "POINTS")))
+                   nil 'file)
+                  :to-equal '(("100" nil nil nil) (nil "k-1" nil nil)
+                              (nil nil nil nil) (nil nil nil "2")))))))
 
   (it "uses id fallback when assignment_id absent in delete-all"
-    (let* ((temp-dir (make-temp-file "nq-delete-id-fb" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file)
-                (deleted-urls nil))
-            (with-temp-file test-file
-              (insert "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 50\n:END:\n"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_m _u &optional _p)
-                           ;; Response has id but no assignment_id
-                           '(((id . 50) (title . "Quiz No AssignID")))))
-                        ((symbol-function 'org-canvas-api-request)
-                         (lambda (method url &rest _)
-                           (when (eq method 'DELETE)
-                             (push url deleted-urls))
-                           nil))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
-                (with-sync-test-env
-                  (org-canvas-delete-all-new-quizzes)
-                  ;; Should have extracted id=50 and formed the delete URL
-                  (expect (length deleted-urls) :to-equal 1)
-                  (expect (car deleted-urls) :to-match "50")))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 50\n:END:\n")))
+      (let ((deleted-urls nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_m _u &optional _p)
+                       ;; Response has id but no assignment_id
+                       '(((id . 50) (title . "Quiz No AssignID")))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (when (eq method 'DELETE)
+                         (push url deleted-urls))
+                       nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (with-sync-test-env
+              (org-canvas-delete-all-new-quizzes)
+              ;; Should have extracted id=50 and formed the delete URL
+              (expect (length deleted-urls) :to-equal 1)
+              (expect (car deleted-urls) :to-match "50"))))))))
 
 ;;;; Type Slug Mapping
 
@@ -2713,163 +2653,115 @@ Click the heart.
 
 (describe "org-canvas-pull-new-quizzes"
   (it "creates quiz headings from API response"
-    (let* ((temp-dir (make-temp-file "nq-pull-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method url &optional _params)
-                           (if (string-match-p "items" url)
-                               nil
-                             '(((assignment_id . 42) (title . "Midterm")
-                                (quiz_settings
-                                 (has_time_limit . t)
-                                 (session_time_limit_in_seconds . 3600)
-                                 (shuffle_answers . t)))))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-new-quizzes)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents test-file)
-                                 (buffer-string))))
-                  (expect content :to-match "Midterm")
-                  (expect content :to-match "CANVAS_ASSIGNMENT_ID: 42")
-                  (expect content :to-match "TIME_LIMIT: 60")))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files nil)
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &optional _params)
+                         (if (string-match-p "items" url)
+                             nil
+                           '(((assignment_id . 42) (title . "Midterm")
+                              (quiz_settings
+                               (has_time_limit . t)
+                               (session_time_limit_in_seconds . 3600)
+                               (shuffle_answers . t))))))))
+              (org-canvas-pull-new-quizzes)
+              (let ((content (with-temp-buffer
+                               (insert-file-contents test-file)
+                               (buffer-string))))
+                (expect content :to-match "Midterm")
+                (expect content :to-match "CANVAS_ASSIGNMENT_ID: 42")
+                (expect content :to-match "TIME_LIMIT: 60"))))))))
 
   (it "pulls quiz items as L2 headings"
-    (let* ((temp-dir (make-temp-file "nq-pull-items-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method url &optional _params)
-                           (if (string-match-p "items" url)
-                               '(((id . "item-1")
-                                  (item_body . "What is 2+2?")
-                                  (interaction_type_slug . "choice")
-                                  (points_possible . 5)))
-                             '(((assignment_id . 42) (title . "Quiz"))))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-new-quizzes)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents test-file)
-                                 (buffer-string))))
-                  (expect content :to-match "What is 2\\+2\\?")
-                  (expect content :to-match "CANVAS_ITEM_ID")))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files nil)
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &optional _params)
+                         (if (string-match-p "items" url)
+                             '(((id . "item-1")
+                                (item_body . "What is 2+2?")
+                                (interaction_type_slug . "choice")
+                                (points_possible . 5)))
+                           '(((assignment_id . 42) (title . "Quiz")))))))
+              (org-canvas-pull-new-quizzes)
+              (let ((content (with-temp-buffer
+                               (insert-file-contents test-file)
+                               (buffer-string))))
+                (expect content :to-match "What is 2\\+2\\?")
+                (expect content :to-match "CANVAS_ITEM_ID"))))))))
 
   (it "leaves one heading per item after two pulls, rewritten in place (issue #239)"
-    (let* ((temp-dir (make-temp-file "nq-pull-239" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir))
-           (body "What is 2+2?"))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method url &optional _params)
-                           (if (string-match-p "items" url)
-                               `(((id . 1) (position . 1) (item_body . ,body)
-                                  (interaction_type_slug . "choice") (points_possible . 5))
-                                 ((id . 2) (position . 2) (item_body . "Second")
-                                  (interaction_type_slug . "essay") (points_possible . 2)))
-                             '(((assignment_id . 42) (title . "Quiz"))))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-new-quizzes)
-                (setq body "What is 3+3?")
-                (org-canvas-pull-new-quizzes)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents test-file)
-                                 (buffer-string))))
-                  (expect (test-org-canvas-count-matches "^\\*\\* " content) :to-equal 2)
-                  (expect content :to-match "^\\*\\* What is 3\\+3\\?$")
-                  (expect content :not :to-match "2\\+2")
-                  (expect (string-match "3\\+3" content)
-                          :to-be-less-than (string-match "\\*\\* Second" content))))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files nil)
+      (let ((test-file (expand-file-name "new-quizzes.org" dir))
+            (body "What is 2+2?"))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &optional _params)
+                         (if (string-match-p "items" url)
+                             `(((id . 1) (position . 1) (item_body . ,body)
+                                (interaction_type_slug . "choice") (points_possible . 5))
+                               ((id . 2) (position . 2) (item_body . "Second")
+                                (interaction_type_slug . "essay") (points_possible . 2)))
+                           '(((assignment_id . 42) (title . "Quiz")))))))
+              (org-canvas-pull-new-quizzes)
+              (setq body "What is 3+3?")
+              (org-canvas-pull-new-quizzes)
+              (let ((content (with-temp-buffer
+                               (insert-file-contents test-file)
+                               (buffer-string))))
+                (expect (test-org-canvas-count-matches "^\\*\\* " content) :to-equal 2)
+                (expect content :to-match "^\\*\\* What is 3\\+3\\?$")
+                (expect content :not :to-match "2\\+2")
+                (expect (string-match "3\\+3" content)
+                        :to-be-less-than (string-match "\\*\\* Second" content)))))))))
 
   (it "uses id fallback when assignment_id absent in pull response"
-    (let* ((temp-dir (make-temp-file "nq-pull-id-fb" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method url &optional _params)
-                           (if (string-match-p "items" url)
-                               nil
-                             ;; Response has id but no assignment_id
-                             '(((id . 88) (title . "ID-Only Quiz")
-                                (quiz_settings
-                                 (has_time_limit . t)
-                                 (session_time_limit_in_seconds . 2700)))))))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil)))
-                (org-canvas-pull-new-quizzes)
-                (let ((content (with-temp-buffer
-                                 (insert-file-contents test-file)
-                                 (buffer-string))))
-                  (expect content :to-match "ID-Only Quiz")
-                  (expect content :to-match "CANVAS_ASSIGNMENT_ID: 88")))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files nil)
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &optional _params)
+                         (if (string-match-p "items" url)
+                             nil
+                           ;; Response has id but no assignment_id
+                           '(((id . 88) (title . "ID-Only Quiz")
+                              (quiz_settings
+                               (has_time_limit . t)
+                               (session_time_limit_in_seconds . 2700))))))))
+              (org-canvas-pull-new-quizzes)
+              (let ((content (with-temp-buffer
+                               (insert-file-contents test-file)
+                               (buffer-string))))
+                (expect content :to-match "ID-Only Quiz")
+                (expect content :to-match "CANVAS_ASSIGNMENT_ID: 88"))))))))
 
   (it "writes self-doc header when no new quizzes exist"
-    (let* ((temp-dir (make-temp-file "nq-pull-empty" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file test-file (insert "stale content\n"))
-            (let ((org-canvas-new-quizzes-file test-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params) '()))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil)))
-                  (org-canvas-pull-new-quizzes)
-                  (with-temp-buffer
-                    (insert-file-contents test-file)
-                    (let ((s (buffer-string)))
-                      (expect s :not :to-match "stale content")
-                      (expect s :to-match "^#\\+TITLE: New Quizzes$")
-                      (expect s :to-match "^# Canvas returned 0 items")))))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course (dir :files '(("new-quizzes.org" . "stale content\n")))
+      (let ((test-file (expand-file-name "new-quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method _url &optional _params) '())))
+              (org-canvas-pull-new-quizzes)
+              (with-temp-buffer
+                (insert-file-contents test-file)
+                (let ((s (buffer-string)))
+                  (expect s :not :to-match "stale content")
+                  (expect s :to-match "^#\\+TITLE: New Quizzes$")
+                  (expect s :to-match "^# Canvas returned 0 items"))))))))))
 
 ;;;; Validation Integration
 
 (describe "org-canvas-validate with new-quizzes"
   (it "validates new quiz properties"
-    (let* ((temp-dir (make-temp-file "nq-validate-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file)
-                (org-canvas-assignments-file "/tmp/nonexistent/a.org")
-                (org-canvas-pages-file "/tmp/nonexistent/p.org")
-                (org-canvas-quizzes-file "/tmp/nonexistent/q.org")
-                (org-canvas-modules-file "/tmp/nonexistent/m.org")
-                (org-canvas-files-file "/tmp/nonexistent/f.org")
-                (org-canvas-outcomes-file "/tmp/nonexistent/o.org")
-                (org-canvas-rubrics-file "/tmp/nonexistent/r.org")
-                (org-canvas-discussions-file "/tmp/nonexistent/d.org")
-                (org-canvas-announcements-file "/tmp/nonexistent/ann.org")
-                (org-canvas-assignment-groups-file "/tmp/nonexistent/ag.org")
-                (org-canvas-sections-file "/tmp/nonexistent/s.org")
-                (org-canvas-settings-file "/tmp/nonexistent/set.org"))
-            (with-temp-file test-file
-              (insert "* Good Quiz
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Good Quiz
 :PROPERTIES:
 :TIME_LIMIT: 60
 :SHUFFLE_ANSWERS: true
@@ -2893,39 +2785,20 @@ Click the heart.
 :TYPE: invalid_type
 :POINTS: abc
 :END:
-"))
-            (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
-              (let* ((result (org-canvas--validate-run-all-specs))
-                     (issues (plist-get result :issues)))
-                ;; Should find errors for invalid TIME_LIMIT, SCORING_POLICY, TYPE, POINTS
-                (expect (length issues) :to-be-greater-than 0)
-                (let ((error-issues (cl-remove-if-not
-                                     (lambda (i) (eq (plist-get i :severity) 'error))
-                                     issues)))
-                  (expect (length error-issues) :to-be-greater-than 0)))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+")))
+      (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
+        (let* ((result (org-canvas--validate-run-all-specs))
+               (issues (plist-get result :issues)))
+          ;; Should find errors for invalid TIME_LIMIT, SCORING_POLICY, TYPE, POINTS
+          (expect (length issues) :to-be-greater-than 0)
+          (let ((error-issues (cl-remove-if-not
+                               (lambda (i) (eq (plist-get i :severity) 'error))
+                               issues)))
+            (expect (length error-issues) :to-be-greater-than 0))))))
 
   (it "passes validation for valid new quiz file"
-    (let* ((temp-dir (make-temp-file "nq-validate-good-test" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-new-quizzes-file test-file)
-                (org-canvas-assignments-file "/tmp/nonexistent/a.org")
-                (org-canvas-pages-file "/tmp/nonexistent/p.org")
-                (org-canvas-quizzes-file "/tmp/nonexistent/q.org")
-                (org-canvas-modules-file "/tmp/nonexistent/m.org")
-                (org-canvas-files-file "/tmp/nonexistent/f.org")
-                (org-canvas-outcomes-file "/tmp/nonexistent/o.org")
-                (org-canvas-rubrics-file "/tmp/nonexistent/r.org")
-                (org-canvas-discussions-file "/tmp/nonexistent/d.org")
-                (org-canvas-announcements-file "/tmp/nonexistent/ann.org")
-                (org-canvas-assignment-groups-file "/tmp/nonexistent/ag.org")
-                (org-canvas-sections-file "/tmp/nonexistent/s.org")
-                (org-canvas-settings-file "/tmp/nonexistent/set.org"))
-            (with-temp-file test-file
-              (insert "* Valid Quiz
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Valid Quiz
 :PROPERTIES:
 :TIME_LIMIT: 60
 :SHUFFLE_ANSWERS: true
@@ -2939,13 +2812,10 @@ Click the heart.
 :TYPE: essay
 :POINTS: 10
 :END:
-"))
-            (let* ((result (org-canvas--validate-run-all-specs))
-                   (issues (plist-get result :issues)))
-              (expect issues :to-be nil)))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+")))
+      (let* ((result (org-canvas--validate-run-all-specs))
+             (issues (plist-get result :issues)))
+        (expect issues :to-be nil)))))
 
 ;;;; Constants
 
@@ -3030,41 +2900,30 @@ Click the heart.
 
 (describe "org-canvas-sync-new-quizzes RUBRIC_LINK integration"
   (it "calls associate-rubric during bulk sync when RUBRIC_LINK is set"
-    (let* ((temp-dir (make-temp-file "nq-rubric-sync" t))
-           (test-file (expand-file-name "new-quizzes.org" temp-dir))
-           (rubrics-file (expand-file-name "rubrics.org" temp-dir))
-           (assoc-calls nil))
-      (unwind-protect
-          (progn
-            (with-temp-file rubrics-file
-              (insert "* Lab Rubric\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n\n| C | P |\n|---+---|\n| X | 5 |\n"))
-            (with-temp-file test-file
-              (insert (format "* Quiz With Rubric
+    (with-test-course (dir :files
+                           '(("rubrics.org" . "* Lab Rubric\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n\n| C | P |\n|---+---|\n| X | 5 |\n")
+                             ("new-quizzes.org"
+                              . "* Quiz With Rubric
 :PROPERTIES:
-:RUBRIC_LINK: [[file:%s::*Lab Rubric][Lab Rubric]]
+:RUBRIC_LINK: [[file:rubrics.org::*Lab Rubric][Lab Rubric]]
 :END:
 
 Body text
-" rubrics-file)))
-            (let ((org-canvas-new-quizzes-file test-file)
-                  (org-canvas-rubrics-file rubrics-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (_m _u &rest _)
-                             '((assignment_id . 8001) (id . "nq-1"))))
-                          ((symbol-function 'org-canvas--associate-rubric)
-                           (lambda (item-id rubric-id assoc-type)
-                             (push (list item-id rubric-id assoc-type) assoc-calls))))
-                  (with-sync-test-env
-                    (org-canvas-sync-new-quizzes)
-                    (expect (length assoc-calls) :to-equal 1)
-                    (expect (nth 0 (car assoc-calls)) :to-equal 8001)
-                    (expect (nth 1 (car assoc-calls)) :to-equal "777")
-                    (expect (nth 2 (car assoc-calls)) :to-equal "Assignment"))))))
-        (dolist (f (list test-file rubrics-file))
-          (let ((buf (find-buffer-visiting f)))
-            (when buf (kill-buffer buf))))
-        (delete-directory temp-dir t)))))
+")))
+      (let ((assoc-calls nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_m _u &rest _)
+                       '((assignment_id . 8001) (id . "nq-1"))))
+                    ((symbol-function 'org-canvas--associate-rubric)
+                     (lambda (item-id rubric-id assoc-type)
+                       (push (list item-id rubric-id assoc-type) assoc-calls))))
+            (with-sync-test-env
+              (org-canvas-sync-new-quizzes)
+              (expect (length assoc-calls) :to-equal 1)
+              (expect (nth 0 (car assoc-calls)) :to-equal 8001)
+              (expect (nth 1 (car assoc-calls)) :to-equal "777")
+              (expect (nth 2 (car assoc-calls)) :to-equal "Assignment"))))))))
 
 (describe "org-canvas--new-quiz-parse-entry RUBRIC_LINK"
   (it "resolves RUBRIC_LINK to rubric-id"
@@ -3209,29 +3068,20 @@ Body text
            (expect items-synced :to-equal 42))))))
 
   (it "uses canvas-id when response has no assignment_id or id (batch sync)"
-    (let* ((temp-dir (make-temp-file "nq-batch-" t))
-           (nq-file (expand-file-name "new-quizzes.org" temp-dir))
-           (items-synced nil))
-      (unwind-protect
-          (progn
-            (with-temp-file nq-file
-              (insert "* Quiz Batch\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 77\n:END:\n\nBody\n"))
-            (let ((org-canvas-new-quizzes-file nq-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
-                          ((symbol-function 'display-buffer) #'ignore)
-                          ((symbol-function 'org-canvas-api-request)
-                           (lambda (_m _u &rest _)
-                             '((assignment_id . 77))))
-                          ((symbol-function 'org-canvas--sync-new-quiz-items)
-                           (lambda (_marker quiz-id)
-                             (setq items-synced quiz-id)
-                             (cons 0 0))))
-                  (org-canvas-sync-new-quizzes)
-                  (expect items-synced :to-equal 77)))))
-        (let ((buf (find-buffer-visiting nq-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course (dir :files
+                           '(("new-quizzes.org" . "* Quiz Batch\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 77\n:END:\n\nBody\n")))
+      (let ((items-synced nil))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (_m _u &rest _)
+                         '((assignment_id . 77))))
+                      ((symbol-function 'org-canvas--sync-new-quiz-items)
+                       (lambda (_marker quiz-id)
+                         (setq items-synced quiz-id)
+                         (cons 0 0))))
+              (org-canvas-sync-new-quizzes)
+              (expect items-synced :to-equal 77))))))))
 
 ;;;; Coverage: sync-children id fallback chain
 
@@ -4864,16 +4714,9 @@ Return (RESULT REQUESTS LOGS TEXT): the sync's counts, every request as
 
 (defun test-nq-508--validate (content)
   "Return the issues validation finds in a new-quizzes.org holding CONTENT."
-  (let* ((temp-dir (make-temp-file "nq-508-validate" t))
-         (test-file (expand-file-name "new-quizzes.org" temp-dir)))
-    (unwind-protect
-        (with-nonexistent-canvas-files
-          (let ((org-canvas-new-quizzes-file test-file))
-            (with-temp-file test-file (insert content))
-            (plist-get (org-canvas--validate-run-all-specs) :issues)))
-      (let ((buf (find-buffer-visiting test-file)))
-        (when buf (kill-buffer buf)))
-      (delete-directory temp-dir t))))
+  (with-nonexistent-canvas-files
+    (with-test-course (dir :files (list (cons "new-quizzes.org" content)))
+      (plist-get (org-canvas--validate-run-all-specs) :issues))))
 
 (describe "validation of a bank draw or a stimulus heading (issue #508)"
   (it "finds nothing in the headings a pull writes"

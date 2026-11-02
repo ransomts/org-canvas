@@ -551,23 +551,16 @@ Body.
        (expect (plist-get data :pom) :to-be-truthy))))
 
   (it "parses GROUP link to assignment_group_id"
-    (let* ((dir (make-temp-file "quiz-group-test-" t))
-           (groups-file (expand-file-name "assignment-groups.org" dir))
-           (quiz-file (expand-file-name "quizzes.org" dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file groups-file
-              (insert "* Exams\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
-            (with-temp-file quiz-file
-              (insert "* Midterm\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Exams][Exams]]\n:END:\n\nContent.\n"))
-            (let ((org-canvas-quizzes-file quiz-file))
-              (with-current-buffer (find-file-noselect quiz-file)
-                (goto-char (point-min))
-                (org-back-to-heading)
-                (let ((data (org-canvas--quiz-parse-entry)))
-                  (expect (plist-get data :assignment_group_id) :to-equal 42))
-                (kill-buffer))))
-        (delete-directory dir t))))
+    (with-test-course (dir :files
+                           '(("assignment-groups.org"
+                              . "* Exams\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n")
+                             ("quizzes.org"
+                              . "* Midterm\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Exams][Exams]]\n:END:\n\nContent.\n")))
+      (with-current-buffer (find-file-noselect (expand-file-name "quizzes.org" dir))
+        (goto-char (point-min))
+        (org-back-to-heading)
+        (let ((data (org-canvas--quiz-parse-entry)))
+          (expect (plist-get data :assignment_group_id) :to-equal 42)))))
 
   (it "returns nil assignment_group_id when no GROUP property"
     (with-temp-org-buffer
@@ -1471,13 +1464,8 @@ Quiz description.
       (expect (org-canvas-sync-quizzes) :to-throw 'error)))
 
   (it "syncs quizzes and their questions"
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (quiz-synced nil)
-                 (questions-synced 0))
-            (with-temp-file org-file
-              (insert "* Test Quiz
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Test Quiz
 :PROPERTIES:
 :END:
 
@@ -1489,52 +1477,41 @@ Quiz description.
 
 - [X] Answer A
 - [ ] Answer B
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ;; Quiz POST
-                              ((and (eq method 'POST) (string-match "quizzes$" url))
-                               (setq quiz-synced t)
-                               '((id . 100) (title . "Test Quiz")))
-                              ;; Question POST
-                              ((and (eq method 'POST) (string-match "questions$" url))
-                               (setq questions-synced (1+ questions-synced))
-                               '((id . 200)))
-                              (t nil)))))
-                  (org-canvas-sync-quizzes)
-                  (expect quiz-synced :to-be t)
-                  (expect questions-synced :to-equal 1)
-                  ;; Check CANVAS_ID was saved
-                  (with-current-buffer (find-file-noselect org-file)
-                    (goto-char (point-min))
-                    (org-back-to-heading)
-                    (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100"))))))
-        (delete-directory temp-dir t))))
+")))
+      (let* ((org-file (expand-file-name "quizzes.org" dir))
+             (quiz-synced nil)
+             (questions-synced 0)
+             (org-canvas-base-url "https://test.canvas.example.com")
+             (org-canvas-api-token "test-token")
+             (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ;; Quiz POST
+                        ((and (eq method 'POST) (string-match "quizzes$" url))
+                         (setq quiz-synced t)
+                         '((id . 100) (title . "Test Quiz")))
+                        ;; Question POST
+                        ((and (eq method 'POST) (string-match "questions$" url))
+                         (setq questions-synced (1+ questions-synced))
+                         '((id . 200)))
+                        (t nil)))))
+            (org-canvas-sync-quizzes)
+            (expect quiz-synced :to-be t)
+            (expect questions-synced :to-equal 1)
+            ;; Check CANVAS_ID was saved
+            (with-current-buffer (find-file-noselect org-file)
+              (goto-char (point-min))
+              (org-back-to-heading)
+              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100")))))))
 
   (it "skips an unchanged quiz but re-syncs after a question edit"
     ;; Questions sync inside finalize, which the unchanged-skip
     ;; bypasses — without the questions digest in the payload hash a
     ;; question edit would never reach Canvas (issue #26 bug class).
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (quiz-writes 0)
-                 (publish-writes 0)
-                 (question-writes 0)
-                 ;; A publish call is a quiz payload carrying nothing but
-                 ;; `published'; the create/update carries the attributes.
-                 (publish-only-p
-                  (lambda (data)
-                    (let ((quiz (alist-get 'quiz data)))
-                      (equal (mapcar #'car quiz) '(published))))))
-            (with-temp-file org-file
-              (insert "* Test Quiz
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Test Quiz
 :PROPERTIES:
 :END:
 
@@ -1546,55 +1523,59 @@ Quiz description.
 
 - [X] Answer A
 - [ ] Answer B
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest args)
-                             (cond
-                              ((and (memq method '(POST PUT))
-                                    (string-match "quizzes\\(/100\\)?$" url))
-                               (if (funcall publish-only-p (plist-get args :data))
-                                   (setq publish-writes (1+ publish-writes))
-                                 (setq quiz-writes (1+ quiz-writes)))
-                               '((id . 100) (title . "Test Quiz")))
-                              ((and (memq method '(POST PUT))
-                                    (string-match "questions\\(/200\\)?$" url))
-                               (setq question-writes (1+ question-writes))
-                               '((id . 200)))
-                              (t nil)))))
-                  ;; Run 1: creates quiz + question, saves PAYLOAD_HASH, and
-                  ;; publishes only once the question exists (issue #59).
-                  (org-canvas-sync-quizzes)
-                  (expect quiz-writes :to-equal 1)
-                  (expect publish-writes :to-equal 1)
-                  ;; Run 2: nothing changed — quiz skipped entirely
-                  (org-canvas-sync-quizzes)
-                  (expect quiz-writes :to-equal 1)
-                  (expect publish-writes :to-equal 1)
-                  ;; Edit an answer; run 3 must re-push quiz + question
-                  (with-current-buffer (find-file-noselect org-file)
-                    (goto-char (point-min))
-                    (search-forward "- [ ] Answer B")
-                    (replace-match "- [ ] Answer C" t t)
-                    (save-buffer))
-                  (setq question-writes 0)
-                  (org-canvas-sync-quizzes)
-                  (expect quiz-writes :to-equal 2)
-                  (expect publish-writes :to-equal 2)
-                  (expect question-writes :to-equal 1)))))
-        (delete-directory temp-dir t))))
+")))
+      (let* ((org-file (expand-file-name "quizzes.org" dir))
+             (quiz-writes 0)
+             (publish-writes 0)
+             (question-writes 0)
+             ;; A publish call is a quiz payload carrying nothing but
+             ;; `published'; the create/update carries the attributes.
+             (publish-only-p
+              (lambda (data)
+                (let ((quiz (alist-get 'quiz data)))
+                  (equal (mapcar #'car quiz) '(published)))))
+             (org-canvas-base-url "https://test.canvas.example.com")
+             (org-canvas-api-token "test-token")
+             (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest args)
+                       (cond
+                        ((and (memq method '(POST PUT))
+                              (string-match "quizzes\\(/100\\)?$" url))
+                         (if (funcall publish-only-p (plist-get args :data))
+                             (setq publish-writes (1+ publish-writes))
+                           (setq quiz-writes (1+ quiz-writes)))
+                         '((id . 100) (title . "Test Quiz")))
+                        ((and (memq method '(POST PUT))
+                              (string-match "questions\\(/200\\)?$" url))
+                         (setq question-writes (1+ question-writes))
+                         '((id . 200)))
+                        (t nil)))))
+            ;; Run 1: creates quiz + question, saves PAYLOAD_HASH, and
+            ;; publishes only once the question exists (issue #59).
+            (org-canvas-sync-quizzes)
+            (expect quiz-writes :to-equal 1)
+            (expect publish-writes :to-equal 1)
+            ;; Run 2: nothing changed — quiz skipped entirely
+            (org-canvas-sync-quizzes)
+            (expect quiz-writes :to-equal 1)
+            (expect publish-writes :to-equal 1)
+            ;; Edit an answer; run 3 must re-push quiz + question
+            (with-current-buffer (find-file-noselect org-file)
+              (goto-char (point-min))
+              (search-forward "- [ ] Answer B")
+              (replace-match "- [ ] Answer C" t t)
+              (save-buffer))
+            (setq question-writes 0)
+            (org-canvas-sync-quizzes)
+            (expect quiz-writes :to-equal 2)
+            (expect publish-writes :to-equal 2)
+            (expect question-writes :to-equal 1))))))
 
   (it "continues after quiz failure"
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (quiz-attempts 0))
-            (with-temp-file org-file
-              (insert "* Quiz 1
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Quiz 1
 :PROPERTIES:
 :END:
 
@@ -1607,98 +1588,88 @@ Quiz description.
 
 ** Q2
 - [X] B
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ((and (eq method 'POST) (string-match "quizzes$" url))
-                               (setq quiz-attempts (1+ quiz-attempts))
-                               (if (= quiz-attempts 1)
-                                   (signal 'error '("First quiz failed"))
-                                 '((id . 200))))
-                              ((and (eq method 'POST) (string-match "questions$" url))
-                               '((id . 300)))
-                              (t nil)))))
-                  (org-canvas-sync-quizzes)
-                  ;; Both quizzes should be attempted
-                  (expect quiz-attempts :to-equal 2)))))
-        (delete-directory temp-dir t))))
+")))
+      (let* ((org-file (expand-file-name "quizzes.org" dir))
+             (quiz-attempts 0)
+             (org-canvas-base-url "https://test.canvas.example.com")
+             (org-canvas-api-token "test-token")
+             (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ((and (eq method 'POST) (string-match "quizzes$" url))
+                         (setq quiz-attempts (1+ quiz-attempts))
+                         (if (= quiz-attempts 1)
+                             (signal 'error '("First quiz failed"))
+                           '((id . 200))))
+                        ((and (eq method 'POST) (string-match "questions$" url))
+                         '((id . 300)))
+                        (t nil)))))
+            (org-canvas-sync-quizzes)
+            ;; Both quizzes should be attempted
+            (expect quiz-attempts :to-equal 2))))))
 
   (it "uses existing canvas-id for question sync"
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (question-quiz-id nil))
-            (with-temp-file org-file
-              (insert "* Quiz
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 555
 :END:
 
 ** Q1
 - [X] A
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ((and (eq method 'PUT) (string-match "quizzes/555$" url))
-                               '((id . 555)))
-                              ((and (eq method 'POST) (string-match "quizzes/\\([0-9]+\\)/questions" url))
-                               (setq question-quiz-id (match-string 1 url))
-                               '((id . 700)))
-                              (t nil)))))
-                  (org-canvas-sync-quizzes)
-                  ;; Question should use the existing quiz ID
-                  (expect question-quiz-id :to-equal "555")))))
-        (delete-directory temp-dir t))))
+")))
+      (let* ((question-quiz-id nil)
+             (org-canvas-base-url "https://test.canvas.example.com")
+             (org-canvas-api-token "test-token")
+             (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ((and (eq method 'PUT) (string-match "quizzes/555$" url))
+                         '((id . 555)))
+                        ((and (eq method 'POST) (string-match "quizzes/\\([0-9]+\\)/questions" url))
+                         (setq question-quiz-id (match-string 1 url))
+                         '((id . 700)))
+                        (t nil)))))
+            (org-canvas-sync-quizzes)
+            ;; Question should use the existing quiz ID
+            (expect question-quiz-id :to-equal "555"))))))
 
   (it "sends a quiz-create body that reflects the org input"
-    (let ((temp-dir (make-temp-file "quizzes-test" t)))
-      (unwind-protect
-          (let ((org-file (expand-file-name "quizzes.org" temp-dir)))
-            (with-temp-file org-file
-              (insert "* Quiz 1
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Quiz 1
 :PROPERTIES:
 :QUIZ_TYPE: practice_quiz
 :END:
 
 Intro text.
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (with-mock-api
-                  (org-canvas-sync-quizzes)
-                  ;; The quiz-create POST goes to a URL ending in "quizzes"
-                  ;; (questions go to ".../questions"); match only the create.
-                  (let* ((body (test-org-canvas-api-call-data 'POST "quizzes$"))
-                         (quiz (alist-get 'quiz body)))
-                    ;; Payload is an alist wrapped under the `quiz' key.
-                    (expect quiz :to-be-truthy)
-                    (expect (alist-get 'title quiz) :to-equal "Quiz 1")
-                    (expect (alist-get 'quiz_type quiz) :to-equal "practice_quiz")
-                    ;; Boolean defaults are emitted as JSON booleans.
-                    (expect (alist-get 'show_correct_answers quiz) :to-be t)
-                    ;; ...but not `published': the quiz is created
-                    ;; unpublished and published once its questions exist
-                    ;; (issue #59).
-                    (expect (assq 'published quiz) :to-be nil)
-                    ;; Body text exports to an HTML description.
-                    (expect (alist-get 'description quiz)
-                            :to-match "Intro text\\."))))))
-        (delete-directory temp-dir t)))))
+")))
+      (let ((org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (with-mock-api
+            (org-canvas-sync-quizzes)
+            ;; The quiz-create POST goes to a URL ending in "quizzes"
+            ;; (questions go to ".../questions"); match only the create.
+            (let* ((body (test-org-canvas-api-call-data 'POST "quizzes$"))
+                   (quiz (alist-get 'quiz body)))
+              ;; Payload is an alist wrapped under the `quiz' key.
+              (expect quiz :to-be-truthy)
+              (expect (alist-get 'title quiz) :to-equal "Quiz 1")
+              (expect (alist-get 'quiz_type quiz) :to-equal "practice_quiz")
+              ;; Boolean defaults are emitted as JSON booleans.
+              (expect (alist-get 'show_correct_answers quiz) :to-be t)
+              ;; ...but not `published': the quiz is created
+              ;; unpublished and published once its questions exist
+              ;; (issue #59).
+              (expect (assq 'published quiz) :to-be nil)
+              ;; Body text exports to an HTML description.
+              (expect (alist-get 'description quiz)
+                      :to-match "Intro text\\."))))))))
 
 ;;;; Delete All Quizzes
 
@@ -1709,42 +1680,33 @@ Intro text.
         (expect (org-canvas-delete-all-quizzes) :to-throw 'user-error))))
 
   (it "deletes all quizzes when confirmed"
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (deleted-quizzes nil))
-            (with-temp-file org-file
-              (insert "* Quiz
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Quiz
 :PROPERTIES:
 :CANVAS_ID: 111
 :END:
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
-                          ((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             [((id . 111) (title . "Quiz 1"))
-                              ((id . 222) (title . "Quiz 2"))]))
-                          ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _options)
-                             (dolist (item items)
-                               (push (number-to-string (alist-get 'id item)) deleted-quizzes))
-                             (cons (length items) deleted-quizzes))))
-                  (org-canvas-delete-all-quizzes)
-                  (expect (length deleted-quizzes) :to-equal 2)))))
-        (delete-directory temp-dir t))))
+")))
+      (let ((deleted-quizzes nil)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       [((id . 111) (title . "Quiz 1"))
+                        ((id . 222) (title . "Quiz 2"))]))
+                    ((symbol-function 'org-canvas--delete-items-queued)
+                     (lambda (items _options)
+                       (dolist (item items)
+                         (push (number-to-string (alist-get 'id item)) deleted-quizzes))
+                       (cons (length items) deleted-quizzes))))
+            (org-canvas-delete-all-quizzes)
+            (expect (length deleted-quizzes) :to-equal 2))))))
 
   (it "clears local properties for deleted quizzes"
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (cleared-count 0))
-            (with-temp-file org-file
-              (insert "* Quiz 1
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Quiz 1
 :PROPERTIES:
 :CANVAS_ID: 111
 :LAST_SYNCED: [2024-01-01]
@@ -1756,52 +1718,46 @@ Intro text.
 :END:
 
 - [X] A
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
-                          ((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ((and (eq method 'GET) (string-match "/quizzes$" url))
-                               [((id . 111) (title . "Quiz 1"))])
-                              ((eq method 'DELETE) nil)
-                              (t nil))))
-                          ((symbol-function 'org-canvas-clear-sync-properties)
-                           (lambda (_pom)
-                             (setq cleared-count (1+ cleared-count)))))
-                  (org-canvas-delete-all-quizzes)
-                  ;; Both quiz and question should have properties cleared
-                  (expect cleared-count :to-equal 2)))))
-        (delete-directory temp-dir t))))
+")))
+      (let ((cleared-count 0)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ((and (eq method 'GET) (string-match "/quizzes$" url))
+                         [((id . 111) (title . "Quiz 1"))])
+                        ((eq method 'DELETE) nil)
+                        (t nil))))
+                    ((symbol-function 'org-canvas-clear-sync-properties)
+                     (lambda (_pom)
+                       (setq cleared-count (1+ cleared-count)))))
+            (org-canvas-delete-all-quizzes)
+            ;; Both quiz and question should have properties cleared
+            (expect cleared-count :to-equal 2))))))
 
   (it "continues on individual delete errors"
-    (let ((temp-dir (make-temp-file "quiz-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (delete-attempts 0))
-            (with-temp-file org-file (insert ""))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
-                          ((symbol-function 'org-canvas-api-request)
-                           (lambda (_method _url &rest _args)
-                             [((id . 1) (title . "Q1"))
-                              ((id . 2) (title . "Q2"))]))
-                          ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _options)
-                             (setq delete-attempts (length items))
-                             (cons (length items) nil))))
-                  (org-canvas-delete-all-quizzes)
-                  ;; Both should be attempted
-                  (expect delete-attempts :to-equal 2)))))
-        (delete-directory temp-dir t)))))
+    (with-test-course (dir :files '(("quizzes.org" . "")))
+      (let ((delete-attempts 0)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       [((id . 1) (title . "Q1"))
+                        ((id . 2) (title . "Q2"))]))
+                    ((symbol-function 'org-canvas--delete-items-queued)
+                     (lambda (items _options)
+                       (setq delete-attempts (length items))
+                       (cons (length items) nil))))
+            (org-canvas-delete-all-quizzes)
+            ;; Both should be attempted
+            (expect delete-attempts :to-equal 2)))))))
 
 ;;;; True/False Question Type
 
@@ -2365,79 +2321,62 @@ Content.
 
 (describe "org-canvas-pull-quizzes"
   (it "creates headings from remote quizzes"
-    (let* ((temp-dir (make-temp-file "pull-quiz-test" t))
-           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-quizzes-file quiz-file))
-            (with-org-canvas-test-config
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
-                          ((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method url &optional _params)
-                             (if (string-match "questions" url)
-                                 '()
-                               '(((id . 1) (title . "Midterm")
-                                  (quiz_type . "assignment")
-                                  (description . "<p>Instructions</p>"))))))
-                          ((symbol-function 'org-canvas--html-to-org)
-                           (lambda (html) (replace-regexp-in-string "<[^>]+>" "" html))))
-                  (org-canvas-pull-quizzes)
-                  (with-current-buffer (find-file-noselect quiz-file)
-                    (goto-char (point-min))
-                    (expect (buffer-string) :to-match "Midterm")
-                    (expect (buffer-string) :to-match "CANVAS_ID.*1"))))))
-        (let ((buf (find-buffer-visiting quiz-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+    (with-test-course (dir :files nil)
+      (let ((quiz-file (expand-file-name "quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &optional _params)
+                         (if (string-match "questions" url)
+                             '()
+                           '(((id . 1) (title . "Midterm")
+                              (quiz_type . "assignment")
+                              (description . "<p>Instructions</p>"))))))
+                      ((symbol-function 'org-canvas--html-to-org)
+                       (lambda (html) (replace-regexp-in-string "<[^>]+>" "" html))))
+              (org-canvas-pull-quizzes)
+              (with-current-buffer (find-file-noselect quiz-file)
+                (goto-char (point-min))
+                (expect (buffer-string) :to-match "Midterm")
+                (expect (buffer-string) :to-match "CANVAS_ID.*1"))))))))
 
   (it "updates existing headings on re-pull"
-    (let* ((temp-dir (make-temp-file "pull-quiz-test" t))
-           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file quiz-file
-              (insert "* Old Title
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Old Title
 :PROPERTIES:
 :CANVAS_ID: 1
 :END:
-"))
-            (let ((org-canvas-quizzes-file quiz-file))
-              (with-org-canvas-test-config
-                (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
-                            ((symbol-function 'org-canvas-api-request-all-pages)
-                             (lambda (_method url &optional _params)
-                               (if (string-match "questions" url)
-                                   '()
-                                 '(((id . 1) (title . "Updated Midterm")
-                                    (quiz_type . "assignment"))))))
-                            ((symbol-function 'org-canvas--html-to-org)
-                             (lambda (html) html)))
-                    (org-canvas-pull-quizzes)
-                    (with-current-buffer (find-file-noselect quiz-file)
-                      (goto-char (point-min))
-                      (expect (buffer-string) :to-match "Updated Midterm")))))))
-        (let ((buf (find-buffer-visiting quiz-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
+")))
+      (let ((quiz-file (expand-file-name "quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &optional _params)
+                         (if (string-match "questions" url)
+                             '()
+                           '(((id . 1) (title . "Updated Midterm")
+                              (quiz_type . "assignment"))))))
+                      ((symbol-function 'org-canvas--html-to-org)
+                       (lambda (html) html)))
+              (org-canvas-pull-quizzes)
+              (with-current-buffer (find-file-noselect quiz-file)
+                (goto-char (point-min))
+                (expect (buffer-string) :to-match "Updated Midterm"))))))))
 
   (it "creates file when it does not exist"
-    (let* ((temp-dir (make-temp-file "pull-quiz-test" t))
-           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-quizzes-file quiz-file))
-            (with-org-canvas-test-config
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
-                          ((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params) '()))
-                          ((symbol-function 'org-canvas--html-to-org)
-                           (lambda (html) html)))
-                  (org-canvas-pull-quizzes)
-                  (expect (file-exists-p quiz-file) :to-be-truthy)))))
-        (let ((buf (find-buffer-visiting quiz-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+    (with-test-course (dir :files nil)
+      (let ((quiz-file (expand-file-name "quizzes.org" dir)))
+        (with-org-canvas-test-config
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'org-canvas-api-request) #'test-org-canvas-quiz-no-groups)
+                      ((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method _url &optional _params) '()))
+                      ((symbol-function 'org-canvas--html-to-org)
+                       (lambda (html) html)))
+              (org-canvas-pull-quizzes)
+              (expect (file-exists-p quiz-file) :to-be-truthy))))))))
 
 ;;;; New Quiz Properties Tests
 
@@ -3361,13 +3300,8 @@ Write an essay.
 
 (describe "org-canvas-sync-quizzes with groups (mocked)"
   (it "syncs groups and questions together"
-    (let ((temp-dir (make-temp-file "quiz-group-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (group-posts 0)
-                 (question-posts 0))
-            (with-temp-file org-file
-              (insert "* Test Quiz
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Test Quiz
 :PROPERTIES:
 :END:
 
@@ -3385,39 +3319,35 @@ Write an essay.
 :QUESTION_POINTS: 2
 :QUESTION_BANK_ID: 42
 :END:
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ;; Quiz POST
-                              ((and (eq method 'POST) (string-match "quizzes$" url))
-                               '((id . 100) (title . "Test Quiz")))
-                              ;; Group POST
-                              ((and (eq method 'POST) (string-match "groups$" url))
-                               (setq group-posts (1+ group-posts))
-                               '((quiz_groups . [((id . 55) (name . "Vocab Bank"))])))
-                              ;; Question POST
-                              ((and (eq method 'POST) (string-match "questions$" url))
-                               (setq question-posts (1+ question-posts))
-                               '((id . 200)))
-                              (t nil)))))
-                  (org-canvas-sync-quizzes)
-                  (expect group-posts :to-equal 1)
-                  (expect question-posts :to-equal 1)))))
-        (delete-directory temp-dir t))))
+")))
+      (let ((group-posts 0)
+            (question-posts 0)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ;; Quiz POST
+                        ((and (eq method 'POST) (string-match "quizzes$" url))
+                         '((id . 100) (title . "Test Quiz")))
+                        ;; Group POST
+                        ((and (eq method 'POST) (string-match "groups$" url))
+                         (setq group-posts (1+ group-posts))
+                         '((quiz_groups . [((id . 55) (name . "Vocab Bank"))])))
+                        ;; Question POST
+                        ((and (eq method 'POST) (string-match "questions$" url))
+                         (setq question-posts (1+ question-posts))
+                         '((id . 200)))
+                        (t nil)))))
+            (org-canvas-sync-quizzes)
+            (expect group-posts :to-equal 1)
+            (expect question-posts :to-equal 1))))))
 
   (it "reports quiz sync summary via pipeline"
-    (let ((temp-dir (make-temp-file "quiz-group-test" t)))
-      (unwind-protect
-          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
-                 (final-message nil))
-            (with-temp-file org-file
-              (insert "* Test Quiz
+    (with-test-course (dir :files
+                           '(("quizzes.org" . "* Test Quiz
 :PROPERTIES:
 :END:
 
@@ -3426,28 +3356,27 @@ Write an essay.
 :TYPE: group
 :PICK_COUNT: 3
 :END:
-"))
-            (let ((org-canvas-quizzes-file org-file)
-                  (org-canvas-base-url "https://test.canvas.example.com")
-                  (org-canvas-api-token "test-token")
-                  (org-canvas-course-id "99999"))
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
-                             (cond
-                              ((and (eq method 'POST) (string-match "quizzes$" url))
-                               '((id . 100)))
-                              ((and (eq method 'POST) (string-match "groups$" url))
-                               '((quiz_groups . [((id . 55))])))
-                              (t nil))))
-                          ((symbol-function 'message)
-                           (lambda (fmt &rest args)
-                             (setq final-message (apply #'format fmt args)))))
-                  (org-canvas-sync-quizzes)
-                  ;; Pipeline reports standard summary with success/skipped/failed
-                  (expect final-message :to-match "success")
-                  (expect final-message :to-match "Quizzes sync")))))
-        (delete-directory temp-dir t)))))
+")))
+      (let ((final-message nil)
+            (org-canvas-base-url "https://test.canvas.example.com")
+            (org-canvas-api-token "test-token")
+            (org-canvas-course-id "99999"))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _args)
+                       (cond
+                        ((and (eq method 'POST) (string-match "quizzes$" url))
+                         '((id . 100)))
+                        ((and (eq method 'POST) (string-match "groups$" url))
+                         '((quiz_groups . [((id . 55))])))
+                        (t nil))))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (setq final-message (apply #'format fmt args)))))
+            (org-canvas-sync-quizzes)
+            ;; Pipeline reports standard summary with success/skipped/failed
+            (expect final-message :to-match "success")
+            (expect final-message :to-match "Quizzes sync")))))))
 
 ;;;; ** Description Wrapper Tests (Task 10)
 
