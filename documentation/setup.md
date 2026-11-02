@@ -22,6 +22,8 @@ CI (`.github/workflows/ci.yml`) runs Emacs 30.2's suite in one job, with coverag
 
 **Changelog: one fragment per PR, never CHANGELOG.org.** A PR adds `changelog.d/<issue>.org` (a `* Added`/`* Changed`/`* Fixed` heading, then `- #<issue> ...` items; `changelog.d/README.org`), which CI validates with `scripts/changelog-collect.py --check`; at release time `scripts/changelog-collect.py` folds them into CHANGELOG.org and deletes them. When every PR wrote the top of the same section, each merge conflicted with the next.
 
+**Releases: semver from 0.x, cut with `scripts/release.py` (issue #627).** While the package is pre-1.0 a breaking change bumps the minor version and everything else the patch, and a release is cut before each term starts plus a patch release for field fixes. `scripts/release.py X.Y.Z` folds every fragment into a dated `* X.Y.Z (YYYY-MM-DD)` section of `CHANGELOG.org` (leaving `* Unreleased` empty for the next PR) and rewrites the `;; Version:` header in `lisp/org-canvas.el`, which `org-canvas-version` reads at runtime. `--dry-run` prints what it would do, `--commit` commits the two files, and `--tag` adds the annotated `vX.Y.Z` tag; pushing the commit and the tag and creating the GitHub release stay the maintainer's, and the script prints those commands last. It refuses a dirty tree, a branch other than `main`, a version that is not newer than the last release, and a version or date it cannot parse. `scripts/release.py --check` (CI's `generated-artifacts` job) refuses a `Version` header that disagrees with the newest section in `CHANGELOG.org`.
+
 
 ## Dependencies
 

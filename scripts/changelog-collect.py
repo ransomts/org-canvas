@@ -16,6 +16,9 @@ Fixed, Security), each followed by one or more `- #N ...` items.
     scripts/changelog-collect.py            fold every fragment in, delete them
     scripts/changelog-collect.py --check    validate them and the fold, write nothing
     scripts/changelog-collect.py --dry-run  print the CHANGELOG.org the fold would write
+    scripts/changelog-collect.py --release 0.2.0 [--date 2026-11-02]
+                                            fold them in under a dated release
+                                            heading, leaving `* Unreleased' empty
     scripts/changelog-collect.py --branch-check BRANCH
                                             does BRANCH bring the fragment its
                                             name promises?
@@ -35,6 +38,7 @@ Entries land at the top of their section under `* Unreleased`, newest
 """
 
 import argparse
+import datetime
 import pathlib
 import re
 import subprocess
@@ -151,6 +155,36 @@ def fold(changelog, collected):
     return "\n".join(lines)
 
 
+VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+RELEASE_HEADING = re.compile(r"^\* (\d+\.\d+\.\d+) \(")
+
+
+def release(text, version, date):
+    """Return CHANGELOG TEXT with `* Unreleased' renamed to VERSION at DATE.
+
+A fresh, empty `* Unreleased' takes its place, so the entries the fold
+just wrote become the release's section and the next PR starts a new
+one (issue #627).  VERSION must be semver and must not already have a
+section; DATE is an ISO date as `changelog.d/README.org' writes it."""
+    lines = text.split("\n")
+    try:
+        start = lines.index("* Unreleased")
+    except ValueError:
+        raise FragmentError("CHANGELOG.org has no '* Unreleased' heading")
+    if not VERSION.match(version):
+        raise FragmentError(f"'{version}' is not a version like 0.2.0")
+    if any(RELEASE_HEADING.match(line) and line.split()[1] == version
+           for line in lines):
+        raise FragmentError(f"CHANGELOG.org already has a {version} section")
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith("* ")), len(lines))
+    if not any(line.strip() for line in lines[start + 1:end]):
+        raise FragmentError(f"nothing to release: '* Unreleased' is empty")
+    lines[start] = f"* {version} ({date})"
+    lines[start:start] = ["* Unreleased", ""]
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
@@ -161,6 +195,11 @@ def main():
                              "integration/ branch must add at least one fragment")
     parser.add_argument("--base", default="origin/main", metavar="REF",
                         help="what an integration/ branch is compared against (default: origin/main)")
+    parser.add_argument("--release", metavar="VERSION",
+                        help="fold under a dated '* VERSION (DATE)' heading and "
+                             "leave '* Unreleased' empty")
+    parser.add_argument("--date", metavar="YYYY-MM-DD",
+                        help="the release date (default: today)")
     args = parser.parse_args()
     try:
         paths = fragment_files()
@@ -169,6 +208,11 @@ def main():
             for section, items in parse_fragment(path).items():
                 collected.setdefault(section, []).extend(items)
         result = fold(CHANGELOG.read_text(encoding="utf-8"), collected)
+        if args.release:
+            result = release(result, args.release,
+                             args.date or datetime.date.today().isoformat())
+        if args.date and not args.release:
+            raise FragmentError("--date needs --release VERSION")
         if args.branch_check:
             issue = branch_issue(args.branch_check)
             if issue is None and args.branch_check.startswith(INTEGRATION):
@@ -195,6 +239,10 @@ def main():
     except FragmentError as err:
         print(f"changelog-collect: {err}", file=sys.stderr)
         return 1
+    if args.check and args.release:
+        print("changelog-collect: --check and --release do different things; "
+              "use one", file=sys.stderr)
+        return 2
     if args.check:
         print(f"changelog-collect: {len(paths)} fragment(s) OK")
         return 0
@@ -207,7 +255,11 @@ def main():
     CHANGELOG.write_text(result, encoding="utf-8")
     for path in paths:
         path.unlink()
-    print(f"changelog-collect: folded {len(paths)} fragment(s) into CHANGELOG.org")
+    if args.release:
+        print(f"changelog-collect: folded {len(paths)} fragment(s) into "
+              f"CHANGELOG.org as {args.release}")
+    else:
+        print(f"changelog-collect: folded {len(paths)} fragment(s) into CHANGELOG.org")
     return 0
 
 

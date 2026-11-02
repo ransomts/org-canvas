@@ -186,6 +186,12 @@ jobs:
         # CHANGELOG.org; a malformed one would only fail at release.
         run: python3 scripts/changelog-collect.py --check
 
+      - name: Check the version header matches the last release
+        # `scripts/release.py' bumps both together; a pull request that
+        # touches one and not the other would ship a package whose
+        # `org-canvas-version' disagrees with CHANGELOG.org (issue #627).
+        run: python3 scripts/release.py --check
+
       - name: Check the branch's own changelog fragment
         # The step above validates every fragment; this one checks that
         # the branch brought the fragment it promises.  A branch named

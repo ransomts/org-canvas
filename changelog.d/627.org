@@ -1,0 +1,18 @@
+* Added
+- #627 Versioned releases: =scripts/release.py X.Y.Z= folds every
+  =changelog.d/= fragment into a dated =* X.Y.Z (YYYY-MM-DD)= section of
+  =CHANGELOG.org=, leaves =* Unreleased= empty for the next PR, and
+  rewrites the =;; Version:= header in =lisp/org-canvas.el=, which
+  =org-canvas-version= reads at runtime.  It refuses a dirty tree, a
+  branch other than =main=, a version that is not newer than the last
+  release, and a version or date it cannot parse; =--dry-run=,
+  =--commit= and =--tag= split the steps, and pushing the commit and tag
+  and creating the GitHub release stay the maintainer's, printed last as
+  the commands to run.  =scripts/changelog-collect.py --release= does the
+  changelog half alone, and =scripts/release.py --check= refuses a
+  =Version= header that disagrees with the newest release section (CI runs
+  it in the =.github/workflows/ci.yml= generated-artifacts job).
+  Releases follow semver from 0.x: a breaking change bumps the minor
+  version and everything else the patch, cut before each term and for
+  field fixes; =documentation/setup.md=, =CONTRIBUTING.md= and
+  =changelog.d/README.org= say how.
