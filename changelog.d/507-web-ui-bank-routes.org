@@ -1,0 +1,6 @@
+* Changed
+- #507 Record the Canvas web UI's classic question-bank write routes in
+  coverage.org: the method, fields and reply of each action, read from
+  the canvas-lms source, and why they take a browser session and CSRF
+  token rather than an API token.  A live HAR capture has still to
+  confirm the =form_question_data= shape each question type sends.
