@@ -146,7 +146,7 @@ The preflight check is stubbed, since no credentials are read here."
          (test-quiz-regrade--report nil)
          (org-canvas--dry-run nil)
          (org-canvas-write-allowlist nil))
-     (with-org-canvas-test-config
+     (with-test-api
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   #'test-quiz-regrade--api)
                  ((symbol-function 'org-canvas-api-request-all-pages)

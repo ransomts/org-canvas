@@ -72,31 +72,21 @@ EXTRA pairs come first, so an explicit value shadows the default."
   "Run BODY with the fake API serving QUIZZES and the submission PAGES.
 The submissions directory is a temp directory."
   (declare (indent 2))
-  `(let* ((dir (make-temp-file "quiz-subs-" t))
-          (org-canvas-submissions-directory dir)
-          (org-canvas-submissions-write-gitignore t)
-          (test-quiz-subs--quizzes ,quizzes)
-          (test-quiz-subs--pages ,pages)
-          (test-quiz-subs--urls nil))
-     (unwind-protect
-         (with-org-canvas-test-config
-           (cl-letf (((symbol-function 'org-canvas-api-request) #'test-quiz-subs--api)
-                     ((symbol-function 'org-canvas-api-request-all-pages)
-                      #'test-quiz-subs--all-pages)
-                     ((symbol-function 'message) #'ignore))
-             ,@body))
-       (dolist (buf (buffer-list))
-         (when (and (buffer-file-name buf)
-                    (string-prefix-p dir (buffer-file-name buf)))
-           (with-current-buffer buf (set-buffer-modified-p nil))
-           (kill-buffer buf)))
-       (delete-directory dir t))))
+  `(let ((test-quiz-subs--quizzes ,quizzes)
+         (test-quiz-subs--pages ,pages)
+         (test-quiz-subs--urls nil))
+     (with-test-submissions-dir
+       (with-org-canvas-test-config
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    #'test-quiz-subs--api)
+                   ((symbol-function 'org-canvas-api-request-all-pages)
+                    #'test-quiz-subs--all-pages)
+                   ((symbol-function 'message) #'ignore))
+           ,@body)))))
 
 (defun test-quiz-subs--file (name)
   "Return the text of NAME under the submissions directory."
-  (with-temp-buffer
-    (insert-file-contents (expand-file-name name org-canvas-submissions-directory))
-    (buffer-string)))
+  (test-org-canvas-submissions-file name))
 
 (defun test-quiz-subs--row (name text)
   "Return the table row of student NAME in TEXT, cells trimmed, or nil."

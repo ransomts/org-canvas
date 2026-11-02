@@ -168,6 +168,27 @@ directory, and the buffers visiting its files, are removed after BODY.
                  ,@body)))
          (test-org-canvas-course-cleanup ,dir-var)))))
 
+(defmacro with-test-submissions-dir (&rest body)
+  "Run BODY with a fresh submissions directory the code under test may write into.
+Binds `org-canvas-submissions-directory' to a temp directory and
+`org-canvas-submissions-write-gitignore' to t, since the pulls under
+test write one.  Buffers visiting its files are killed, and the
+directory removed, after BODY."
+  (declare (indent 0))
+  `(let* ((dir (make-temp-file "org-canvas-submissions-" t))
+          (org-canvas-submissions-directory dir)
+          (org-canvas-submissions-write-gitignore t))
+     (unwind-protect
+         (progn ,@body)
+       (test-org-canvas-course-cleanup dir))))
+
+(defun test-org-canvas-submissions-file (name)
+  "Return the text of NAME under `org-canvas-submissions-directory'."
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name name org-canvas-submissions-directory))
+    (buffer-string)))
+
 (defun test-org-canvas-course-prop (dir file heading property)
   "Return PROPERTY of HEADING in DIR/FILE, or nil.
 HEADING is matched anywhere in a headline's text, so both a link's
