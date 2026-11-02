@@ -294,7 +294,8 @@ order."
   (org-canvas--pull-heading-by-title heading))
 
 (defun org-canvas--people-find-person (user-id)
-  "Return the position of the heading carrying USER-ID anywhere in the file, or nil."
+  "Return the position of the heading carrying USER-ID, or nil.
+USER-ID is looked for anywhere in the file."
   (let ((target (format "%s" user-id)) (pos nil))
     (save-excursion
       (goto-char (point-min))

@@ -38,6 +38,7 @@ declare -A NIX_PACKAGES=(
 # --- Phase 1: Lint (Emacs 30), then Complexity ---
 
 LINT_LOG=$(mktemp /tmp/org-canvas-lint-XXXXXX.log)
+COMPILE_LOG=$(mktemp /tmp/org-canvas-compile-XXXXXX.log)
 COMPLEXITY_LOG=$(mktemp /tmp/org-canvas-complexity-XXXXXX.log)
 
 echo "Running linter (Emacs 30, as CI does)..."
@@ -57,7 +58,27 @@ if [ "$lint_rc" -ne 0 ]; then
   else
     echo "BLOCKED: eldev lint did not complete (exit $lint_rc); see the log above and push again."
   fi
-  rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
+  rm -f "$LINT_LOG" "$COMPILE_LOG" "$COMPLEXITY_LOG"
+  exit 1
+fi
+echo ""
+
+# The linter misses what the byte-compiler sees: docstring width computed
+# after macro expansion, forward references, free variables, unused
+# bindings.  `-s main` keeps scripts/ out of the fileset (a bare
+# `eldev compile` would run the mutation script), and `-W` turns every
+# warning into a failure (issue #626).
+echo "Byte-compiling (warnings are errors)..."
+compile_rc=0
+nix-shell \
+  -I "nixpkgs=${NIX_ARCHIVES[30]}" \
+  -p "${NIX_PACKAGES[30]}" \
+  --keep PATH \
+  --run "emacs --version | head -1 && eldev compile -s main -W -F" > "$COMPILE_LOG" 2>&1 || compile_rc=$?
+cat "$COMPILE_LOG" || true
+if [ "$compile_rc" -ne 0 ]; then
+  echo "BLOCKED: byte-compilation reported errors or warnings; see the log above."
+  rm -f "$LINT_LOG" "$COMPILE_LOG" "$COMPLEXITY_LOG"
   exit 1
 fi
 echo ""
@@ -70,7 +91,7 @@ if ! echo "$complexity_output" | grep -q "above cognitive threshold"; then
   echo "Checking cognitive complexity..."
   echo "$complexity_output"
   echo "BLOCKED: eldev complexity did not complete; see the log above and push again."
-  rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
+  rm -f "$LINT_LOG" "$COMPILE_LOG" "$COMPLEXITY_LOG"
   exit 1
 fi
 violations=$(echo "$complexity_output" | grep -oP '\d+(?= above cognitive threshold)' || echo "0")
@@ -79,14 +100,14 @@ if [ "$violations" -gt "$COMPLEXITY_BUDGET" ]; then
   echo "Checking cognitive complexity..."
   echo "$complexity_output" | grep -i "very.high"
   echo "BLOCKED: $violations function(s) above threshold (budget: $COMPLEXITY_BUDGET)."
-  rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
+  rm -f "$LINT_LOG" "$COMPILE_LOG" "$COMPLEXITY_LOG"
   exit 1
 fi
 echo "Checking cognitive complexity..."
 echo "Complexity OK ($violations function(s) above threshold; budget $COMPLEXITY_BUDGET)."
 echo ""
 
-rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
+rm -f "$LINT_LOG" "$COMPILE_LOG" "$COMPLEXITY_LOG"
 
 # --- Phase 2: Emacs 29 + Emacs 30 tests (parallel) ---
 

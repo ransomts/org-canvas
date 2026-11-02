@@ -1,0 +1,7 @@
+* Fixed
+- #626 Byte-compiling now runs with warnings as errors in CI and the
+  pre-push hook, and the package compiles with no warnings: the
+  generated sync commands' docstrings are refilled to 80 columns, the
+  property-registry alias is declared before its referent, the write
+  allowlist docstring escapes its examples' quotes, an unused binding
+  is gone, and cross-file references are declared.

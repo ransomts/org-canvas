@@ -57,7 +57,12 @@
 ;; requires this file; these are the calls back into it.
 (declare-function org-canvas--module-item-read-props "org-canvas-module-items")
 (declare-function org-canvas--module-pull-insert-items "org-canvas-module-items")
+(declare-function org-canvas--module-pull-item "org-canvas-module-items")
 (declare-function org-canvas--module-sync-items "org-canvas-module-items")
+;; The file vars belong to the content modules, which are loaded beside
+;; this one; read at call time by `org-canvas--module-file-for-type'.
+(defvar org-canvas-pages-file)
+(defvar org-canvas-quizzes-file)
 
 ;;;; Configuration
 

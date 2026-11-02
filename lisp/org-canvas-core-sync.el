@@ -1193,13 +1193,17 @@ spec declares a :first command to run ahead of it (outcomes)."
   "Return the docstring SPEC's push-by-heading command carries."
   (let ((file-expr (plist-get spec :file-expr)))
     (format "Sync the %s heading TARGET names to Canvas (issue #287).
-TARGET is the heading's exact title in %s, or, with BY
-`canvas-id', its %s; an error names a target that matches no
-heading or more than one.  Nil asks for a title (never under
-`noninteractive').  Return the run context; its :outcome is `synced',
-`unchanged', `conflict', `pulled', `duplicate', `fragment' or
-`dry-run'.  The at-point command does the same at point; this one finds the heading,
-so a script need not (`org-canvas-sync-headings' takes several)."
+TARGET is the heading's exact title in
+%s, or, with BY
+`canvas-id', its %s; an error names a target
+that matches no heading or more than one.  Nil
+asks for a title (never under `noninteractive').
+Return the run context; its :outcome is `synced',
+`unchanged', `conflict', `pulled', `duplicate',
+`fragment' or `dry-run'.  The at-point command does
+the same at point; this one finds the heading, so a
+script need not (`org-canvas-sync-headings' takes
+several)."
             (plist-get spec :singular)
             (if (symbolp file-expr)
                 (format "the file `%s' names" file-expr)

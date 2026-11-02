@@ -54,6 +54,7 @@
 (require 'org-canvas-new-quiz-items)
 (require 'ox-html)
 (require 'cl-lib)
+(declare-function org-canvas--validate-new-quiz-item-type "org-canvas-validate-content")
 
 ;;;; Configuration
 
