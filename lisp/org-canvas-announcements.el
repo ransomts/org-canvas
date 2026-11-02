@@ -68,6 +68,16 @@ Disabling comments is pushed as a `lock_at' in the past (see the
 payload builder), which Canvas reports back as `locked'."
   (not (eq (alist-get 'locked item) t)))
 
+(defconst org-canvas--announcement-comments-locked-at "1970-01-01T00:00:00Z"
+  "The fixed `lock_at' the payload builder pushes to close replies.
+A constant, not the time of the build: the payload is hashed for
+change detection, so a timestamp taken then gave every sync a payload
+it had never seen for an announcement that does not set
+ALLOW_COMMENTS.  Each sync re-PUT every such announcement and moved
+`lock_at' forward again (issue #629).  Any instant in the past locks
+the topic; this one is identical on every sync, so the second one
+skips the announcement as unchanged.")
+
 (org-canvas-register-properties "announcements"
   :duplicate-titles t
   ;; The push sends the heading as the title, so the drift report
@@ -110,9 +120,10 @@ payload builder), which Canvas reports back as `locked'."
 (defun org-canvas--announcement-post-build (data payload)
   "Apply announcement-specific payload transformations.
 DATA is the parsed plist, PAYLOAD is the alist so far."
-  ;; Lock comments when ALLOW_COMMENTS is false/nil
+  ;; Lock comments when ALLOW_COMMENTS is false/nil.  The timestamp is a
+  ;; constant so the payload hash stays stable between syncs (issue #629).
   (unless (plist-get data :allow_discussion_comments)
-    (push `(lock_at . ,(org-canvas-current-iso8601-timestamp)) payload))
+    (push `(lock_at . ,org-canvas--announcement-comments-locked-at) payload))
   ;; Resolve section names to Canvas section IDs
   (when (plist-get data :specific_sections)
     (let ((resolved (org-canvas--resolve-section-names-to-ids
