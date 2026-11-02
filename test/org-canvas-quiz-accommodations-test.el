@@ -273,7 +273,24 @@ Read the syllabus first.
     (expect (org-canvas--strip-named-tables
              "Intro\n\n#+NAME: accommodations\n| a | b |\n|---+---|\n| 1 | 2 |\n\n#+NAME: other\n| x |\nAfter\n"
              '("accommodations" "overrides"))
-            :to-equal "Intro\n\n\n#+NAME: other\n| x |\nAfter\n")))
+            :to-equal "Intro\n\n\n#+NAME: other\n| x |\nAfter\n"))
+
+  (it "matches a tab after the colon and trailing whitespace (issue #634)"
+    ;; A hand-written file separates the colon from the name with a tab
+    ;; and may leave trailing whitespace; a one-space, end-of-line-strict
+    ;; copy left the table in the exported description.
+    (expect (org-canvas--strip-named-tables
+             "Intro\n\n#+NAME:\taccommodations  \n| a | b |\n|---+---|\n| 1 | 2 |\n\nAfter\n"
+             '("accommodations"))
+            :to-equal "Intro\n\n\nAfter\n"))
+
+  (it "does not strip a table whose name merely starts with one it names"
+    ;; `overrides-old' is a different table, and the line's end anchor is
+    ;; what tells them apart (issue #634).
+    (expect (org-canvas--strip-named-tables
+             "#+NAME: overrides-old\n| x |\n"
+             '("overrides"))
+            :to-equal "#+NAME: overrides-old\n| x |\n")))
 
 (describe "wiring"
   (it "is in the sync tiers right after quizzes' tier, and in the dry-run command list"

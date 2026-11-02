@@ -1,0 +1,22 @@
+* Fixed
+- #634 A =#+NAME:= table the sync reads is now recognised however the
+  colon and the name are separated and whatever whitespace trails the
+  line.  The copies that matched one space and no end anchor missed a
+  tab-separated =overrides= or =accommodations= table, so it was
+  exported into a Canvas description and left unvalidated, and a
+  tab-separated table also let =overrides-old= match.  One tolerant
+  matcher now serves every reader, validator and stripper.
+- #634 A failed comments import no longer leaks its markers.  The
+  import frees them in =unwind-protect=, as the grade import already
+  did, so a signalling student does not leave a marker keeping the
+  grading buffer alive.
+- #634 A heading is now looked up by =CANVAS_ID= the same way in every
+  module: the id is compared as a string, so Canvas's numeric id
+  matches the digits in the file, and the first match wins rather than
+  the last.  The submissions link to an assignment or rubric, the
+  rubric's outcome title and the module item's link all use the one
+  helper, as do the six modules that each wrote their own position
+  lookup.
+- #634 A blank =PUBLISH_AT= no longer refuses a publish.  A blank value
+  schedules nothing, and the publish verb now trims it as the page pull
+  and validator do; one helper answers "scheduled?" for all three.

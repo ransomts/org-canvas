@@ -774,7 +774,7 @@ hold an unscored roster and refusal notes (issue #488)."
 ;; there is no telling what a push would clear.
 
 (defconst org-canvas--gradebook-overrides-table-regexp
-  "^#\\+NAME:[ \t]+final-grade-overrides[ \t]*$"
+  (org-canvas--named-table-line-regexp "final-grade-overrides")
   "Match the `#+NAME:' line that opens a final grade overrides table.")
 
 (defun org-canvas--gradebook-first-enrollments (enrollments)

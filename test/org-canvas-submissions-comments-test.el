@@ -379,7 +379,21 @@
                 :to-equal
                 '("Comments: user 9999 matched nothing"
                   "Comments: kept back user 5003 draft: grade already posted"
-                  "[DRY-RUN] Comments: 0 row comment(s), 0 draft(s), 0 sent comment(s) would change; 1 key(s) matched nothing, 1 kept back"))))))
+                  "[DRY-RUN] Comments: 0 row comment(s), 0 draft(s), 0 sent comment(s) would change; 1 key(s) matched nothing, 1 kept back")))))
+
+  (it "frees every marker when a student's plan signals (issue #634)"
+    (with-scom-file
+      (let* ((students (org-canvas-submissions-export-comments))
+             (captured nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-comments-import-student)
+                   (lambda (_student markers &rest _)
+                     (setq captured markers)
+                     (error "Boom"))))
+          (expect (org-canvas--submissions-comments-import students nil)
+                  :to-throw))
+        (expect captured :not :to-be nil)
+        (expect (mapcar (lambda (m) (marker-buffer (cdr m))) captured)
+                :to-equal (make-list (length captured) nil))))))
 
 ;;;; Check
 

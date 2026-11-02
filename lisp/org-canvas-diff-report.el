@@ -432,17 +432,7 @@ without re-running every list request."
 
 (defun org-canvas--diff-find-heading-by-id (file id-property id)
   "Return the position of the heading in FILE whose ID-PROPERTY is ID, or nil."
-  (when (and file (file-exists-p file))
-    (with-current-buffer (org-canvas--find-file-noselect file)
-      (save-excursion
-        (goto-char (point-min))
-        (catch 'found
-          (org-map-entries
-           (lambda ()
-             (when (equal (org-entry-get (point) id-property) id)
-               (throw 'found (point))))
-           nil 'file)
-          nil)))))
+  (org-canvas--file-heading-position-by-property file id-property id))
 
 (defun org-canvas--diff-pending-position (entry)
   "Return (FILE . POSITION) of the heading of PENDING row ENTRY, or nil.

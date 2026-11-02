@@ -176,6 +176,25 @@
                 (kill-buffer)))
           (delete-directory dir t)))))
 
+  (it "excludes an override table named with a tab and trailing whitespace"
+    ;; The strict one-space copy left the table in the exported body, so
+    ;; the table a sync reads was pushed into the Canvas description
+    ;; (issue #634).
+    (with-org-canvas-test-config
+      (let* ((dir (make-temp-file "export-override-tab-" t))
+             (test-file (expand-file-name "test.org" dir)))
+        (unwind-protect
+            (progn
+              (with-temp-file test-file
+                (insert "* Assignment\n:PROPERTIES:\n:END:\n\nComplete the lab.\n\n#+NAME:\toverrides  \n| Section   | Due At              | Unlock At | Lock At |\n|-----------+---------------------+-----------+---------|\n| Section A | <2026-03-01 Sun>    |           |         |\n"))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char (point-min))
+                (let ((html (org-canvas--export-subtree-body-to-html)))
+                  (expect html :to-match "Complete the lab")
+                  (expect html :not :to-match "Section A"))
+                (kill-buffer)))
+          (delete-directory dir t)))))
+
   (it "does not warn about links in property drawers (GROUP/RUBRIC_LINK)"
     (with-org-canvas-test-config
       (let* ((dir (make-temp-file "export-propdrawer-" t))

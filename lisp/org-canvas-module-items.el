@@ -1545,16 +1545,9 @@ display title."
                          (file-name-directory (expand-file-name org-canvas-modules-file)))))
         (if (not (file-exists-p file-path))
             (or title "Untitled")
-          (let ((heading-name nil))
-            (with-current-buffer (org-canvas--find-file-noselect file-path)
-              (save-excursion
-                (goto-char (point-min))
-                (org-map-entries
-                 (lambda ()
-                   (when (equal (org-entry-get (point) id-prop)
-                                (format "%s" content-id))
-                     (setq heading-name (org-get-heading t t t t))))
-                 "LEVEL=1" 'file)))
+          (let ((heading-name
+                 (org-canvas--heading-title-by-property
+                  file-path id-prop content-id "LEVEL=1")))
             (if heading-name
                 ;; `heading-name' may already contain escape sequences like `\[';
                 ;; unescape so `org-link-make-string' doesn't double-escape them.

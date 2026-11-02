@@ -315,12 +315,8 @@ the link, not files.org (issue #390)."
          (msg (error-message-string err)))
     (org-canvas--log-warning org-canvas--logger
       "[Rewrite] file %s %s: %s" id (if skip "skipped" "fetch failed") msg)
-    (org-canvas--pull-summary-record
-     :kind (if skip 'skip 'error)
-     :file (org-canvas--rewrite-body-file)
-     :item id
-     :error msg
-     :log-line (org-canvas--pull-summary-current-log-line))))
+    (org-canvas--pull-summary-record-failure
+     err (org-canvas--rewrite-body-file) id msg)))
 
 ;; A file id the rewriter will not resolve this command — one whose
 ;; fetch failed, or one whose URL names another course — is remembered
@@ -556,14 +552,8 @@ Returns a point in the buffer visiting FILE."
         ;; query requires (a group with no WEIGHT) does not match it, and
         ;; searching with the query wrote a second copy on every pull
         ;; (issue #638).
-        (goto-char (point-min))
-        (let ((found nil))
-          (org-map-entries
-           (lambda ()
-             (when (equal (org-entry-get (point) id-prop)
-                          (format "%s" canvas-id))
-               (setq found (point))))
-           (format "LEVEL=%d" level) 'file)
+        (let ((found (org-canvas--heading-position-by-property
+                      id-prop canvas-id (format "LEVEL=%d" level))))
           (if found
               found
             ;; Create new heading at the query's level, under its container
@@ -1655,6 +1645,24 @@ KIND is `error' (default), `skip' or `gone'."
               :error (and error (org-canvas--log-redact error))
               :log-line log-line)
         org-canvas--pull-summary))
+
+(defun org-canvas--pull-summary-record-failure (err file item &optional error)
+  "Record ERR in the pull summary, as a skip or an error.
+FILE is the .org file (basename) the pull was writing, ITEM what
+failed, and ERROR the message to record (default ERR's own).  A
+refusal or a disabled tab `org-canvas--api-skip-error-p' recognises is
+a skip, as `org-canvas--safe-pull' counts one (issues #155, #397,
+#486); anything else is an error.  Return non-nil when it was a skip,
+for a caller that words its log line accordingly.  The modules that
+pull one item at a time had four hand-written copies of this rule, and
+one hardcoded the file's basename (issue #634)."
+  (let* ((skip (org-canvas--api-skip-error-p err))
+         (msg (or error (error-message-string err))))
+    (org-canvas--pull-summary-record
+     :kind (if skip 'skip 'error)
+     :file file :item item :error msg
+     :log-line (org-canvas--pull-summary-current-log-line))
+    skip))
 
 (defun org-canvas--pull-summary-records-of-kind (kind)
   "Return recorded summary entries of KIND, in insertion order.

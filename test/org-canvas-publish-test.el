@@ -245,6 +245,17 @@ file are removed afterwards."
                      (user-error e))))
           (expect (cadr err) :to-match "scheduled by PUBLISH_AT")))))
 
+  (it "publishes a page whose PUBLISH_AT is blank, which schedules nothing (issue #634)"
+    (test-publish--with-file file org-canvas-pages-file
+        (concat "* Week 5\n:PROPERTIES:\n:CANVAS_URL: week-5\n"
+                ":PUBLISH_AT:\n:END:\n")
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (test-publish--api '((url . "week-5") (title . "Week 5")
+                                      (published . :json-false) (front_page . :json-false)))))
+        (org-canvas-set-published-at-point t)
+        (expect (mapcar #'caddr (test-publish--puts))
+                :to-equal '(((wiki_page (published . t))))))))
+
   (it "sends a discussion's flag flat and refuses one with replies"
     (test-publish--with-file file org-canvas-discussions-file
         "* Week 1 forum\n:PROPERTIES:\n:CANVAS_ID: 7\n:PUBLISHED: true\n:END:\n\nTalk.\n"

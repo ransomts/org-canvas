@@ -1257,7 +1257,8 @@ description leaves the body alone, and the fresh table would then sit
 under the stale one (issue #411)."
   (org-back-to-heading t)
   (let ((end (save-excursion (org-end-of-subtree t) (point))))
-    (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+    (when (re-search-forward
+           (org-canvas--named-table-line-regexp "overrides") end t)
       (let ((start (line-beginning-position)))
         (forward-line 1)
         (when (org-at-table-p)

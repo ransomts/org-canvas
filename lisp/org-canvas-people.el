@@ -296,15 +296,8 @@ order."
 (defun org-canvas--people-find-person (user-id)
   "Return the position of the heading carrying USER-ID, or nil.
 USER-ID is looked for anywhere in the file."
-  (let ((target (format "%s" user-id)) (pos nil))
-    (save-excursion
-      (goto-char (point-min))
-      (org-map-entries
-       (lambda ()
-         (when (and (not pos) (equal (org-entry-get (point) "USER_ID") target))
-           (setq pos (point))))
-       "USER_ID={.}" 'file))
-    pos))
+  (org-canvas--heading-position-by-property
+   "USER_ID" user-id "USER_ID={.}"))
 
 (defun org-canvas--people-append-person (role-pos name)
   "Append a level-2 heading NAME at the end of the role subtree at ROLE-POS.

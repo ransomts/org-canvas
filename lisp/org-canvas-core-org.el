@@ -751,6 +751,37 @@ HEADING should already be unescaped (no \\=\\[ or \\=\\] escapes)."
               (format "^\\*+ +.*\\[%s\\]" (regexp-quote display-name))
               nil t))))))))
 
+(defconst org-canvas--named-table-line
+  "^#\\+NAME:[ \t]+%s[ \t]*$"
+  "Format for the whole line that names a `#+NAME:' table.
+A `#+NAME:' line opens a table a sync reads (overrides, accommodations,
+a grading scheme's cutoffs, ...), which is not body text.  A
+hand-written file may separate the colon from the name with a tab as
+readily as a space and may leave trailing whitespace, so every reader,
+validator and stripper matches this same line; a stricter copy misses
+the table (issue #634).")
+
+(defun org-canvas--named-table-line-regexp (names)
+  "Return the regexp matching a `#+NAME:' line naming one of NAMES.
+NAMES is a list of table names, or one name as a string."
+  (format org-canvas--named-table-line
+          (if (stringp names) (regexp-quote names) (regexp-opt names))))
+
+(defun org-canvas--named-table-text (text names)
+  "Return the `#+NAME:' table named in NAMES found in TEXT, as text, or nil.
+The text runs from the `#+NAME:' line through its last table row.
+NAMES is a list of table names, or one name as a string."
+  (with-temp-buffer
+    (insert text)
+    (goto-char (point-min))
+    (when (re-search-forward (org-canvas--named-table-line-regexp names) nil t)
+      (let ((start (match-beginning 0)))
+        (forward-line 1)
+        (while (looking-at "^|")
+          (forward-line 1))
+        (string-trim-right
+         (buffer-substring-no-properties start (point)))))))
+
 (defun org-canvas--strip-named-tables (text names)
   "Return TEXT without the `#+NAME:' tables named in NAMES.
 Each is the `#+NAME: <name>' line and the table rows after it: the
@@ -759,9 +790,11 @@ text.  TEXT without any such table is returned unchanged."
   (with-temp-buffer
     (insert text)
     (goto-char (point-min))
-    (while (re-search-forward
-            (format "^#\\+NAME:[ \t]+\\(%s\\)[ \t]*\n" (regexp-opt names)) nil t)
+    (while (re-search-forward (org-canvas--named-table-line-regexp names) nil t)
       (let ((start (match-beginning 0)))
+        ;; `$' matches before the newline but does not consume it, so step
+        ;; past the NAME line before looking for its table rows.
+        (forward-line 1)
         (while (looking-at "^|")
           (forward-line 1))
         (delete-region start (point))))
@@ -785,22 +818,59 @@ or missing, so a caller may pass a file variable guarded only by
            match 'file)))
       (and (stringp found) found))))
 
+(defun org-canvas--heading-position-by-property (property value &optional match)
+  "Return the position of the first heading whose PROPERTY is VALUE, or nil.
+Searches the current buffer.  VALUE is compared as a string, so a
+number matches its digits.  MATCH limits the search as in
+`org-canvas--heading-property-by-title'; nil searches every heading.
+The whole buffer is searched, whatever the narrowing, and the first
+match wins: a pull that healed a second copy of one id looks up the
+copy the sync reads (issue #634)."
+  (let ((target (format "%s" value)) (found nil))
+    (save-excursion
+      (goto-char (point-min))
+      (org-map-entries
+       (lambda ()
+         (when (and (not found)
+                    (equal (org-entry-get (point) property) target))
+           (setq found (point))))
+       match 'file))
+    found))
+
+(defun org-canvas--file-heading-position-by-property (file property value
+                                                           &optional match)
+  "Return the position of the first heading in FILE whose PROPERTY is VALUE.
+As `org-canvas--heading-position-by-property', in FILE, with MATCH
+limiting the search as there; nil when FILE is nil or missing, so a
+caller may pass a file variable guarded only by `boundp'.  Returns a
+marker, since FILE's buffer is not the caller's."
+  (when (and file (file-exists-p file))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (let ((pos (org-canvas--heading-position-by-property
+                  property value match)))
+        (and pos (copy-marker pos))))))
+
 (defun org-canvas--heading-title-by-property (file property value &optional match)
   "Return the title of the first heading in FILE whose PROPERTY is VALUE, or nil.
 VALUE is compared as a string, so a number matches its digits.  MATCH
 limits the search as in `org-canvas--heading-property-by-title'; nil when
 FILE is nil or missing."
-  (when (and file (file-exists-p file))
-    (let ((target (format "%s" value)) (title nil))
-      (with-current-buffer (org-canvas--find-file-noselect file)
+  (let ((pos (org-canvas--file-heading-position-by-property
+              file property value match)))
+    (when pos
+      (with-current-buffer (marker-buffer pos)
         (save-excursion
-          (goto-char (point-min))
-          (org-map-entries
-           (lambda ()
-             (when (and (not title) (equal (org-entry-get (point) property) target))
-               (setq title (org-get-heading t t t t))))
-           match 'file)))
-      title)))
+          (goto-char pos)
+          (org-get-heading t t t t))))))
+
+(defun org-canvas--publish-at-scheduled-p (pom)
+  "Return non-nil when the heading at POM carries a non-blank PUBLISH_AT.
+POM is a position, marker or buffer position.  A hand-written file may
+leave the property blank, which schedules nothing, so every reader
+trims it.  The page pull, the page validator and the publish verb all
+ask this one question, and used to spell it differently (issue #634)."
+  (let ((publish-at (org-entry-get pom "PUBLISH_AT")))
+    (and publish-at (not (string-empty-p (string-trim publish-at))))))
 
 (defun org-canvas--heading-link (file heading text)
   "Return an Org link to HEADING in FILE, labelled TEXT.

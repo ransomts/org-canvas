@@ -628,17 +628,9 @@ module.  Nil when the feature is not loaded."
 
 (defun org-canvas--submissions-heading-for-id (file id)
   "Return the title of the heading in FILE whose CANVAS_ID is ID, or nil.
-Nil as well when FILE is nil or missing."
-  (when (and file (file-exists-p file))
-    (with-current-buffer (org-canvas--find-file-noselect file)
-      (save-excursion
-        (catch 'found
-          (org-map-entries
-           (lambda ()
-             (when (equal (org-entry-get (point) "CANVAS_ID") id)
-               (throw 'found (org-get-heading t t t t))))
-           nil 'file)
-          nil)))))
+Nil as well when FILE is nil or missing.  ID is compared as a string,
+so Canvas's numeric id matches its digits (issue #634)."
+  (org-canvas--heading-title-by-property file "CANVAS_ID" id))
 
 (defun org-canvas--submissions-heading-for-assignment (assignment-id)
   "Return the title of the assignments heading whose CANVAS_ID is ASSIGNMENT-ID.

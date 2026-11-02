@@ -97,16 +97,10 @@
 
 (defun org-canvas--section-find-heading-by-id (canvas-id)
   "Find heading with CANVAS_ID property matching CANVAS-ID in current buffer.
-Return marker or nil."
-  (let ((found nil))
-    (save-excursion
-      (goto-char (point-min))
-      (org-map-entries
-       (lambda ()
-         (when (equal (org-entry-get (point) "CANVAS_ID") canvas-id)
-           (setq found (point-marker))))
-       "LEVEL=1" 'file))
-    found))
+Return marker or nil.  The first match wins, as everywhere else."
+  (let ((pos (org-canvas--heading-position-by-property
+              "CANVAS_ID" canvas-id "LEVEL=1")))
+    (and pos (copy-marker pos))))
 
 (defun org-canvas--section-set-properties (pom id start-at end-at restrict)
   "Set section properties at POM from Canvas API data.
@@ -224,7 +218,8 @@ local headings whose CANVAS_ID no longer exists on Canvas."
   "Search for a `#+NAME: overrides' table between point and END.
 Return parsed table via `org-table-to-lisp', or nil if not found."
   (save-excursion
-    (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+    (when (re-search-forward
+           (org-canvas--named-table-line-regexp "overrides") end t)
       (forward-line 1)
       (when (looking-at-p org-table-line-regexp)
         (org-table-to-lisp)))))
@@ -1524,7 +1519,8 @@ names.  ROWS nil starts a new table."
   "Return (BEG . TABLE-END) of the overrides table between point and END.
 Nil when there is none."
   (save-excursion
-    (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+    (when (re-search-forward
+           (org-canvas--named-table-line-regexp "overrides") end t)
       (forward-line 1)
       (when (looking-at-p org-table-line-regexp)
         (cons (point) (org-table-end))))))
