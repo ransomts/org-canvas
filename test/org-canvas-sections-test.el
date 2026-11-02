@@ -2066,12 +2066,11 @@ with Canvas.  DRY-RUN binds `org-canvas--dry-run'; CONFIRM passes
               :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:19:07Z")))
 
   (it "answers the item alist from the read, and nil when the read fails"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("assignments/456" . ((id . 456) (updated_at . "2026-01-01T00:00:00Z")))))
-        (expect (alist-get 'id (org-canvas--override-read-assignment-item "456"))
-                :to-equal 456))
+    (with-test-api
+      (setq test-org-canvas-api-responses
+            '(("assignments/456" . ((id . 456) (updated_at . "2026-01-01T00:00:00Z")))))
+      (expect (alist-get 'id (org-canvas--override-read-assignment-item "456"))
+              :to-equal 456)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) (error "Boom")))
                 ((symbol-function 'org-canvas--log-warning) #'ignore))

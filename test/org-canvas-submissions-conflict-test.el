@@ -713,15 +713,14 @@ closing message), :asked (the question) and :saved (the file after)."
 
   (it "names a restricted push with nothing to send"
     (let ((said nil))
-      (with-org-canvas-test-config
+      (with-test-api
         (with-grading-file test-only--file
-          (with-mock-api
-            (cl-letf (((symbol-function 'message)
-                       (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-              (let ((result (org-canvas--submissions-push-current nil '(5003 42))))
-                (expect (plist-get result :unchanged) :to-equal '(5003))
-                (expect (plist-get result :missing) :to-equal '(42))))
-            (expect (test-org-canvas-api-call-count) :to-equal 0))))
+          (cl-letf (((symbol-function 'message)
+                     (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+            (let ((result (org-canvas--submissions-push-current nil '(5003 42))))
+              (expect (plist-get result :unchanged) :to-equal '(5003))
+              (expect (plist-get result :missing) :to-equal '(42))))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))
       (expect said :to-equal "Nothing to push; no row for 42; nothing to send for 5003")))
 
   (it "names the late status and the rubric rows a dry run would send"

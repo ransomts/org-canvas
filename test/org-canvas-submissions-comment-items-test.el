@@ -519,10 +519,9 @@ create answers id 9001 and an update its own id."
 
 (describe "org-canvas--submissions-self-id"
   (it "reads the token owner's id, and refuses an answer without one"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (expect (org-canvas--submissions-self-id) :to-equal "12345")
-        (expect-api-called 'GET "/api/v1/users/self"))
+    (with-test-api
+      (expect (org-canvas--submissions-self-id) :to-equal "12345")
+      (expect-api-called 'GET "/api/v1/users/self")
       (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) '((name . "x")))))
         (expect (org-canvas--submissions-self-id) :to-throw 'org-canvas-api-error)))))
 

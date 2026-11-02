@@ -408,17 +408,16 @@ The buffer's file is FILENAME, so a spec can name it in an allowlist."
         (expect (car warnings) :to-match "allowlist"))))
 
   (it "deletes a named feature's orphans"
-    (with-org-canvas-test-config
-      (let ((test-write-scope--pages-file "/course/pages.org"))
-        (with-mock-api
-          (let ((org-canvas-write-allowlist '("pages.org")))
-            (org-canvas--orphan-delete-all
-             (list (cons (list :name "Pages" :file-var 'test-write-scope--pages-file
-                               :id-field 'id :title-field 'title
-                               :endpoint "pages")
-                         '(((id . 5) (title . "Orphan Page")))))))
-          (expect (test-org-canvas-api-called-p 'DELETE "pages/5")
-                  :to-be-truthy))))))
+    (with-test-api
+      (let ((test-write-scope--pages-file "/course/pages.org")
+            (org-canvas-write-allowlist '("pages.org")))
+        (org-canvas--orphan-delete-all
+         (list (cons (list :name "Pages" :file-var 'test-write-scope--pages-file
+                           :id-field 'id :title-field 'title
+                           :endpoint "pages")
+                     '(((id . 5) (title . "Orphan Page")))))))
+      (expect (test-org-canvas-api-called-p 'DELETE "pages/5")
+              :to-be-truthy))))
 
 ;;;; Sync-all and delete-all: skip, do not abort
 
