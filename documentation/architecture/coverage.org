@@ -150,6 +150,53 @@ nobody has to probe again:
   item taken from one and a stimulus are readable as items only, and
   are mirrored read-only (#508).
 
+** The Web UI's Bank Writes (issue #507)
+
+If a bank is ever to be written, the only routes that do it are the web
+app's own, read from canvas-lms at commit
+=1c9f0bb8013ed69c4f2efe11fd483025469b7e6c= (the public mirror's master,
+committed 2026-04-30; the hosted instance lags it).  =config/routes.rb=
+92-99 defines a =:question_banks= concern, which line 423 applies inside
+=resources :courses=; line 874 gives =resources :accounts= the same
+shape, and a user's own banks are read-only (line 1031).
+=QuestionBanksController= and =AssessmentQuestionsController= serve it.
+The actions read Rails' nested parameters, so a field arrives either
+form-encoded (=assessment_question_bank[title]=) or as the same JSON
+object (={"assessment_question_bank": {"title": …}}=).
+
+| Action                | Method and route                                  | Sent                                                       | Returns |
+|-----------------------+---------------------------------------------------+------------------------------------------------------------+---------|
+| create a bank         | =POST /courses/:id/question_banks=                | =assessment_question_bank[title]=                          | the bank; 400 with its errors; an HTML request redirects to the banks page |
+| rename, set alignments| =PUT /courses/:id/question_banks/:id=             | the same fields                                            | the bank with =learning_outcome_alignments= |
+| delete a bank         | =DELETE /courses/:id/question_banks/:id=          | —                                                          | the bank |
+| add a question        | =POST …/question_banks/:id/assessment_questions=  | =assessment_question[name]= and =form_question_data=        | =question_json=; 400 with its errors |
+| edit a question       | =PUT …/assessment_questions/:id=                  | the same fields                                            | =question_json= |
+| delete a question     | =DELETE …/assessment_questions/:id=               | —                                                          | the question |
+| move questions        | =POST …/question_banks/:id/move_questions=        | =questions= (id ⇒ =0= skips), =move=1= moves else copies, =assessment_question_bank_id= the target | ={}=; 422 without =questions= |
+| reorder questions     | =POST …/question_banks/:id/reorder=               | =order=, comma-separated ids                               | ={reorder: true}= |
+| bookmark a bank       | =POST …/question_banks/:id/bookmark=              | =unbookmark=1= removes it                                  | the bookmark |
+
+=form_question_data= is the question object Canvas stores; the create
+action also takes a top-level =question= as its fallback, and permits
+=:name= beside it (=assessment_questions_controller.rb= 29, 68).
+Creating a bank bookmarks it for its author
+(=question_banks_controller.rb= 124).
+
+*No API token reaches them.*  =ApplicationController= sets
+=protect_from_forgery with: :exception= (=application_controller.rb=
+43), and =load_pseudonym_from_access_token=
+(=lib/authentication_methods.rb= 144-146) returns unless the request
+path is under =/api/= (=API_REQUEST_REGEX=, =application_controller.rb=
+2356) or the controller answers =token_auth_allowed?=, which neither
+bank controller does.  A bank write therefore needs a browser session
+and its CSRF token — what the 2026-09-11 probe met as a 401.
+
+These routes are read, not captured: a HAR from a browser session still
+has to confirm the =form_question_data= shape each question type sends,
+and that the hosted instance serves these routes at the commit above;
+they are undocumented and may change at any release.  Whether to build
+on them is a separate decision (see "Which Gaps Bite").
+
 * Deliberately Excluded
 
 - *Turnitin* as a plugin (=TURNITIN_ENABLED=) was removed after a live
