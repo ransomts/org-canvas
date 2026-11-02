@@ -91,7 +91,6 @@ order (for a long document split across lines), or a plist of :prefix,
             (test-org-canvas-headings (plist-get value :headings))
             (or (plist-get value :suffix) "")))
    ((and (consp value)
-         (consp (cdr value))
          (cl-every #'stringp value))
     (apply #'concat value))
    (t (error "Cannot write a course file from %S" value))))
