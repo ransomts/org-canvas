@@ -1,0 +1,4 @@
+* Fixed
+- #624 A New Quiz item whose 404 recovery cannot read the quiz's item list now stops with one =[ERROR]= line instead of posting a second copy.
+- #624 An outcome group the pull cannot read is recorded in the pull summary as an error or, for a refusal or a disabled tab, a skip, instead of being reported as a group holding no outcomes.
+- #624 The image upload folder is created only when Canvas answers 404; a refusal or a timeout is re-signalled rather than answered by creating a folder.

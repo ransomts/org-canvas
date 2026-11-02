@@ -114,11 +114,19 @@ tied to no course, so a cached image used to go out as that."
   '("png" "jpg" "jpeg" "gif" "svg" "webp" "bmp")
   "File extensions recognized as inline images.")
 
+(defun org-canvas--image-folder-from-reply (reply)
+  "Return the last folder in REPLY, the array `folders/by_path' answers.
+Canvas sends a JSON array, which `json-read' gives as a vector; `last'
+takes a list, so a vector reply used to signal here and send callers
+down their create-the-folder path (issue #623)."
+  (car (last (append reply nil))))
+
 (defun org-canvas--image-cache-load-folder ()
   "Fetch image folder contents and populate `org-canvas--image-cache'."
   (let* ((folders-url (org-canvas-api-course-endpoint
                        (format "folders/by_path/%s" org-canvas-image-folder)))
-         (folder (car (last (org-canvas-api-request 'GET folders-url))))
+         (folder (org-canvas--image-folder-from-reply
+                  (org-canvas-api-request 'GET folders-url)))
          (folder-id (alist-get 'id folder)))
     (when folder-id
       (let ((files (org-canvas-api-request-all-pages
@@ -149,13 +157,19 @@ Fetches the image folder contents and builds a filename->URL map."
 
 (defun org-canvas--image-ensure-folder ()
   "Ensure the image upload folder exists on Canvas.
-Returns the folder ID."
-  (condition-case nil
+Returns the folder ID.  Only a 404 means the folder is absent and may
+be created; a refusal or a timeout is re-signalled, since creating the
+folder after a read that never happened could make a second copy of it
+under a colliding name (issue #624)."
+  (condition-case err
       (let* ((url (org-canvas-api-course-endpoint
                    (format "folders/by_path/%s" org-canvas-image-folder)))
-             (folder (car (last (org-canvas-api-request 'GET url)))))
+             (folder (org-canvas--image-folder-from-reply
+                      (org-canvas-api-request 'GET url))))
         (alist-get 'id folder))
-    (error
+    (org-canvas-api-error
+     (unless (org-canvas--api-not-found-p err)
+       (signal (car err) (cdr err)))
      ;; Create the folder
      (org-canvas--log-info org-canvas--logger "[Images] Creating folder: %s" org-canvas-image-folder)
      (let ((response (org-canvas-api-request

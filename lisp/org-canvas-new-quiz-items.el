@@ -950,10 +950,17 @@ updated, so the recovery cannot make a second copy (issue #179)."
   (let* ((quiz-id (plist-get data :quiz-assignment-id))
          (title (plist-get data :title))
          (remote (unless (eq org-canvas-duplicate-title-strategy 'create)
-                   (condition-case nil
+                   (condition-case err
                        (org-canvas-api-request-all-pages
                         'GET (org-canvas--new-quiz-api-endpoint "quizzes/%s/items" quiz-id))
-                     (error nil))))
+                     (error
+                      ;; An unreadable list is not an empty quiz: creating
+                      ;; the item would make a second copy of one the quiz
+                      ;; already holds (issue #624, hard rule 16).
+                      (org-canvas--log-error org-canvas--logger
+                        "[Recovery] Could not read quiz %s's items to look for the twin (%s); not creating a second copy"
+                        quiz-id (error-message-string err))
+                      (signal (car err) (cdr err))))))
          (twin (car (org-canvas--child-twins
                      remote (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
                      nil))))
