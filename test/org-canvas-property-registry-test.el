@@ -422,6 +422,28 @@
         (point) "PUBLISHED" t "module-items")
        (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))
 
+  (it "folds JSON null to false instead of writing true (issue #498)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n:PROPERTIES:\n:PEER_REVIEWS: true\n:END:\n"
+       (org-back-to-heading t)
+       (org-canvas--pull-set-boolean-property
+        (point) "PEER_REVIEWS" :null)
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-be nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PEER_REVIEWS" :null)
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-be nil))))
+
+  (it "writes false from JSON null at a property defaulting to t (issue #498)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" :null "pages")
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
+
   (it "leaves a boolean whose absence inherits alone when Canvas sent nothing (issue #487)"
     (dolist (emit '(nil t))
       (let ((org-canvas-emit-defaults emit))

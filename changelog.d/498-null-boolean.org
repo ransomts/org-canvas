@@ -1,0 +1,5 @@
+* Fixed
+- #498 A pull folds Canvas's JSON null to false for a boolean property
+  instead of writing =true=.  =PEER_REVIEWS= left empty by Canvas no
+  longer comes back as an assignment with peer reviews turned on, and
+  the pull now reads the field the same way the drift report does.
