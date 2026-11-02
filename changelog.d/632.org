@@ -1,0 +1,5 @@
+* Fixed
+- #632 =M-x org-canvas-clear-log= works, and so does the menu's =lc= key:
+  the function is an interactive command, as the manual and the workflows
+  guide already described it.  A spec now fails if the menu ever binds a
+  key to something that is not a command.

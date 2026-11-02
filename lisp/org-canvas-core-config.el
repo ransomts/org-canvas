@@ -1279,6 +1279,7 @@ run `org-canvas--operation-start-hook', which marks a command starting
 whatever the log does.  Also refreshes the logger's file path to the
 current `org-canvas-directory', since the logger is initialized at load
 time when the directory may not yet be set."
+  (interactive)
   (run-hooks 'org-canvas--operation-start-hook)
   (unless org-canvas--inhibit-log-clear
     (with-current-buffer (get-buffer-create org-canvas--log-buffer-name)
