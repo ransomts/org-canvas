@@ -1,0 +1,8 @@
+* Changed
+- #574 The eighth fixture slice moves the core Org specs onto
+  =with-test-course=: the buffer-save specs and the cross-file link
+  resolution specs each built a private temp file or directory, wrote
+  the target file into it and deleted it in an =unwind-protect=.  They
+  now name those files once and let the shared fixture write them, bind
+  every course file variable and clean up.  The org text, the link
+  targets and the assertions are unchanged.
