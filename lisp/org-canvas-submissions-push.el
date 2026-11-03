@@ -92,6 +92,17 @@
 ;; from its baseline through GraphQL's `updateSubmissionGradeStatus'
 ;; (REST reads the status as `late_policy_status', so no read is added),
 ;; and records what Canvas answers it stored.
+;;
+;; The status goes before the grade (issue #665).  Canvas applies the
+;; late policy the row holds at the moment a grade is written: a
+;; `posted_grade' of 10 sent to a row still marked late under a 20
+;; percent daily policy stores a score of 8, while the same grade sent
+;; with the status none stores 10 (read back in a live course on
+;; 2026-11-02).  So a push that changes both sets the status first and
+;; the grade lands under the status the grader asked for.  REST's
+;; single PUT takes `late_policy_status' beside the grade, but the bulk
+;; `update_grades' endpoint does not, so the order is the one rule for
+;; both.
 
 (defconst org-canvas--submissions-late-statuses
   '("late" "missing" "extended" "none")
@@ -923,10 +934,12 @@ LINE is logged as a [DRY-RUN] line (issue #441)."
 (defun org-canvas--submissions-push-all (assignment-id plan)
   "Push the contents of PLAN to ASSIGNMENT-ID, then record them.
 PLAN is `org-canvas--submissions-push-plan''s: its :changes, the
-grade diffs, go first, grades and rubric assessments, then their late
-statuses, then the sent comments of :comments, (SENDABLE . REFUSED),
-to edit or delete (issue #419), then the :drafts, then the :bank
-items; the :conflicts, already marked, the refused comment changes
+grade diffs, go first, their late statuses before their grades and
+rubric assessments, since Canvas applies the late policy a row holds
+when a grade is written (issue #665), then the sent comments of
+:comments, (SENDABLE . REFUSED), to edit or delete (issue #419),
+then the :drafts, then the :bank items; the :conflicts, already
+marked, the refused comment changes
 and the ids a restricted push sent nothing for are only named in the
 closing message.  A dry run records nothing at all (issue #442), and
 says per student what would be sent (issue #441).  Every baseline is
@@ -951,8 +964,8 @@ to the caller."
          (rows (and org-canvas--dry-run
                     (org-canvas--submissions-would-send changes drafts)))
          (grading (seq-filter #'org-canvas--submissions-grade-fields changes))
-         (outcome (org-canvas--submissions-send-grades assignment-id changes))
          (late (org-canvas--submissions-send-late-statuses changes))
+         (outcome (org-canvas--submissions-send-grades assignment-id changes))
          (edited (org-canvas--submissions-apply-comment-edits assignment-id (car comments)))
          (posted (org-canvas--submissions-post-drafts assignment-id drafts))
          (saved (and bank (org-canvas--submissions-push-bank assignment-id)))
