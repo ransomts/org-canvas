@@ -1,0 +1,2 @@
+* Fixed
+- #665 A grading push that changes a student's late status and grade together now sets the late status first, so the grade lands under the status you typed: clearing a late status while raising the grade no longer leaves Canvas applying the late deduction you meant to take away.

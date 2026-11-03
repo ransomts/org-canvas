@@ -559,10 +559,10 @@ or `org-canvas-submissions-keep-mine' resolves it (issue #440); both
 are named in the closing message.  After a successful push
 the baselines, the comment records, and the file are updated.  A
 LATE_STATUS that differs from its CANVAS_LATE_STATUS is sent too, one
-GraphQL request per student, and so is every new or edited item of
-the Comment Bank section (issue #352), and every sent comment of the
-grader's own edited or marked DELETE under a student's Comments
-heading (issue #419).  The push is confirmed through
+GraphQL request per student before the grades (issue #665), and so
+is every new or edited item of the Comment Bank section (issue #352),
+and every sent comment of the grader's own edited or marked DELETE
+under a student's Comments heading (issue #419).  The push is confirmed through
 `org-canvas--confirm'; under a manual post policy posting is offered
 afterwards, interactively only.  A script calls
 `org-canvas-push-submission-grades' instead (issue #381)."

@@ -1004,6 +1004,39 @@ student's live baseline for the conflict check, nil to skip it."
         (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")
         (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")
         (expect (org-entry-get (point) "DAYS_LATE") :to-equal "2"))))
+  (it "sets the late status before the grade, so the grade lands under it (issue #665)"
+    (with-test-api
+      (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                             ":SCORE: 10\n:CANVAS_SCORE: 8\n"
+                                             ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: late\n")
+        (let ((grades-before nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) #'always)
+                    ((symbol-function 'org-canvas--graphql-mutate)
+                     (lambda (&rest _)
+                       (push (test-org-canvas-api-call-count) grades-before)
+                       (test-late--stored "none"))))
+            (let ((org-canvas-submissions-check-conflicts nil))
+              (org-canvas-submissions-push-grades)))
+          (expect grades-before :to-equal '(0)))
+        (expect-api-called 'PUT "assignments/1001/submissions/5001"))))
+  (it "sets every late status before the bulk grade send (issue #665)"
+    (with-test-api
+      (with-grading-file (concat (test-late--heading ":SCORE: 10\n:CANVAS_SCORE: 8\n"
+                                                     ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: late\n")
+                                 "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SUBMISSION_ID: 50002\n"
+                                 ":SCORE: 9\n:CANVAS_SCORE: 7\n:LATE_STATUS: extended\n:END:\n")
+        (let ((grades-before nil))
+          (cl-letf (((symbol-function 'org-canvas--confirm) #'always)
+                    ((symbol-function 'org-canvas--submissions-await-progress)
+                     (lambda (&rest _) (list :state 'completed)))
+                    ((symbol-function 'org-canvas--graphql-mutate)
+                     (lambda (_what _doc variables)
+                       (push (test-org-canvas-api-call-count) grades-before)
+                       (test-late--stored (alist-get 'status variables)))))
+            (let ((org-canvas-submissions-check-conflicts nil))
+              (org-canvas-submissions-push-grades)))
+          (expect grades-before :to-equal '(0 0)))
+        (expect-api-called 'POST "assignments/1001/submissions/update_grades"))))
   (it "records what Canvas stored when it is not what was sent, and says so"
     (with-test-api
       (with-grading-file (test-late--heading ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: missing\n")
