@@ -1861,9 +1861,234 @@ Keep this too
      "* One
 ** Two
 "
-     (expect (org-canvas--pull-container-end 1) :to-be nil)
+     (expect (org-canvas--pull-container-end 1 "CANVAS_ID") :to-be nil)
      (goto-char (point-min))
-     (expect (org-canvas--pull-container-end 2) :to-be (point-max)))))
+     (expect (org-canvas--pull-container-end 2 "CANVAS_ID")
+             :to-be (point-max))))
+
+  (it "titles a container Untitled when the caller names none"
+    (with-temp-org-buffer
+     ""
+     (org-canvas--pull-insert-at-level 2 "CANVAS_ID" nil "** Group\n")
+     (expect (buffer-string) :to-equal "* Untitled\n** Group\n")))
+
+  (it "takes no stamped entry for a container"
+    (with-temp-org-buffer
+     "* Quizzes
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (expect (org-canvas--pull-container-end 2 "CANVAS_ID") :to-be nil)))
+
+  (describe "on a file of level-1 groups (issue #671)"
+    (defun test-pull-upsert-groups (body ids)
+      "Upsert each of IDS as a group into a file holding BODY.
+Return the file's text afterwards, and the title at each position."
+      (let* ((dir (make-temp-file "upsert-671" t))
+             (file (expand-file-name "groups.org" dir))
+             (titles nil))
+        (unwind-protect
+            (progn
+              (with-temp-file file (insert body))
+              (dolist (id ids)
+                (let ((pos (org-canvas--pull-upsert-heading
+                            file id (format "New %s" id) nil
+                            "LEVEL=2+WEIGHT={.}" "Assignment Groups")))
+                  (with-current-buffer (find-buffer-visiting file)
+                    (goto-char pos)
+                    (push (org-get-heading t t t t) titles))))
+              (with-current-buffer (find-buffer-visiting file)
+                (cons (buffer-substring-no-properties (point-min) (point-max))
+                      (nreverse titles))))
+          (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
+          (delete-directory dir t))))
+
+    (defconst test-pull-level-1-groups
+      "#+TITLE: Groups
+
+* Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:WEIGHT: 40
+:END:
+Lab notes.
+
+* Quizzes - 85 Points
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+
+* Unused
+:PROPERTIES:
+:CANVAS_ID: 3
+:END:
+"
+      "A file in the shape the pull wrote before #638.")
+
+    (it "moves every group under one container, one heading per id"
+      (let* ((result (test-pull-upsert-groups test-pull-level-1-groups '(1 2 3)))
+             (text (car result)))
+        (expect (cdr result)
+                :to-equal '("Labs" "Quizzes - 85 Points" "Unused"))
+        (expect text :to-equal "#+TITLE: Groups
+
+* Assignment Groups
+** Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:WEIGHT: 40
+:END:
+Lab notes.
+
+** Quizzes - 85 Points
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+
+** Unused
+:PROPERTIES:
+:CANVAS_ID: 3
+:END:
+")))
+
+    (it "is stable on a second pull"
+      (let* ((once (car (test-pull-upsert-groups
+                         test-pull-level-1-groups '(1 2 3))))
+             (twice (car (test-pull-upsert-groups once '(1 2 3)))))
+        (expect twice :to-equal once)))
+
+    (it "moves a group under the container already in the file"
+      (let* ((result (test-pull-upsert-groups
+                      "* Assignment Groups
+** Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+* Exams
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+* Stray
+:PROPERTIES:
+:CANVAS_ID: 9
+:END:
+" '(2))))
+        (expect (cdr result) :to-equal '("Exams"))
+        (expect (car result) :to-match "^:CANVAS_ID: 1\n:END:\n\\*\\* Exams")
+        (expect (car result) :to-match "^\\* Stray")))
+
+    (it "returns the new heading, not the stamped group after the container"
+      (let ((result (test-pull-upsert-groups
+                     "* Assignment Groups
+* Exams
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+" '(7))))
+        (expect (cdr result) :to-equal '("New 7"))
+        (expect (car result)
+                :to-match "\\`\\* Assignment Groups\n\\*\\* New 7\n\\* Exams")))
+
+    (it "writes a container for a new group when every top heading is a group"
+      (let ((text (car (test-pull-upsert-groups
+                        "* Exams
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+" '(7)))))
+        (expect text :to-match "^\\* Exams")
+        (expect text :to-match "^\\* Assignment Groups\n\\*\\* New 7")))
+
+    (it "takes a heading's children along, one level down"
+      (let ((text (car (test-pull-upsert-groups
+                        "* Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+** Notes
+Keep these.
+" '(1)))))
+        (expect text :to-equal "* Assignment Groups
+** Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+*** Notes
+Keep these.
+")))
+
+    (it "moves a last heading that has no final newline"
+      (let ((text (car (test-pull-upsert-groups
+                        "* Assignment Groups
+* Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:" '(1)))))
+        (expect text :to-match "\\`\\* Assignment Groups\n\\*\\* Labs\n")))
+
+    (it "leaves a heading alone when a stamped entry sits under it"
+      ;; Moving it would push the level-2 entry to level 3, out of the sync.
+      (let ((result (test-pull-upsert-groups
+                     "* Unused
+:PROPERTIES:
+:CANVAS_ID: 3
+:END:
+** Labs
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+" '(3))))
+        (expect (cdr result) :to-equal '("New 3"))
+        (expect (car result) :to-match "\\`\\* Unused\n")
+        (expect (car result) :to-match "^\\*\\* Labs")))
+
+    (it "never moves a heading for a query at the top level"
+      (let* ((dir (make-temp-file "upsert-671" t))
+             (file (expand-file-name "quizzes.org" dir)))
+        (unwind-protect
+            (progn
+              (with-temp-file file
+                (insert "* Quiz\n** Question\n"
+                        ":PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
+              (org-canvas--pull-upsert-heading file 5 "Other Quiz")
+              (with-current-buffer (find-buffer-visiting file)
+                (goto-char (point-min))
+                (expect (how-many "^\\*\\* Question") :to-be 1)
+                (goto-char (point-min))
+                (expect (how-many "^\\* Other Quiz") :to-be 1)))
+          (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
+          (delete-directory dir t))))
+
+    (it "repairs the file through the generated pull command"
+      (let* ((dir (make-temp-file "upsert-671" t))
+             (file (expand-file-name "assignment-groups.org" dir))
+             (org-canvas-assignment-groups-file file)
+             (remote (vector '((id . 1) (name . "Labs") (group_weight . 40))
+                             '((id . 2) (name . "Quizzes - 100 Points")
+                               (group_weight . 60)))))
+        (unwind-protect
+            (progn
+              (with-temp-file file
+                (insert "* Labs\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                        "* Quizzes - 85 Points\n"
+                        ":PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _) (append remote nil)))
+                        ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                         #'ignore))
+                (org-canvas-pull-assignment-groups))
+              (with-current-buffer (find-buffer-visiting file)
+                (let ((text (buffer-substring-no-properties
+                             (point-min) (point-max))))
+                  (expect text :not :to-match "^\\* Labs")
+                  (expect text :not :to-match "85 Points")
+                  (expect text :to-match "^\\*\\* Labs")
+                  (expect text :to-match "^\\*\\* Quizzes - 100 Points")
+                  (goto-char (point-min))
+                  (expect (how-many "^:CANVAS_ID:") :to-be 2))))
+          (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
+          (delete-directory dir t))))))
 
 (describe "org-canvas-define-pull"
   (it "signals error when :file is missing"

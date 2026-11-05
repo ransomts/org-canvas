@@ -1,0 +1,2 @@
+* Fixed
+- #671 Pulling assignment groups into a file whose groups are level-1 headings no longer adds a level-2 copy of every group. The pull now moves each group under a container heading, with its body and children, and writes the container if the file has none. A file already holding both copies is left as it is; =org-canvas-validate= reports a pair whose titles match, and the other copies need removing by hand.

@@ -150,6 +150,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/pulls-and-batch.org::*A Live Search Greps What Canvas Holds (issue #406)][A Live Search Greps What Canvas Holds (issue #406)]]
 - [[file:decisions/pulls-and-batch.org::*A Heading Opens Its Canvas Page from Rules Its Module Declares (issue #292)][A Heading Opens Its Canvas Page from Rules Its Module Declares (issue #292)]]
   - [[file:decisions/pulls-and-batch.org::*Every Address Checked Against Canvas's Routes (issue #300)][Every Address Checked Against Canvas's Routes (issue #300)]]
+- [[file:decisions/pulls-and-batch.org::*A Pull Moves a Shallow Heading Down Rather Than Copying It (issue #671)][A Pull Moves a Shallow Heading Down Rather Than Copying It (issue #671)]]
 
 ** Course Lifecycle
 [[file:decisions/course-lifecycle.org][decisions/course-lifecycle.org]]
