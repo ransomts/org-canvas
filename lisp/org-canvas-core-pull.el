@@ -549,10 +549,11 @@ Does nothing if ISO8601 is nil or conversion fails."
   "Find or create a heading in FILE matched by CANVAS-ID.
 If a heading at the level QUERY names (default \"LEVEL=1\") with
 ID-PROPERTY (default \"CANVAS_ID\") equal to CANVAS-ID exists, return
-its position.  Otherwise create a heading at that level, at the end of
-the file's container heading, with TITLE, and return its position.  A
-file with no container heading to hold a level-2 entry gets one first,
-titled CONTAINER-TITLE.
+its position.  Failing that, move a heading above that level holding
+CANVAS-ID down to it and return its position (issue #671).  Otherwise
+create a heading at that level, at the end of the file's container
+heading, with TITLE, and return its position.  A file with no container
+heading to hold a level-2 entry gets one first, titled CONTAINER-TITLE.
 
 QUERY is the match the feature's registry entry declares, so a pull
 writes where its sync reads.  Assignment groups are level-2 headings
@@ -573,21 +574,67 @@ Returns a point in the buffer visiting FILE."
         ;; query requires (a group with no WEIGHT) does not match it, and
         ;; searching with the query wrote a second copy on every pull
         ;; (issue #638).
-        (let ((found (org-canvas--heading-position-by-property
-                      id-prop canvas-id (format "LEVEL=%d" level))))
-          (if found
-              found
-            ;; Create new heading at the query's level, under its container
-            (let ((end (org-canvas--pull-container-end level)))
-              (goto-char (or end (point-max)))
-              (unless (bolp) (insert "\n"))
-              (when (and (> level 1) (not end))
-                (insert (format "* %s\n" (or container-title "Untitled"))))
-              (insert (format "%s %s\n"
-                              (make-string level ?*)
-                              (or title "Untitled")))
-              (org-back-to-heading t)
-              (point))))))))
+        (or (org-canvas--heading-position-by-property
+             id-prop canvas-id (format "LEVEL=%d" level))
+            (org-canvas--pull-lower-shallow-heading
+             id-prop canvas-id level container-title)
+            (org-canvas--pull-insert-at-level
+             level id-prop container-title
+             (format "%s %s\n" (make-string level ?*) (or title "Untitled"))))))))
+
+(defun org-canvas--pull-insert-at-level (level id-prop container-title text)
+  "Insert TEXT where a heading at LEVEL belongs; return its start position.
+That is the end of the file's container heading, or the end of the file
+under a new container titled CONTAINER-TITLE when LEVEL needs one and
+the file has none.  ID-PROP is what marks a heading as an entry rather
+than a container."
+  (let ((end (org-canvas--pull-container-end level id-prop)))
+    (goto-char (or end (point-max)))
+    (unless (bolp) (insert "\n"))
+    (when (and (> level 1) (not end))
+      (insert (format "* %s\n" (or container-title "Untitled"))))
+    (prog1 (point) (insert text))))
+
+(defun org-canvas--pull-lower-shallow-heading (id-prop canvas-id level
+                                                       container-title)
+  "Move the heading above LEVEL with ID-PROP equal to CANVAS-ID down to LEVEL.
+Return its new position, or nil when there is no such heading to move.
+A pull before issue #638 wrote assignment groups at level 1, where the
+sync does not read them.  Looking only at the query's level missed each
+one and wrote a copy under the last group (issue #671), so the pull
+moves the heading it wrote, with its body and children, to where the
+sync reads.
+
+Only headings above LEVEL move: a child deeper in a file may belong to
+another feature and share the number from a different id sequence.  A
+heading with a stamped entry under it stays, since moving it would push
+that entry out of the sync's level; the caller then writes a new
+heading, and validate reports the pair when the titles match."
+  (when-let* (((> level 1))
+              (pos (org-canvas--heading-position-by-property
+                    id-prop canvas-id (format "LEVEL<%d" level)))
+              ((not (org-canvas--pull-stamped-descendant-p pos id-prop))))
+    (goto-char pos)
+    (let* ((stars (make-string (- level (org-outline-level)) ?*))
+           (end (save-excursion (org-end-of-subtree t t) (point)))
+           (text (buffer-substring-no-properties pos end)))
+      (delete-region pos end)
+      (org-canvas--pull-insert-at-level
+       level id-prop container-title
+       (replace-regexp-in-string
+        "^\\*+ " (lambda (head) (concat stars head))
+        (if (string-suffix-p "\n" text) text (concat text "\n")))))))
+
+(defun org-canvas--pull-stamped-descendant-p (pos id-prop)
+  "Return non-nil when a heading under the one at POS carries ID-PROP."
+  (save-excursion
+    (goto-char pos)
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+          (found nil))
+      (while (and (not found) (outline-next-heading) (< (point) end))
+        (setq found (org-entry-get (point) id-prop)))
+      found)))
 
 (defun org-canvas--pull-container-title (feature-name)
   "Return FEATURE-NAME's registry label, for a container a pull must write.
@@ -604,18 +651,21 @@ QUERY is a property registry `:query', e.g. \"LEVEL=2+WEIGHT={.}\"."
       (string-to-number (match-string 1 query))
     1))
 
-(defun org-canvas--pull-container-end (level)
-  "Return the position after the last heading above LEVEL, or nil.
+(defun org-canvas--pull-container-end (level id-prop)
+  "Return the position after the last container heading above LEVEL, or nil.
 A pull writing below the top level appends its new heading to the end
 of the container heading rather than to the end of the file, where it
-would sit outside the section the sync reads."
+would sit outside the section the sync reads.  A heading carrying
+ID-PROP is an entry, not a container: taking one wrote every group of
+a level-1 file under the last group (issue #671)."
   (when (> level 1)
     (save-excursion
       (goto-char (point-min))
       (let (end)
         (org-map-entries
          (lambda ()
-           (when (< (org-outline-level) level)
+           (when (and (< (org-outline-level) level)
+                      (not (org-entry-get (point) id-prop)))
              (setq end (save-excursion
                          (org-end-of-subtree t t)
                          (point)))))

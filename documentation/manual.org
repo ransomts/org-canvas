@@ -1183,6 +1183,8 @@ Assignment weight categories for grade calculation.
 - Level 1 heading = Container (title, ignored)
 - Level 2 headings = Assignment Groups
 
+A pull reads and writes groups at level 2.  It moves a level-1 heading holding a group's =CANVAS_ID= under the container, with its body and children, and writes a container if the file has none.  A heading with a stamped entry under it stays where it is, and the pull writes a new heading for that group.  =org-canvas-validate= reports the pair when the two titles match.
+
 *** Properties
 
 | Property     | Type   | Description                      |
