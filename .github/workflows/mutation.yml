@@ -1,0 +1,82 @@
+name: Mutation
+
+# The assertion-depth ratchet, in a workflow of its own so the CI badge
+# reports the suite, lint and complexity: a slow or cancelled ratchet
+# turned that badge red every week while every test passed (#677).
+# Weekly, or dispatched by hand; it never runs on a pull request and
+# gates nothing.
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    # Every file in the baseline gets a FULL pass gated on
+    # `test/mutation/accepted-survivors.txt': a shard fails only on a
+    # survivor that is not in that file, never on the (noisy, sampled)
+    # score -- see test/mutation/README.md.
+    #
+    # A mutation takes about 72 s per worker on a hosted runner (the
+    # whole suite, plus the 120 s timeouts of mutants that never
+    # terminate), so a shard at --jobs 3 fits about 200 sites in its
+    # 90 minutes.  The nine files hold about 970 sites and
+    # sections.el alone over 220, so the shards split below the file:
+    # `--shard K/N' takes every Nth baseline key, which keeps each
+    # shard near 120 sites and each key in one shard.  `--baseline'
+    # only treats an entry as stale when this shard covered its key,
+    # so shards do not report each other's entries as stale.
+    strategy:
+      # One shard failing must not cancel the others: the survivors it
+      # reports are the useful output, and every shard's report is
+      # uploaded.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    name: mutation (${{ matrix.shard }}/8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Set up Emacs and Eldev
+        uses: ./.github/actions/setup-emacs-env
+        with:
+          emacs-version: '30.2'
+          cache-purpose: suite
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
+        with:
+          python-version: '3.x'
+
+      - name: Full pass gated on the accepted-survivors baseline
+        # Fails only on a survivor absent from the baseline.  Stale
+        # entries (accepted but no longer surviving) are reported, not
+        # failed -- see test/mutation/README.md for why, including the
+        # ~1-spurious-kill-per-pass hazard (#44) that makes any
+        # score-based gate on a full pass unreliable.
+        run: |
+          python3 test/mutation/mutate.py \
+            --files lisp/org-canvas-files.el \
+                    lisp/org-canvas-sections.el \
+                    lisp/org-canvas-validate.el \
+                    lisp/org-canvas-validate-issue.el \
+                    lisp/org-canvas-validate-content.el \
+                    lisp/org-canvas-validate-grading.el \
+                    lisp/org-canvas-core-sync.el \
+                    lisp/org-canvas-core-push.el \
+                    lisp/org-canvas-core-heading.el \
+            --shard ${{ matrix.shard }}/8 \
+            --max 0 --jobs 3 --timeout 120 \
+            --baseline test/mutation/accepted-survivors.txt \
+            --json "mutation-baseline-${{ matrix.shard }}.json"
+
+      - name: Upload mutation results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
+        if: ${{ !cancelled() }}
+        with:
+          name: mutation-result-${{ matrix.shard }}
+          path: mutation-baseline-${{ matrix.shard }}.json

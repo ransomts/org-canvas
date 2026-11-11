@@ -510,10 +510,15 @@ Only =:type= is affected; other keywords work fine.
   generated-artifacts
                     the contract fixture regenerates to itself; the
                     changelog fragments validate
-  mutation          weekly, or dispatched with the mutation input;
-                    four shards, each a full pass over its files gated
-                    on test/mutation/accepted-survivors.txt
 #+end_example
+
+The mutation ratchet is a workflow of its own,
+=.github/workflows/mutation.yml=: weekly or dispatched by hand, eight
+shards (=mutate.py --shard K/8=), each a full pass over its slice of
+the baseline files gated on =test/mutation/accepted-survivors.txt=.
+It lived in =ci.yml= until its shards started hitting the 90-minute
+limit; a cancelled scheduled run was the latest run on =main=, so the
+CI badge read failing every week while every test passed (#677).
 
 The Emacs setup every job repeats (Emacs, Eldev, the cached =.eldev=,
 and pandoc for the test jobs) is one composite action,
@@ -600,8 +605,7 @@ ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test
 - A =pull_request= run fires only while the PR merges cleanly with
   =main=: GitHub builds the merge commit and cannot when the branch
   conflicts, so a conflicting PR shows no checks at all.  Merge =main=
-  into the branch and push; a =workflow_dispatch= by hand also runs the
-  weekly mutation job, ninety minutes that gate nothing.
+  into the branch and push, or run a =workflow_dispatch= by hand.
 - The =codecov/patch= check judges only the lines the PR changes, so a
   PR can be green on every job and red there.  Read =gh pr checks N=
   (every row), not just the run's conclusion, before merging.  To know
@@ -624,9 +628,8 @@ ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test
   =pull_request: branches: [main]= a PR stacked on another branch got
   no run, and =main='s protection requires the checks on an up-to-date
   head, so the stacked PR needed a manual =workflow_dispatch= (which
-  also started the mutation job) and then a rebase anyway (#259).  The
-  mutation job now runs on dispatch only when its =mutation= input is
-  set.  Stacking buys nothing under strict protection: open independent
+  also started the mutation job, before it moved to =mutation.yml=)
+  and then a rebase anyway (#259).  Stacking buys nothing under strict protection: open independent
   PRs and merge them one at a time.
 
 ** Codecov Integration
