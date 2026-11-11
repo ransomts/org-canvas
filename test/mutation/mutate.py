@@ -18,6 +18,7 @@ Usage:
     python3 test/mutation/mutate.py --jobs 6             # parallel (isolated copies)
     python3 test/mutation/mutate.py --files lisp/org-canvas-core-org.el --max 0
     python3 test/mutation/mutate.py --pattern core       # scope tests (faster, less precise)
+    python3 test/mutation/mutate.py --max 0 --shard 2/8  # every 8th site, from the 2nd
 
 Each mutation runs the suite (~20s).  With --jobs N, N isolated copies of the
 repo run in parallel (each with its own .eldev build cache), giving ~N x
@@ -299,6 +300,32 @@ def run_one_worker(idx, shard, timeout, pattern):
     return res
 
 
+def parse_shard(spec):
+    """Parse a `K/N' shard spec into a zero-based (index, count) pair."""
+    try:
+        k, n = (int(part) for part in spec.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--shard wants K/N, got {spec!r}")
+    if not 1 <= k <= n:
+        raise argparse.ArgumentTypeError(f"--shard {spec}: K must be in 1..N")
+    return k - 1, n
+
+
+def select_shard(sites, shard):
+    """Keep every Nth baseline key of SITES, starting at the shard's index.
+
+    Discovery order is stable (file by file, operator by operator), so
+    the N shards of a run partition the sites with no overlap, and
+    striding spreads each file and each operator across all of them:
+    one file too big for a runner's time budget is split too (#677).
+    Sites sharing a key stay in one shard, or a shard that killed its
+    half would call the other half's accepted survivor stale."""
+    index, count = shard
+    keys = list(dict.fromkeys(key_of(s) for s in sites))
+    mine = set(keys[index::count])
+    return [s for s in sites if key_of(s) in mine]
+
+
 def shard_sites(sites, jobs):
     """Round-robin sites into JOBS balanced groups."""
     groups = [[] for _ in range(jobs)]
@@ -460,6 +487,9 @@ def main():
                     help="per-run test timeout seconds (default 120)")
     ap.add_argument("--pattern", default=None, help="eldev test pattern (faster, less precise)")
     ap.add_argument("--seed", type=int, default=1, help="sampling seed (default 1)")
+    ap.add_argument("--shard", type=parse_shard, default=None,
+                    help="K/N: run only the Kth of N disjoint slices of "
+                         "the discovered sites (for CI matrices)")
     ap.add_argument("--sites-file", help="(worker) JSON list of sites to run")
     ap.add_argument("--json", dest="json_out", help="write results JSON to this path")
     ap.add_argument("--baseline", default=None,
@@ -490,6 +520,8 @@ def main():
     files = [os.path.abspath(f) for f in files]
     sites = discover_sites(files)
     total = len(sites)
+    if args.shard:
+        sites = select_shard(sites, args.shard)
     random.seed(args.seed)
     random.shuffle(sites)
     skipped = 0
@@ -498,6 +530,9 @@ def main():
         sites = sites[:args.max]
 
     print(f"Discovered {total} mutation sites across {len(files)} file(s).")
+    if args.shard:
+        print(f"Shard {args.shard[0] + 1}/{args.shard[1]}: "
+              f"{len(sites)} of them.")
     if skipped:
         print(f"Running a sample of {len(sites)} (seed={args.seed}); "
               f"{skipped} not run this pass. Use --max 0 to run all.")

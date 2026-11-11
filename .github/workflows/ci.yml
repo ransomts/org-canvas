@@ -7,19 +7,13 @@ on:
   # branch got no run at all under `branches: [main]`, and main's
   # protection requires these checks on the head commit (PR #259).
   pull_request:
-  schedule:
-    - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly mutation ratchet
+  # The weekly mutation ratchet lives in mutation.yml, so this
+  # workflow's badge reports only what gates a merge (#677).
   workflow_dispatch:
-    inputs:
-      mutation:
-        description: "Also run the mutation ratchet (about 90 minutes)"
-        type: boolean
-        default: false
 
 # One run per pull request: a new push cancels the run of the one
-# before.  Runs on main (pushes, the weekly mutation ratchet, manual
-# dispatches) each get a group of their own, so none cancels or queues
-# behind another.
+# before.  Runs on main (pushes, manual dispatches) each get a group of
+# their own, so none cancels or queues behind another.
 concurrency:
   group: ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -290,80 +284,3 @@ jobs:
             echo "BLOCKED: $violations function(s) above threshold (budget: 0)."
             exit 1
           fi
-
-  mutation:
-    # Assertion-depth ratchet.  Every file in the baseline gets a FULL
-    # pass gated on `test/mutation/accepted-survivors.txt': the job
-    # fails only on a survivor that is not in that file, never on the
-    # (noisy, sampled) score -- see test/mutation/README.md.
-    #
-    # The pass is sharded because a full run over all nine files is
-    # ~1,060 mutations at ~20s each, more than one runner can do inside
-    # the 90-minute budget at --jobs 3.  Each shard covers a disjoint,
-    # balanced set of files and checks the same baseline; `--baseline'
-    # only treats an entry as stale when this run covered its site, so
-    # shards do not report each other's entries as stale.
-    #
-    # Scheduled weekly, or dispatched by hand with the `mutation' input
-    # set; never blocks PRs.  A plain dispatch -- a CI run on a branch
-    # that has no pull request -- must not burn the 90 minutes.
-    strategy:
-      # One shard failing must not cancel the others: the survivors it
-      # reports are the useful output, and every shard's report is
-      # uploaded.
-      fail-fast: false
-      matrix:
-        shard:
-          - name: files
-            files: lisp/org-canvas-files.el
-          - name: sections
-            files: lisp/org-canvas-sections.el
-          - name: validate
-            files: >-
-              lisp/org-canvas-validate.el
-              lisp/org-canvas-validate-issue.el
-              lisp/org-canvas-validate-content.el
-              lisp/org-canvas-validate-grading.el
-          - name: sync-push-heading
-            files: >-
-              lisp/org-canvas-core-sync.el
-              lisp/org-canvas-core-push.el
-              lisp/org-canvas-core-heading.el
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mutation)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
-
-      - name: Set up Emacs and Eldev
-        uses: ./.github/actions/setup-emacs-env
-        with:
-          emacs-version: '30.2'
-          cache-purpose: suite
-
-      - name: Setup Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
-        with:
-          python-version: '3.x'
-
-      - name: Full pass gated on the accepted-survivors baseline (${{ matrix.shard.name }})
-        # Fails only on a survivor absent from the baseline.  Stale
-        # entries (accepted but no longer surviving) are reported, not
-        # failed -- see test/mutation/README.md for why, including the
-        # ~1-spurious-kill-per-pass hazard (#44) that makes any
-        # score-based gate on a full pass unreliable.
-        run: |
-          python3 test/mutation/mutate.py \
-            --files ${{ matrix.shard.files }} \
-            --max 0 --jobs 3 --timeout 120 \
-            --baseline test/mutation/accepted-survivors.txt \
-            --json "mutation-baseline-${{ matrix.shard.name }}.json"
-
-      - name: Upload mutation results
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
-        if: ${{ !cancelled() }}
-        with:
-          name: mutation-result-${{ matrix.shard.name }}
-          path: mutation-baseline-${{ matrix.shard.name }}.json

@@ -155,24 +155,30 @@ or `?x` char literal): `t`↔`nil`, `>`→`>=`, `<`→`<=`, `equal`→`eq`,
 
 ## CI ratchet
 
-The `mutation` job in `.github/workflows/ci.yml` runs weekly (and on manual
-dispatch) and never blocks PRs. It is a **matrix of four shards**, each doing a
-full pass over a disjoint, balanced set of files with
-`--baseline test/mutation/accepted-survivors.txt`:
+`.github/workflows/mutation.yml` runs weekly (and on manual dispatch), in a
+workflow of its own so a slow ratchet never colours the CI badge (#677), and
+never blocks PRs. It is a **matrix of eight shards** over the nine baseline
+files; each shard runs `--shard K/8`, every eighth baseline key of the
+discovered sites, as a full pass with
+`--baseline test/mutation/accepted-survivors.txt`. To see each shard's size:
 
-| Shard | Files | Sites |
-|-------|-------|-------|
-| `files` | `files.el` | 203 |
-| `sections` | `sections.el` | 224 |
-| `validate` | the four validate modules | 351 |
-| `sync-push-heading` | `core-sync.el`, `core-push.el`, `core-heading.el` | 285 |
+```bash
+python3 -c "import re, sys; sys.path.insert(0, 'test/mutation'); import mutate as m
+files = re.findall(r'lisp/\S+\.el', open('.github/workflows/mutation.yml').read())
+sites = m.discover_sites(files)
+print([len(m.select_shard(sites, (k, 8))) for k in range(8)])"
+```
 
 Each shard fails only on a survivor absent from the accepted list; stale entries
-are reported, not failed. The pass is sharded because ~1,060 mutations at ~20s
-each do not fit one runner's 90-minute budget at `--jobs 3`, and sharding keeps
-a single shard's flake from hiding the other three. `--baseline` only treats an
-entry as stale when the run covered its site, so shards do not accuse each other
-of leaving entries behind.
+are reported, not failed. The pass is sharded because a mutation takes about
+72 s per worker on a hosted runner (the whole suite, plus the 120 s timeout of
+any mutant that never terminates), so one shard at `--jobs 3` fits about 200
+sites in its 90 minutes. Sharding by file cannot get there: `sections.el` alone
+is over that, and three of the four by-file shards were cancelled at the time
+limit every week from October 2026 (#677). `--shard` strides over baseline
+keys, so a file is split across shards while sites sharing a key stay together,
+and `--baseline` only treats an entry as stale when the shard covered its key,
+so shards do not accuse each other of leaving entries behind.
 
 There is no score floor any more: a sampled score was never a measurement (see
 above), and every file the job runs now has a triaged baseline.

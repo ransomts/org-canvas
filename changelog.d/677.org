@@ -1,0 +1,2 @@
+* Fixed
+- #677 The CI badge reports the test suite, lint and complexity again: the weekly mutation ratchet moves to its own workflow, =.github/workflows/mutation.yml=, whose cancelled runs had made the badge read failing every week while every test passed. The ratchet runs as eight shards of the same nine files through a new =mutate.py --shard K/N=, which splits below the file, so each shard fits inside its 90 minutes.
