@@ -358,5 +358,239 @@ the final grade).  Adams's Canvas totals are current 60.0 (D), final
         (expect report :to-match "Student standing: Adams, Alice")
         (expect report :to-match "^Best possible: 75.0% (C),")))))
 
+;;;; Submitted work and the student's own dates (#674)
+
+(defun test-gradebook--override (id &rest pairs)
+  "An assignment override ID carrying the field PAIRS, as Canvas reads it."
+  (append `((id . ,id)) pairs))
+
+(defun test-gradebook--q2-with-overrides (&rest overrides)
+  "The standing groups with OVERRIDES on Q2, as the groups read carries them."
+  (mapcar (lambda (g)
+            (if (eql (alist-get 'id g) 1)
+                (cons (cons 'assignments
+                            (vconcat
+                             (mapcar (lambda (a)
+                                       (if (eql (alist-get 'id a) 12)
+                                           (cons (cons 'overrides (vconcat overrides)) a)
+                                         a))
+                                     (alist-get 'assignments g))))
+                      g)
+              g))
+          (test-gradebook--standing-groups)))
+
+(defun test-gradebook--q2-row (now &rest overrides)
+  "Adams's Q2 row at NOW, its lock in 2030, under OVERRIDES on Q2.
+Adams is user 1 in section 10."
+  (let ((groups (apply #'test-gradebook--q2-with-overrides overrides)))
+    (org-canvas--gradebook-student-row
+     (test-gradebook--standing-sub 12 "Q2" 1 "2026-09-15T03:59:00Z" "2030-01-01T00:00:00Z" 10)
+     (org-canvas--gradebook-assignment-map groups)
+     now
+     (list :user-id 1 :section-ids '(10)
+           :overrides (org-canvas--gradebook-override-map groups)))))
+
+(describe "the student report's ceiling and dates (issue #674)"
+  (let ((now (date-to-time "2026-10-15T12:00:00Z")))
+    (it "counts a submitted, ungraded column at full marks once it has locked"
+      (let* ((assignments (org-canvas--gradebook-assignment-map
+                           (test-gradebook--standing-groups)))
+             (subs (list (test-gradebook--standing-sub
+                          13 "Q3" 1 "2026-09-20T03:59:00Z" "2026-09-27T03:59:00Z" 20
+                          '(workflow_state . "submitted")
+                          '(submitted_at . "2026-09-19T00:00:00Z"))
+                         (test-gradebook--standing-sub
+                          11 "Q1" 1 "2026-09-01T03:59:00Z" "2026-09-08T03:59:00Z" 10
+                          '(workflow_state . "pending_review"))))
+             (rows (org-canvas--gradebook-student-rows subs assignments now)))
+        (expect (plist-get (car rows) :open) :to-be nil)
+        (expect (plist-get (car rows) :submitted) :to-be t)
+        (expect (org-canvas--gradebook-student-ceiling-items rows)
+                :to-equal '((13 20 20) (11 10 10)))))
+
+    (it "reads the lock from the student's section override, not the column's own"
+      (let ((row (test-gradebook--q2-row
+                  now (test-gradebook--override
+                       1 '(course_section_id . 10)
+                       '(due_at . "2026-09-14T03:59:00Z")
+                       '(lock_at . "2026-09-21T03:59:00Z")))))
+        (expect (plist-get row :open) :to-be nil)
+        (expect (plist-get row :lock) :to-equal (date-to-time "2026-09-21T03:59:00Z"))
+        (expect (plist-get row :due) :to-equal (date-to-time "2026-09-14T03:59:00Z"))))
+
+    (it "takes the latest lock of the overrides that apply, and none beats any"
+      (let ((section (test-gradebook--override
+                      1 '(course_section_id . 10) '(lock_at . "2026-09-21T03:59:00Z")))
+            (mine (test-gradebook--override
+                   2 '(student_ids . [1 7]) '(lock_at . "2026-11-01T03:59:00Z")))
+            (open (test-gradebook--override 3 '(student_ids . [1]) '(lock_at . :null))))
+        (expect (plist-get (test-gradebook--q2-row now section mine) :lock)
+                :to-equal (date-to-time "2026-11-01T03:59:00Z"))
+        (expect (plist-get (test-gradebook--q2-row now section mine) :open) :to-be t)
+        (expect (plist-get (test-gradebook--q2-row now section open) :lock) :to-be nil)
+        (expect (plist-get (test-gradebook--q2-row now section open) :open) :to-be t)))
+
+    (it "keeps the column's own date where no override that applies sets it"
+      (let ((other (test-gradebook--override
+                    1 '(course_section_id . 20) '(lock_at . "2026-09-21T03:59:00Z")))
+            (due-only (test-gradebook--override
+                       2 '(course_section_id . 10) '(due_at . "2026-09-16T03:59:00Z"))))
+        (expect (plist-get (test-gradebook--q2-row now other due-only) :lock)
+                :to-equal (date-to-time "2030-01-01T00:00:00Z"))
+        (expect (plist-get (test-gradebook--q2-row now other due-only) :due)
+                :to-equal (date-to-time "2026-09-16T03:59:00Z"))))
+
+    (it "prints the override's lock and leaves the column out of the still-open list"
+      (test-gradebook--with-standing
+        (let* ((test-gradebook--groups
+                (test-gradebook--q2-with-overrides
+                 (test-gradebook--override
+                  1 '(course_section_id . 10) '(lock_at . "2026-09-21T03:59:00Z"))))
+               (report (cl-letf (((symbol-function 'princ) #'ignore))
+                         (replace-regexp-in-string
+                          " +" " " (org-canvas-gradebook-student "Adams, Alice")))))
+          (expect test-gradebook--groups-params
+                  :to-equal '(("include[]" . "assignments") ("include[]" . "overrides")))
+          (expect report :to-match
+                  "| Q2 |.*| <2026-09-2[01] [^>]+> | - | 10 | unsubmitted | no | no | no |$")
+          (expect report :to-match "^No column past due is still open\\.$"))))))
+
+;;;; The class-wide hurdle report (#674)
+
+(defun test-gradebook--recitation-groups ()
+  "Recitation (drop lowest 1): R1 to R4, ten points each, and Exams.
+R3 carries a section 20 override that moves it to 2099."
+  `(((id . 3) (name . "Recitation") (position . 1) (group_weight . 100)
+     (rules . ((drop_lowest . 1)))
+     (assignments
+      . [((id . 31) (name . "R1") (published . t) (points_possible . 10)
+          (due_at . "2020-01-08T03:59:00Z") (lock_at . "2020-01-15T03:59:00Z"))
+         ((id . 32) (name . "R2") (published . t) (points_possible . 10)
+          (due_at . "2020-02-08T03:59:00Z") (lock_at . "2020-02-15T03:59:00Z"))
+         ((id . 33) (name . "R3") (published . t) (points_possible . 10)
+          (due_at . "2020-03-08T03:59:00Z") (lock_at . "2020-03-15T03:59:00Z")
+          (overrides . [((id . 9) (course_section_id . 20)
+                         (due_at . "2099-03-08T03:59:00Z")
+                         (lock_at . "2099-03-15T03:59:00Z"))]))
+         ((id . 34) (name . "R4") (published . t) (points_possible . 10)
+          (due_at . "2099-04-08T03:59:00Z") (lock_at . "2099-04-15T03:59:00Z"))]))
+    ((id . 4) (name . "Exams") (position . 2) (group_weight . 0) (rules . nil)
+     (assignments . [((id . 41) (name . "Midterm") (published . t)
+                      (points_possible . 100))]))))
+
+(defun test-gradebook--recitation-sub (uid aid &rest extra)
+  "UID's unsubmitted submission to AID, with EXTRA pairs first."
+  (append extra `((user_id . ,uid) (assignment_id . ,aid) (score . :null)
+                  (workflow_state . "unsubmitted") (submitted_at . :null)
+                  (posted_at . :null) (excused . :json-false))))
+
+(defun test-gradebook--recitation-graded (uid aid score)
+  "UID's graded, posted submission to AID scoring SCORE."
+  (test-gradebook--recitation-sub
+   uid aid `(score . ,score) '(workflow_state . "graded")
+   '(submitted_at . "2020-01-01T00:00:00Z")
+   '(posted_at . "2020-01-02T00:00:00Z")))
+
+(defun test-gradebook--recitation-subs ()
+  "Adams scored R1 8 and R2 6 and waits on R3; Baker scored R1 4 and has
+R3 open by override; Clark turned nothing in."
+  (vector (test-gradebook--recitation-graded 1 31 8.0)
+          (test-gradebook--recitation-graded 1 32 6.0)
+          (test-gradebook--recitation-sub 1 33 '(workflow_state . "submitted")
+                                          '(submitted_at . "2020-03-01T00:00:00Z"))
+          (test-gradebook--recitation-sub 1 34)
+          (test-gradebook--recitation-graded 2 31 4.0)
+          (test-gradebook--recitation-sub 2 32)
+          (test-gradebook--recitation-sub 2 33) (test-gradebook--recitation-sub 2 34)
+          (test-gradebook--recitation-sub 3 31) (test-gradebook--recitation-sub 3 32)
+          (test-gradebook--recitation-sub 3 33) (test-gradebook--recitation-sub 3 34)
+          (test-gradebook--recitation-graded 1 41 90.0)))
+
+(defmacro test-gradebook--with-recitation (&rest body)
+  "Run BODY with the fake API serving the recitation class (issue #674).
+Adams in Lecture (10), Baker in Lab (20), Clark in Online (30); a 60%
+hurdle on Recitation."
+  (declare (indent 0))
+  `(test-gradebook--with-course
+       (list (test-gradebook--enrollment 1 "Adams, Alice" 10 80.0 80.0)
+             (test-gradebook--enrollment 2 "Baker, Bob" 20 40.0 10.0)
+             (test-gradebook--enrollment 3 "Clark, Cy" 30 nil 0.0))
+       '(((id . 10) (name . "Lecture")) ((id . 20) (name . "Lab"))
+         ((id . 30) (name . "Online")))
+       nil
+     (let ((test-gradebook--groups (test-gradebook--recitation-groups))
+           (test-gradebook--submissions (test-gradebook--recitation-subs))
+           (test-gradebook--course '((id . 1)))
+           (org-canvas-gradebook-hurdles '(("Recitation" . 60))))
+       ,@body)))
+
+(defun test-gradebook--hurdle-report (&optional group)
+  "Run the hurdle report for GROUP and return it, runs of blanks collapsed."
+  (cl-letf (((symbol-function 'princ) #'ignore))
+    (replace-regexp-in-string " +" " " (org-canvas-gradebook-hurdle-report group))))
+
+(describe "org-canvas-gradebook-hurdle-report (issue #674)"
+  (it "prints every student's standing against the hurdle, column by column"
+    (test-gradebook--with-recitation
+      (let ((report (test-gradebook--hurdle-report)))
+        (expect report :to-match "nothing was sent, nothing written")
+        (expect report :to-match "^\\* Recitation$")
+        (expect report :to-match "^Hurdle 60%, drop lowest 1\\.$")
+        (expect report :to-match
+                "^| Student | Section | Now | Past due as 0 | At best | Needed | Verdict | R1 | R2 | R3 | R4 |$")
+        (expect report :to-match
+                "^| Adams, Alice | Lecture | 80.0 | 80.0 | 93.3 | 40.0 | meets it now | 8.0 | 6.0 | awaiting | ahead |$")
+        (expect report :to-match
+                "^| Baker, Bob | Lab | 40.0 | 40.0 | 80.0 | 70.0 | within reach | 4.0 | nothing in | ahead | ahead |$")
+        (expect report :to-match
+                "^| Clark, Cy | Online | - | 0.0 | 33.3 | - | out of reach | nothing in | nothing in | nothing in | ahead |$")
+        (expect report :to-match
+                "^3 students: 1 meets it now, 1 within reach, 1 out of reach\\.$")
+        (expect report :not :to-match "Midterm")
+        (expect test-gradebook--submissions-params
+                :to-equal '(("student_ids[]" . "all"))))))
+
+  (it "reads one named group, needing no hurdle for it"
+    (test-gradebook--with-recitation
+      (let* ((org-canvas-gradebook-hurdles nil)
+             (report (test-gradebook--hurdle-report "Exams")))
+        (expect report :to-match "^\\* Exams$")
+        (expect report :to-match "^No hurdle set\\.$")
+        (expect report :to-match
+                "^| Adams, Alice | Lecture | 90.0 | 90.0 | 90.0 | - | - | 90.0 |$")
+        (expect report :to-match
+                "^| Baker, Bob | Lab | - | - | - | - | - | - |$")
+        (expect report :not :to-match "^\\* Recitation$"))))
+
+  (it "says when a hurdle names no group, and refuses with nothing to report"
+    (test-gradebook--with-recitation
+      (let ((org-canvas-gradebook-hurdles '(("Recitation" . 60) ("Labs" . 50))))
+        (expect (test-gradebook--hurdle-report)
+                :to-match "^No group named Labs\\.$"))
+      (let ((org-canvas-gradebook-hurdles nil))
+        (expect (test-gradebook--hurdle-report) :to-throw 'user-error))))
+
+  (it "needs nothing once the hurdle is met with the rest at zero, and skips excused work"
+    (let ((now (date-to-time "2026-10-15T12:00:00Z"))
+          (group '(:id 3 :name "Recitation"))
+          (rows (list '(:id 1 :points 10 :item (1 9.0 10))
+                      '(:id 2 :points 10 :open t :due nil)
+                      '(:id 3 :points 10 :excused t))))
+      (expect (org-canvas--gradebook-hurdle-cell (nth 2 rows) now) :to-equal "excused")
+      (expect (org-canvas--gradebook-hurdle-cell (nth 1 rows) now) :to-equal "ahead")
+      (expect (org-canvas--gradebook-hurdle-item (nth 2 rows) now 1) :to-be nil)
+      (expect (org-canvas--gradebook-hurdle-percent rows group now nil) :to-equal 90.0)
+      (expect (org-canvas--gradebook-hurdle-percent rows group now 1) :to-equal 95.0)
+      (expect (org-canvas--gradebook-hurdle-needed rows group now 40) :to-equal 0)
+      (expect (org-canvas--gradebook-hurdle-needed rows group now nil) :to-be nil)
+      (expect (org-canvas--gradebook-hurdle-tally '("within reach"))
+              :to-equal "1 student: 0 meets it now, 1 within reach, 0 out of reach.\n")))
+
+  (it "answers interactively for every hurdle"
+    (test-gradebook--with-recitation
+      (let ((report (cl-letf (((symbol-function 'princ) #'ignore))
+                      (call-interactively #'org-canvas-gradebook-hurdle-report))))
+        (expect report :to-match "Adams, Alice")))))
+
 (provide 'org-canvas-gradebook-report-test)
 ;;; org-canvas-gradebook-report-test.el ends here

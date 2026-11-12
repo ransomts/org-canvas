@@ -74,7 +74,7 @@ lisp/
 ├── org-canvas-files-pull.el        # Rebuild files.org from Canvas (requires files)
 ├── org-canvas-files-upload.el      # The four-stage upload of course files (requires files)
 ├── org-canvas-gradebook.el         # Course-wide grade overview; final grade overrides pushed on command (GraphQL)
-├── org-canvas-gradebook-report.el  # One student's standing (#542) and the what-if over assignment-groups.org (#452) (requires gradebook, gradebook-scores)
+├── org-canvas-gradebook-report.el  # One student's standing (#542), the class against each hurdle (#674) and the what-if over assignment-groups.org (#452) (requires gradebook, gradebook-scores)
 ├── org-canvas-gradebook-scores.el  # Per-group scores recomputed the way Canvas's calculator does (requires gradebook)
 ├── org-canvas-grading-periods.el   # Pull-only grading periods
 ├── org-canvas-grading-schemes.el   # Letter-grade schemes (custom push: compared and skipped, never PUT)

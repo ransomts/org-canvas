@@ -201,6 +201,8 @@ copy silently.  Return the credentials file loaded, or nil."
      "Pull gradebook.org; print its Sections table and the course's scores.")
     ("student" org-canvas-batch--cmd-student 1 1 "NAME-OR-USER-ID"
      "Print one student's standing: every column, what is still open, the best possible grade (#542).")
+    ("hurdles" org-canvas-batch--cmd-hurdles 0 1 "[GROUP]"
+     "Print every student against each hurdle, or one group's; writes nothing (#674).")
     ("person" org-canvas-batch--cmd-person 1 1 "NAME-OR-USER-ID"
      "Print one person's roster entry and ids, from people.org (#543).")
     ("verify" org-canvas-batch--cmd-verify 1 nil
@@ -450,6 +452,12 @@ The Sections table, then the course's mean and median scores
 Every column grouped by assignment group, the columns still open, and
 the best possible total (`org-canvas-gradebook-student', #542)."
   (org-canvas-gradebook-student (car (plist-get parsed :args)))
+  0)
+
+(defun org-canvas-batch--cmd-hurdles (parsed)
+  "Print the class against each hurdle, or the group PARSED names; return 0.
+See `org-canvas-gradebook-hurdle-report' (#674)."
+  (org-canvas-gradebook-hurdle-report (car (plist-get parsed :args)))
   0)
 
 (defun org-canvas-batch--cmd-person (parsed)
