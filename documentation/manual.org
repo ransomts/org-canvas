@@ -920,7 +920,16 @@ A bare image link becomes an =<img>= in the pushed body, whose =src= is the imag
 [[file:images/scores.png]]
 #+end_src
 
-An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file (=.JPG= as much as =.png=), so a pull followed by a push sends it back as an image, and it writes Canvas's alt text back above it as =#+attr_html: :alt ...=, =:alt ""= for a decorative image.  Only an image that begins its own paragraph has a line to carry it: one inside running text, a list or a table comes back without its alt, and the next push gives it its file name.
+An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file (=.JPG= as much as =.png=), so a pull followed by a push sends it back as an image, and it writes Canvas's alt text back above it, =:alt ""= for a decorative image.  An image that is a paragraph on its own gets =#+attr_html: :alt ...=.  A paragraph's =#+ATTR_HTML= reaches only that kind of image, though, so an image anywhere else (in running text, a list, a table cell, a quote or a heading block) gets an =#+attr_canvas= line above the element that holds it, naming the image by its link:
+
+#+begin_src org
+,#+attr_canvas: [[file:content/org-canvas-images/grades.png]] :alt The grades page
+,#+attr_canvas: [[file:content/org-canvas-images/rule.png]] :alt ""
+- Open [[file:content/org-canvas-images/grades.png]] first.
+- Then [[file:content/org-canvas-images/rule.png]] the rest.
+#+end_src
+
+A push gives each bare link in the element the alt its line names, one line per occurrence in order, so the same image twice can carry two alts.  Org's own HTML export ignores the keyword.  You can write these lines by hand as well; one whose link no longer appears in the element below it is ignored, and that image gets its file name.  A one-line conversion (a quiz answer, a title) writes no alt line, so an image there still loses its alt on a pull.
 
 *** Links to Other Local Files
 

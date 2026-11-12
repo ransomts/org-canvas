@@ -481,12 +481,14 @@ Org text, or the empty string when HTML is nil or empty."
 
 (defun org-canvas--html-to-org-inline-with-rewrite (html)
   "Convert HTML to a single-line Org string with Canvas file URLs rewritten.
+No image alt line is written (`org-canvas--html-image-alts-inhibit').
 Returns the empty string for nil or empty HTML."
   (if (or (null html) (string-empty-p html))
       ""
-    (string-trim
-     (replace-regexp-in-string "[\n\r]+" " "
-                               (org-canvas--html-to-org-with-rewrite html)))))
+    (let ((org-canvas--html-image-alts-inhibit t))
+      (string-trim
+       (replace-regexp-in-string "[\n\r]+" " "
+                                 (org-canvas--html-to-org-with-rewrite html))))))
 
 ;;;; Heading Upsert and Body Insertion
 
