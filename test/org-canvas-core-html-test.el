@@ -438,6 +438,44 @@ Second text.
         (expect result :to-match "WARNING.*pandoc conversion failed")
         (expect result :to-match "<p>Test</p>")))))
 
+(describe "org-canvas--html-image-alts (issue #679)"
+  (it "returns each image's source and alt in order"
+    (expect (org-canvas--html-image-alts
+             (concat "<p><img src=\"/a?x=1&amp;y=2\" alt=\"First &quot;one&quot;\">"
+                     "<img src=\"b\"><img src=\"c\" alt=\"\"></p>"))
+            :to-equal '(("/a?x=1&y=2" . "First \"one\"") ("c" . ""))))
+  (it "returns nil without libxml"
+    (cl-letf (((symbol-function 'libxml-available-p) #'ignore))
+      (expect (org-canvas--html-image-alts "<img src=\"a\" alt=\"A\">")
+              :to-be nil))))
+
+(describe "org-canvas--html-to-org-restore-image-alts (issue #679)"
+  (it "returns the text itself with no alts"
+    (expect (org-canvas--html-to-org-restore-image-alts "[[a]]" nil)
+            :to-equal "[[a]]"))
+  (it "writes an alt above an image that begins a paragraph"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "[[a]]\n\n#+caption: Cap\n[[b]] after"
+             '(("a" . "Alpha\n  two") ("b" . "  ")))
+            :to-equal (concat "#+attr_html: :alt Alpha two\n[[a]]\n\n"
+                              "#+caption: Cap\n#+attr_html: :alt \"\"\n"
+                              "[[b]] after")))
+  (it "uses each alt once, so a repeated image keeps its own"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "[[a]]\n\n[[a]]\n\n[[a]]"
+             '(("a" . "One") ("a" . "Two")))
+            :to-equal (concat "#+attr_html: :alt One\n[[a]]\n\n"
+                              "#+attr_html: :alt Two\n[[a]]\n\n[[a]]")))
+  (it "leaves an image inside running text or a list alone"
+    (let ((text "Text\n[[a]]\n\n- [[a]]\n\nSee [[a]]"))
+      (expect (org-canvas--html-to-org-restore-image-alts
+               text '(("a" . "Alpha")))
+              :to-equal text)))
+  (it "leaves a link to another source alone"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "[[z]]" '(("a" . "Alpha")))
+            :to-equal "[[z]]")))
+
 (describe "org-canvas--html-strip-ids"
   (it "removes a single id attribute"
     (expect (org-canvas--html-strip-ids "<div id=\"content\">Hi</div>")

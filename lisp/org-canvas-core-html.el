@@ -12,6 +12,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'dom)
 (require 'org)
 (require 'ox)
 (require 'ox-html)
@@ -938,10 +939,81 @@ Returns TEXT itself when it carries no headline."
   (replace-regexp-in-string
    "^#\\+\\(?:begin\\|end\\)_h[1-6][ \t]*\\(?:\n\\|\\'\\)" "" text))
 
+;; IMAGE ALT TEXT (issue #679)
+;; ============================
+;; pandoc writes an `<img>' as a bare link and drops its alt, so a
+;; pull lost every `#+attr_html: :alt' line, and the next push gave
+;; each image its file name (`org-canvas--image-default-alt-filter'):
+;; written descriptions were replaced, decorative images unmarked.
+;; The alts are read from the HTML before pandoc runs and written back
+;; above each bare link to the same source that begins a paragraph,
+;; the one place ox-html reads them from.  An image inside running
+;; text, a list or a table has no such place and keeps losing its alt.
+
+(defun org-canvas--html-image-alts (html)
+  "Return (SRC . ALT) for each `<img>' in HTML carrying an alt.
+In document order; an image with no alt attribute is left out, and an
+empty alt stays the empty string, the mark of a decorative image."
+  (when (libxml-available-p)
+    (with-temp-buffer
+      (insert html)
+      (let ((dom (libxml-parse-html-region (point-min) (point-max))))
+        (delq nil
+              (mapcar (lambda (img)
+                        (let ((src (dom-attr img 'src))
+                              (alt (dom-attr img 'alt)))
+                          (and src alt (cons src alt))))
+                      (dom-by-tag dom 'img)))))))
+
+(defun org-canvas--image-alt-keyword (alt)
+  "Return the `#+attr_html' line that gives an image ALT."
+  (let ((text (string-trim
+               (replace-regexp-in-string "[ \t\n\r]+" " " alt))))
+    (format "#+attr_html: :alt %s\n"
+            (if (string-empty-p text) "\"\"" text))))
+
+(defun org-canvas--image-alt-paragraph-start-p ()
+  "Return non-nil when the line at point begins a paragraph.
+The line before it is blank, absent, or an affiliated keyword such as
+the `#+caption:' pandoc writes for a figure."
+  (or (bobp)
+      (save-excursion
+        (forward-line -1)
+        (looking-at-p "[ \t]*$\\|#\\+"))))
+
+(defun org-canvas--html-to-org-restore-image-alts (text alts)
+  "Write each image alt in ALTS back into TEXT, pandoc's Org output.
+ALTS is the list `org-canvas--html-image-alts' returns.  A bare link
+at the start of a paragraph whose path is a source in ALTS gets an
+`#+attr_html: :alt' line above it, each entry used once (issue #679).
+Returns TEXT itself when ALTS is empty."
+  (if (null alts)
+      text
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (let ((alts (copy-sequence alts))
+            (found nil))
+        (while (re-search-forward "^\\[\\[\\([^]\n]+\\)\\]\\]" nil t)
+          (let ((entry (assoc (match-string-no-properties 1) alts))
+                (bol (line-beginning-position)))
+            (when (and entry
+                       (save-excursion
+                         (goto-char bol)
+                         (org-canvas--image-alt-paragraph-start-p)))
+              (setq alts (delq entry alts))
+              (push (cons (copy-marker bol) (cdr entry)) found))))
+        (dolist (hit found)
+          (goto-char (car hit))
+          (insert (org-canvas--image-alt-keyword (cdr hit)))
+          (set-marker (car hit) nil)))
+      (buffer-string))))
+
 (defun org-canvas--html-to-org-pandoc (html)
   "Convert HTML to Org text through pandoc.
 Returns the post-processed Org text, or the raw HTML behind a
-warning line when pandoc exits non-zero."
+warning line when pandoc exits non-zero.  Image alts pandoc drops
+are written back (`org-canvas--html-to-org-restore-image-alts')."
   (with-temp-buffer
     (insert (org-canvas--html-strip-ids html))
     (let ((exit-code (call-process-region
@@ -949,8 +1021,10 @@ warning line when pandoc exits non-zero."
                       t t nil
                       "-f" "html" "-t" "org" "--wrap=none")))
       (if (= exit-code 0)
-          (org-canvas--html-to-org-post-process
-           (string-trim (buffer-string)))
+          (org-canvas--html-to-org-restore-image-alts
+           (org-canvas--html-to-org-post-process
+            (string-trim (buffer-string)))
+           (org-canvas--html-image-alts html))
         (concat "# WARNING: pandoc conversion failed\n" html)))))
 
 (defun org-canvas--html-to-org (html)

@@ -153,6 +153,9 @@
   (it "keeps a bare image link bare (issue #497)"
     (expect (org-canvas--rewrite-file-link "content/a.png" nil)
             :to-equal "[[file:content/a.png]]"))
+  (it "keeps a bare link to an upper-case image extension bare (issue #679)"
+    (expect (org-canvas--rewrite-file-link "content/x.JPG" nil)
+            :to-equal "[[file:content/x.JPG]]"))
   (it "labels a bare link to anything else with its file name"
     (expect (org-canvas--rewrite-file-link "content/r.pdf" nil)
             :to-equal "[[file:content/r.pdf][r.pdf]]")
@@ -257,6 +260,38 @@
                        "[[https://x.com/courses/1/files/30061566/preview]]")))
           (expect result :to-match
                   "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]"))))))
+
+(describe "Pulled image alt text (issue #679)"
+  ;; pandoc's own output for each <img>: a bare link, the alt gone.
+  (let ((pandoc-out
+         (concat "Intro\n\n"
+                 "[[https://x.com/courses/1/files/11/preview]]\n\n"
+                 "[[https://x.com/courses/1/files/12/preview]]"))
+        (html (concat "<p>Intro</p>"
+                      "<p><img src=\"https://x.com/courses/1/files/11/preview\""
+                      " alt=\"A screenshot of the grades page\"></p>"
+                      "<p><img src=\"https://x.com/courses/1/files/12/preview\""
+                      " alt=\"\"></p>")))
+    (it "writes Canvas's alt above each downloaded image, the link bare"
+      (let ((org-canvas--file-id-cache (make-hash-table :test 'equal)))
+        (puthash "11" "content/org-canvas-images/grades.png"
+                 org-canvas--file-id-cache)
+        (puthash "12" "content/org-canvas-images/rule.JPG"
+                 org-canvas--file-id-cache)
+        (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+                  ((symbol-function 'call-process-region)
+                   (lambda (start end &rest _)
+                     (delete-region start end)
+                     (insert pandoc-out)
+                     0)))
+          (expect (org-canvas--html-to-org-with-rewrite html)
+                  :to-equal
+                  (concat
+                   "Intro\n\n"
+                   "#+attr_html: :alt A screenshot of the grades page\n"
+                   "[[file:content/org-canvas-images/grades.png]]\n\n"
+                   "#+attr_html: :alt \"\"\n"
+                   "[[file:content/org-canvas-images/rule.JPG]]")))))))
 
 (describe "org-canvas--html-to-org-inline-with-rewrite"
   (it "returns empty string for nil"
