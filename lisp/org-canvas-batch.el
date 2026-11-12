@@ -231,8 +231,8 @@ copy silently.  Return the credentials file loaded, or nil."
     ("quiz-regrade" org-canvas-batch--cmd-quiz-regrade 2 nil
      "[--score full|N] [--dry-run] QUIZ QUESTION-TEXT"
      "Give one quiz question's score to every attempt that drew it (#540).")
-    ("diff" org-canvas-batch--cmd-diff 0 0 ""
-     "Print the drift report; exit 1 on drift." json)
+    ("diff" org-canvas-batch--cmd-diff 0 nil "[FEATURE:TITLE...]"
+     "Print the drift report, or named headings' rows only (#670); exit 1 on drift." json)
     ("adopt" org-canvas-batch--cmd-adopt 1 nil
      "[--body] [--overrides] --all | FEATURE:TITLE..."
      "Write what CHANGED rows name into Org, nothing sent (#498).")
@@ -993,13 +993,23 @@ to send or did not read back at the score (#540)."
 
 (defun org-canvas-batch--cmd-diff (parsed)
   "Print the drift report; return 1 if anything drifted.
-Under PARSED's --json the report is one JSON object
-\(`org-canvas-diff-json-data')."
-  (if (plist-get parsed :json)
-      (let ((data (org-canvas-diff-json-data)))
-        (org-canvas-batch--print-json data)
-        (if (> (alist-get 'drift data) 0) 1 0))
-    (if (> (org-canvas-diff) 0) 1 0)))
+With headings among PARSED's arguments, FEATURE:TITLE or FEATURE#ID,
+only those are checked, one read each (`org-canvas-diff-headings',
+#670), and a heading not checked counts as drift.  Under --json the
+report is one JSON object (`org-canvas-diff-json-data',
+`org-canvas-diff-headings-json-data')."
+  (let* ((entries (mapcar #'org-canvas-batch-heading-entry
+                          (plist-get parsed :args)))
+         (drift
+          (cond ((plist-get parsed :json)
+                 (let ((data (if entries
+                                 (org-canvas-diff-headings-json-data entries)
+                               (org-canvas-diff-json-data))))
+                   (org-canvas-batch--print-json data)
+                   (alist-get 'drift data)))
+                (entries (org-canvas-diff-headings entries))
+                (t (org-canvas-diff)))))
+    (if (> drift 0) 1 0)))
 
 (defun org-canvas-batch--adopt-args (args)
   "Read adopt ARGS into (SELECTORS BODY OVERRIDES).
