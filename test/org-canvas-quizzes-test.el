@@ -824,7 +824,7 @@ Description.
 
 ;;;; Special Quiz Parsing Functions
 
-(describe "org-canvas--quiz-parse-matching-list"
+(describe "org-canvas--parse-matching-list on a classic quiz question"
   (it "parses matching question pairs"
     (with-temp-org-buffer
      "* Quiz
@@ -835,7 +835,7 @@ Description.
 "
      (search-forward "Matching Question")
      (org-back-to-heading)
-     (let ((pairs (org-canvas--quiz-parse-matching-list)))
+     (let ((pairs (org-canvas--parse-matching-list)))
        ;; Pairs first, in order, then the distractor: the order the
        ;; push reads and the pull writes
        (expect pairs :to-equal
@@ -851,7 +851,7 @@ Description.
 "
      (search-forward "Match")
      (org-back-to-heading)
-     (let ((pairs (org-canvas--quiz-parse-matching-list)))
+     (let ((pairs (org-canvas--parse-matching-list)))
        (expect (car (nth 0 pairs)) :to-equal "Cat")
        (expect (cdr (nth 0 pairs)) :to-equal "Feline"))))
 
@@ -864,7 +864,7 @@ Description.
 "
      (search-forward "Match")
      (org-back-to-heading)
-     (let ((pairs (org-canvas--quiz-parse-matching-list)))
+     (let ((pairs (org-canvas--parse-matching-list)))
        ;; Find the distractor (nil right side)
        (expect (cl-find-if (lambda (p) (null (cdr p))) pairs) :to-be-truthy)))))
 
@@ -1824,6 +1824,22 @@ Intro text.
        (expect (mapcar (lambda (a) (alist-get 'answer_match_right a)) answers)
                :to-equal '("Feline")))
      (expect (org-canvas--question-matching-distractors) :to-equal '("Elephant"))))
+
+  (it "keeps a line holding a checkbox anywhere out of the distractors"
+    ;; The classic parser has skipped these since #407; the shared
+    ;; parser skips only a leading checkbox (issue #667)
+    (with-temp-org-buffer
+     "* Quiz
+** Match
+- Cat = Feline
+- tick [X] here
+- [ ] Rome
+- Elephant
+"
+     (search-forward "Match")
+     (org-back-to-heading)
+     (expect (org-canvas--question-matching-distractors)
+             :to-equal '("Elephant"))))
 
   (it "sends the distractors on the question, newline-delimited (issue #407)"
     (with-temp-org-buffer

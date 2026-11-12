@@ -165,32 +165,6 @@ list, so its prompt is all the text before the first child heading."
   (let ((bounds (org-canvas--new-quiz-item-prompt-bounds q-type)))
     (string-trim (buffer-substring-no-properties (car bounds) (cdr bounds)))))
 
-(defun org-canvas--new-quiz-parse-matching-line (line)
-  "Return LINE, the text of a `- ' item, as a matching entry, or nil.
-A `left = right' line is the pair (LEFT . RIGHT); a line with no `='
-is a distractor, (TEXT . nil), an answer no prompt matches (issue
-#668); a checkbox line or one holding a bare `=' is neither."
-  (cond
-   ((string-match "\\`\\(.+?\\) = \\(.+\\)\\'" line)
-    (cons (string-trim (match-string 1 line))
-          (string-trim (match-string 2 line))))
-   ((not (or (string-search "=" line)
-             (string-match-p "\\`\\[[ X]\\]" line)))
-    (list (string-trim line)))))
-
-(defun org-canvas--new-quiz-parse-matching-list ()
-  "Parse matching question format: left = right.
-Returns the list of (left . right) pairs and (text . nil) distractors,
-in the order the lines are written."
-  (save-excursion
-    (let ((matches nil)
-          (bound (save-excursion (org-end-of-subtree t) (point))))
-      (while (re-search-forward "^- \\(.+\\)$" bound t)
-        (when-let* ((entry (org-canvas--new-quiz-parse-matching-line
-                            (match-string 1))))
-          (push entry matches)))
-      (nreverse matches))))
-
 (defun org-canvas--new-quiz-parse-ordering-list ()
   "Parse ordering question format: numbered list items.
 Returns list of items in order."
@@ -454,7 +428,7 @@ scoring_data (string value), and scoring_algorithm Equivalence."
     ("true-false"     ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-true-false-data)
     ("multi-answer"   ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-choice-data)
     ("short-answer"   ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-fill-blank-data)
-    ("matching"       ,#'org-canvas--new-quiz-parse-matching-list       . ,#'org-canvas--new-quiz-item-build-matching-data)
+    ("matching"       ,#'org-canvas--parse-matching-list                . ,#'org-canvas--new-quiz-item-build-matching-data)
     ("ordering"       ,#'org-canvas--new-quiz-parse-ordering-list       . ,#'org-canvas--new-quiz-item-build-ordering-data)
     ("categorization" ,#'org-canvas--new-quiz-parse-categorization-list . ,#'org-canvas--new-quiz-item-build-categorization-data)
     ("numerical"      ,#'org-canvas--parse-numerical-answer             . ,#'org-canvas--new-quiz-item-build-numerical-data))
