@@ -1583,10 +1583,12 @@ drift report compares them (issue #321).
 | =essay=                | =essay=                | No answers needed                         |
 | =file-upload=          | =file_upload=          | No answers needed                         |
 | =numerical=            | =numerical=            | =[X] 42= or =[X] [10, 20]= (range)          |
-| =matching=             | =matching=             | =Left = Right= pairs                       |
+| =matching=             | =matching=             | =Left = Right= pairs (distractors have no =) |
 | =ordering=             | =ordering=             | Numbered list =1. item=                     |
 | =categorization=       | =categorization=       | =Category: item1, item2=                   |
 | =hot-spot=             | =hot-spot=             | Pulled only: regions in =HOTSPOTS= (see below) |
+
+A =matching= line with no = sign is a distractor, an answer no prompt matches, as in a classic quiz: =- Lisbon= under =- Paris = France= and =- Madrid = Spain= offers Lisbon in every dropdown and grades no prompt against it.  The push sends it as an extra entry in the item's =answers=, after the pairs' answers, and leaves it out of the scoring.  A pull keeps the answer list as it is written, distractors included.
 
 *Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.  Validation reports =TYPE: fill-in-the-blank= as an invalid value, and a sync refuses such a question rather than pushing it as another type.
 

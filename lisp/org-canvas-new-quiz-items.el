@@ -196,16 +196,30 @@ Returns a list of (text . is-correct) pairs."
           (push (cons text (string= checkbox "[X]")) answers)))
       (nreverse answers))))
 
+(defun org-canvas--new-quiz-parse-matching-line (line)
+  "Return LINE, the text of a `- ' item, as a matching entry, or nil.
+A `left = right' line is the pair (LEFT . RIGHT); a line with no `='
+is a distractor, (TEXT . nil), an answer no prompt matches (issue
+#668); a checkbox line or one holding a bare `=' is neither."
+  (cond
+   ((string-match "\\`\\(.+?\\) = \\(.+\\)\\'" line)
+    (cons (string-trim (match-string 1 line))
+          (string-trim (match-string 2 line))))
+   ((not (or (string-search "=" line)
+             (string-match-p "\\`\\[[ X]\\]" line)))
+    (list (string-trim line)))))
+
 (defun org-canvas--new-quiz-parse-matching-list ()
   "Parse matching question format: left = right.
-Returns list of (left . right) pairs."
+Returns the list of (left . right) pairs and (text . nil) distractors,
+in the order the lines are written."
   (save-excursion
     (let ((matches nil)
           (bound (save-excursion (org-end-of-subtree t) (point))))
-      (while (re-search-forward "^- \\(.+?\\) = \\(.+\\)$" bound t)
-        (push (cons (string-trim (match-string 1))
-                    (string-trim (match-string 2)))
-              matches))
+      (while (re-search-forward "^- \\(.+\\)$" bound t)
+        (when-let* ((entry (org-canvas--new-quiz-parse-matching-line
+                            (match-string 1))))
+          (push entry matches)))
       (nreverse matches))))
 
 (defun org-canvas--new-quiz-parse-ordering-list ()
@@ -388,17 +402,23 @@ scoring_data value as boolean."
   "Build interaction_data for matching question from PAIRS.
 Canvas expects `questions' (array of objects with short numeric IDs)
 and `answers' (flat string array).
-Scoring maps question_id → answer text."
+Scoring maps question_id → answer text.  A distractor, (TEXT . nil),
+asks no question: TEXT joins `answers' after every pair's answer, so
+the scoring, which pairs questions and answers by position, never
+names it (issue #668)."
   (let ((questions nil)
-        (answers nil))
+        (answers nil)
+        (distractors nil))
     (cl-loop for (left . right) in pairs
+             if right
              do (progn
                   (push `((id . ,(org-canvas--new-quiz-numeric-id))
                           (item_body . ,left))
                         questions)
-                  (push right answers)))
+                  (push right answers))
+             else do (push left distractors))
     `((questions . ,(vconcat (nreverse questions)))
-      (answers . ,(vconcat (nreverse answers))))))
+      (answers . ,(vconcat (nreverse answers) (nreverse distractors))))))
 
 (defun org-canvas--new-quiz-item-build-ordering-data (items)
   "Build interaction_data for ordering question from ITEMS.
