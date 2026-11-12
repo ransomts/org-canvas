@@ -1,0 +1,2 @@
+* Fixed
+- #673 A pull that writes the =* Assignment Groups= heading, whether moving level-1 groups under it or filling an empty file, no longer reports a body heading that split an entry or exits 1; a heading that really splits an entry in the same pull is still reported.

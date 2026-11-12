@@ -582,6 +582,12 @@ Returns a point in the buffer visiting FILE."
              level id-prop container-title
              (format "%s %s\n" (make-string level ?*) (or title "Untitled"))))))))
 
+(defvar-local org-canvas--pull-containers-written 0
+  "How many container headings a pull has written into this buffer.
+`org-canvas--pull-idless-entry-count' leaves them out, since a
+container is a level-1 heading without an id by design and not a
+body that split an entry (issue #673).")
+
 (defun org-canvas--pull-insert-at-level (level id-prop container-title text)
   "Insert TEXT where a heading at LEVEL belongs; return its start position.
 That is the end of the file's container heading, or the end of the file
@@ -592,7 +598,8 @@ than a container."
     (goto-char (or end (point-max)))
     (unless (bolp) (insert "\n"))
     (when (and (> level 1) (not end))
-      (insert (format "* %s\n" (or container-title "Untitled"))))
+      (insert (format "* %s\n" (or container-title "Untitled")))
+      (cl-incf org-canvas--pull-containers-written))
     (prog1 (point) (insert text))))
 
 (defun org-canvas--pull-lower-shallow-heading (id-prop canvas-id level
@@ -1255,8 +1262,13 @@ generated loop stays a two-branch dispatch."
       'processed))))
 
 (defun org-canvas--pull-idless-entry-count (id-property)
-  "Count the level-1 entries of the current buffer carrying no ID-PROPERTY."
-  (let ((n 0))
+  "Count the level-1 entries of the current buffer carrying no ID-PROPERTY.
+The containers a pull wrote into the buffer are left out (issue #673):
+the check compares two counts, so a container written between them
+would otherwise read as a split entry.  The result can go below zero
+when a container was written and later removed; only the difference
+between two counts means anything."
+  (let ((n (- org-canvas--pull-containers-written)))
     (org-map-entries
      (lambda () (unless (org-entry-get (point) id-property) (cl-incf n)))
      "LEVEL=1" 'file)

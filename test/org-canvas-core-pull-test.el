@@ -2088,7 +2088,63 @@ Keep these.
                   (goto-char (point-min))
                   (expect (how-many "^:CANVAS_ID:") :to-be 2))))
           (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
-          (delete-directory dir t))))))
+          (delete-directory dir t))))
+
+    (defun test-pull-groups-summary-errors (body)
+      "Pull two groups into an assignment-groups.org holding BODY.
+Return the error records the pull summary holds afterwards."
+      (let* ((dir (make-temp-file "upsert-673" t))
+             (file (expand-file-name "assignment-groups.org" dir))
+             (org-canvas-assignment-groups-file file)
+             (remote (vector '((id . 1) (name . "Labs") (group_weight . 40))
+                             '((id . 2) (name . "Quizzes")
+                               (group_weight . 60)))))
+        (org-canvas--pull-summary-reset)
+        (unwind-protect
+            (progn
+              (with-temp-file file (insert body))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _) (append remote nil)))
+                        ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                         #'ignore)
+                        ((symbol-function 'org-canvas--log-warning) #'ignore))
+                (org-canvas-pull-assignment-groups))
+              (org-canvas--pull-summary-records-of-kind 'error))
+          (org-canvas--pull-summary-reset)
+          (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
+          (delete-directory dir t))))
+
+    (it "reports no split for the container it writes (issue #673)"
+      (expect (test-pull-groups-summary-errors
+               (concat "* Labs\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                       "* Quizzes\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"))
+              :to-equal nil))
+
+    (it "reports no split for the container of a file without one (#673)"
+      (expect (test-pull-groups-summary-errors "#+TITLE: Groups\n")
+              :to-equal nil))))
+
+(describe "org-canvas--pull-idless-entry-count with a written container"
+  (it "still counts a heading that split an entry (issue #673)"
+    (let ((warnings nil))
+      (org-canvas--pull-summary-reset)
+      (unwind-protect
+          (with-temp-org-buffer "#+TITLE: Groups\n"
+            (let ((before (org-canvas--pull-idless-entry-count "CANVAS_ID")))
+              (org-canvas--pull-insert-at-level
+               2 "CANVAS_ID" "Assignment Groups"
+               "** Labs\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n")
+              (goto-char (point-max))
+              (insert "* Phantom\nlost text\n")
+              (cl-letf (((symbol-function 'org-canvas--log-warning)
+                         (lambda (_logger fmt &rest args)
+                           (push (apply #'format fmt args) warnings))))
+                (org-canvas--pull-check-entry-count
+                 "assignment-groups" "/x/assignment-groups.org" "CANVAS_ID"
+                 before 1))
+              (expect (length warnings) :to-equal 1)
+              (expect (car warnings) :to-match "1 level-1 entry without")))
+        (org-canvas--pull-summary-reset)))))
 
 (describe "org-canvas-define-pull"
   (it "signals error when :file is missing"
