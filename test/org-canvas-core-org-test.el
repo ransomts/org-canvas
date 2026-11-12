@@ -1804,5 +1804,43 @@ Page content.
           (when buf (kill-buffer buf)))
         (delete-file file)))))
 
+(describe "org-canvas--parse-matching-list (issue #667)"
+  (it "reads pairs and distractors in the order they are written"
+    (with-temp-org-buffer
+     "* Quiz
+** Match
+- Lisbon
+- Paris = France
+-   Madrid   =   Spain  
+- Rome = Italy = Lazio
+"
+     (search-forward "Match")
+     (org-back-to-heading)
+     (expect (org-canvas--parse-matching-list)
+             :to-equal '(("Lisbon") ("Paris" . "France")
+                         ("Madrid" . "Spain") ("Rome" . "Italy = Lazio")))))
+
+  (it "skips a checkbox line, a bare =, an indented item and a child heading's"
+    (with-temp-org-buffer
+     "* Quiz
+** Match
+- [X] Paris
+- [ ] Rome
+- x=1
+- Oslo =
+  - Bern = Switzerland
+- [X] Paris = France
+** Next
+- Vienna = Austria
+"
+     (search-forward "Match")
+     (org-back-to-heading)
+     (expect (org-canvas--parse-matching-list)
+             :to-equal '(("[X] Paris" . "France")))))
+
+  (it "keeps a line whose checkbox is not at its start as a distractor"
+    (expect (org-canvas--parse-matching-line "tick [X] here")
+            :to-equal '("tick [X] here"))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

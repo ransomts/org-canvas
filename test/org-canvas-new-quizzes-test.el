@@ -129,7 +129,7 @@ What would happen?
      (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (cl-count t answers :key #'cdr) :to-equal 2)))))
 
-(describe "org-canvas--new-quiz-parse-matching-list"
+(describe "org-canvas--parse-matching-list on a New Quiz item"
   (it "parses matching pairs"
     (with-temp-org-buffer
      "* Quiz
@@ -140,7 +140,7 @@ What would happen?
 "
      (search-forward "Match the terms")
      (org-back-to-heading)
-     (let ((matches (org-canvas--new-quiz-parse-matching-list)))
+     (let ((matches (org-canvas--parse-matching-list)))
        (expect (length matches) :to-equal 3)
        (expect (car (nth 0 matches)) :to-equal "DNA")
        (expect (cdr (nth 0 matches)) :to-equal "Deoxyribonucleic acid"))))
@@ -155,14 +155,14 @@ What would happen?
 "
      (search-forward "Match the capitals")
      (org-back-to-heading)
-     (expect (org-canvas--new-quiz-parse-matching-list)
+     (expect (org-canvas--parse-matching-list)
              :to-equal '(("Paris" . "France") ("Lisbon")
                          ("Madrid" . "Spain")))))
 
   (it "reads neither a checkbox nor a line with a bare = as a distractor"
-    (expect (org-canvas--new-quiz-parse-matching-line "[X] Paris")
+    (expect (org-canvas--parse-matching-line "[X] Paris")
             :to-be nil)
-    (expect (org-canvas--new-quiz-parse-matching-line "x=1")
+    (expect (org-canvas--parse-matching-line "x=1")
             :to-be nil)))
 
 (describe "org-canvas--new-quiz-parse-ordering-list"
@@ -2709,7 +2709,7 @@ Click the heart.
                    . ((value . ((\1 . "France") (\2 . "Spain")))))))))
      (search-forward "Match the capitals")
      (org-back-to-heading t)
-     (expect (org-canvas--new-quiz-parse-matching-list)
+     (expect (org-canvas--parse-matching-list)
              :to-equal '(("Paris" . "France") ("Madrid" . "Spain")
                          ("Lisbon"))))))
 

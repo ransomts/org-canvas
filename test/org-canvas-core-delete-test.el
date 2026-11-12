@@ -1162,13 +1162,22 @@ The pages file is the same file, so a page spec can name its headings."
                    (results (org-canvas-delete-headings
                              '((assignment . "Journal 06")))))
               (expect (plist-get (car results) :outcome) :to-be 'deleted)))
-          (let ((files (directory-files snapshot-dir t "-assignment-2497506\\.json\\'")))
+          ;; Named by the registry's feature, as the drift report's
+          ;; delete names its file, not by the singular "assignment"
+          (let ((files (directory-files snapshot-dir t "[0-9]-assignments-2497506\\.json\\'")))
             (expect (length files) :to-equal 1)
             (expect (alist-get 'name (json-read-file (car files)))
                     :to-equal "Journal 06"))
           ;; The GET came first, and the file was there before the DELETE.
           (expect (mapcar (lambda (c) (list (car c) (nth 2 c))) (reverse order))
                   :to-equal '((GET 0) (DELETE 1)))))))
+
+  (it "names the registry's feature for a delete's snapshot, else the singular"
+    (expect (org-canvas--delete-registry-name "assignment") :to-equal "Assignments")
+    (expect (org-canvas--delete-registry-name "group-category")
+            :to-equal "Group Categories")
+    (expect (org-canvas--delete-registry-name "no-such-thing")
+            :to-equal "no-such-thing"))
 
   (it "keeps the item when its snapshot cannot be written (#669)"
     (with-delete-snapshot-dir

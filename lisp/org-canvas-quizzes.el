@@ -249,28 +249,6 @@ Returns alist of (blank_id . ((text . is-correct) ...))."
 	  (push (cons blank-id (nreverse answers)) blanks)))
       (nreverse blanks))))
 
-(defun org-canvas--quiz-parse-matching-list ()
-  "Parse matching question format: left = right.
-Returns list of (left . right) pairs; a `- text' line with no `='
-is a distractor, returned as (text . nil) (#407)."
-  (save-excursion
-    (let* ((start (point))
-	   (matches nil)
-	   (bound (save-excursion (org-end-of-subtree t) (point))))
-      (while (re-search-forward "^- \\(.+?\\) = \\(.+\\)$" bound t)
-	(push (cons (string-trim (match-string 1))
-		    (string-trim (match-string 2)))
-	      matches))
-      ;; Also check for distractors (items without =), restarting from
-      ;; the heading: the pairs loop left point after the last match, so
-      ;; a distractor written above it was never scanned
-      (goto-char start)
-      (while (re-search-forward "^- \\([^=\n]+\\)$" bound t)
-	(let ((text (string-trim (match-string 1))))
-	  (unless (string-match-p "\\[[ X]\\]" text)  ; Skip checkboxes
-	    (push (cons text nil) matches))))
-      (nreverse matches))))
-
 ;;;; Quiz Parsing (Level 1)
 
 (defun org-canvas--quiz-read-props (pom)
@@ -739,7 +717,7 @@ A line with no `=' is a distractor, which Canvas takes on the question
 as `matching_answer_incorrect_matches', not as an answer: an answer
 with a left side alone made a pair whose right side was empty (issue
 #407).  `org-canvas--question-matching-distractors' reads those."
-  (cl-loop for (left . right) in (org-canvas--quiz-parse-matching-list)
+  (cl-loop for (left . right) in (org-canvas--parse-matching-list)
            when right
            collect `((answer_match_left . ,left)
                      (answer_match_right . ,right))))
@@ -747,9 +725,12 @@ with a left side alone made a pair whose right side was empty (issue
 (defun org-canvas--question-matching-distractors ()
   "Return the distractors of the matching question at point, in order.
 The `- text' lines with no `=', seeded into every dropdown beside the
-right sides."
-  (cl-loop for (left . right) in (org-canvas--quiz-parse-matching-list)
-           unless right collect left))
+right sides.  A line holding a checkbox anywhere is not one: the
+classic parser has skipped those since #407, where the shared
+`org-canvas--parse-matching-list' skips only a leading one."
+  (cl-loop for (left . right) in (org-canvas--parse-matching-list)
+           unless (or right (string-match-p "\\[[ X]\\]" left))
+           collect left))
 
 (defun org-canvas--question-build-numerical-answer ()
   "Build answer from numerical value or range."

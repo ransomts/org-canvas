@@ -922,6 +922,38 @@ answers alike (issue #667)."
           (push (cons text (string= checkbox "[X]")) answers)))
       (nreverse answers))))
 
+(defun org-canvas--parse-matching-line (line)
+  "Return LINE, the text of a `- ' item, as a matching entry, or nil.
+A `left = right' line is the pair (LEFT . RIGHT); a line with no `='
+is a distractor, (TEXT . nil), an answer no prompt matches (issues
+#407, #668); a checkbox line or one holding a bare `=' is neither.
+Both sides are read before either is trimmed: `string-trim' resets
+the match data, which lost the right side of a left side written
+with extra spaces."
+  (cond
+   ((string-match "\\`\\(.+?\\) = \\(.+\\)\\'" line)
+    (let ((left (match-string 1 line))
+          (right (match-string 2 line)))
+      (cons (string-trim left) (string-trim right))))
+   ((not (or (string-search "=" line)
+             (string-match-p "\\`\\[[ X]\\]" line)))
+    (list (string-trim line)))))
+
+(defun org-canvas--parse-matching-list ()
+  "Parse the matching list under the heading at point.
+Returns the list of (left . right) pairs and (text . nil) distractors,
+in the order the lines are written, read to the end of the subtree.
+A classic quiz question and a New Quiz item write their pairs alike
+\(issue #667)."
+  (save-excursion
+    (let ((matches nil)
+          (bound (save-excursion (org-end-of-subtree t) (point))))
+      (while (re-search-forward "^- \\(.+\\)$" bound t)
+        (when-let* ((entry (org-canvas--parse-matching-line
+                            (match-string 1))))
+          (push entry matches)))
+      (nreverse matches))))
+
 (defun org-canvas--parse-numerical-answer ()
   "Parse the numerical answer under the heading at point.
 The first checked item is the answer: an exact value, returned as
