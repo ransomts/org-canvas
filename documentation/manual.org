@@ -4452,7 +4452,8 @@ object is deleted at the URL =k= would use.  The rules:
   returned it, is written to =<time>-<feature>-<id>.json= under
   =org-canvas-diff-delete-snapshot-directory= (default
   =canvas-snapshots/= in the course directory), so a mistaken delete can
-  be rebuilt.  =k= writes one too.  A delete-all writes its own snapshot
+  be rebuilt.  =k= writes one too, and so does a delete at point or by
+  heading (#669).  A delete-all writes its own snapshot
   under the same directory before its first DELETE (#555); see
   [[*Deleting All Items of a Type][Deleting All Items of a Type]].
 - *Dry run and read-only.*  Under a dry run the objects are read and
@@ -6303,7 +6304,7 @@ Deleting items that are no longer needed.
 
 1. Navigate to the heading in the =.org= file.
 2. Run the delete-at-point command (e.g., =M-x org-canvas-delete-assignment-at-point=).
-3. This deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
+3. This reads the item and writes its JSON, as Canvas returns it, to =<time>-<feature>-<id>.json= under =org-canvas-diff-delete-snapshot-directory= (default =canvas-snapshots/= in the course directory), the directory the drift report's and delete-all's snapshots go to (#669); if the read comes back empty or the file cannot be written, nothing is deleted.  A course marked =org-canvas-read-only= is refused before the read, and a dry run reads and writes nothing.  It then deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
 4. Optionally remove the heading from the Org file, and any =modules.org= item linking to it: Canvas removes the module item with the item it points at, and nothing removes the Org side for you.
 
 A script names the headings instead of visiting them (#525):

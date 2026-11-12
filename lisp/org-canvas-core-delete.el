@@ -307,10 +307,33 @@ else the answer `y-or-n-p' reads."
   (or org-canvas-delete-confirmed
       (y-or-n-p (format "Delete '%s' from Canvas? " title))))
 
+(defun org-canvas--delete-item-snapshot (feature-name canvas-id url)
+  "Read the FEATURE-NAME item CANVAS-ID at URL; snapshot it; return the path.
+The file is the drift delete's own, written by
+`org-canvas--diff-snapshot-write' under
+`org-canvas-diff-delete-snapshot-directory' as
+<time>-FEATURE-NAME-CANVAS-ID.json, holding the object as Canvas
+returns it just before the DELETE, so a named delete is as
+recoverable as a drift-row or delete-all one (issue #669).  A
+read-only course is refused before anything is read or written, and
+an empty reply signals: the DELETE must not go without its snapshot."
+  (org-canvas--check-writable 'DELETE (format "deleting %s" feature-name))
+  (let ((object (org-canvas-api-request 'GET url)))
+    (unless object
+      (error "Canvas returned nothing to snapshot for %s %s"
+             feature-name canvas-id))
+    (let ((file (org-canvas--diff-snapshot-write
+                 feature-name canvas-id object)))
+      (org-canvas--log-info org-canvas--logger
+        "[Delete] Snapshot of %s %s: %s" feature-name canvas-id file)
+      file)))
+
 (defun org-canvas--delete-item-send (request)
   "Send the DELETE REQUEST describes, then clean the heading it names.
-REQUEST is an `org-canvas--delete-request'.  Return `deleted', or nil
-after logging the failure."
+REQUEST is an `org-canvas--delete-request'.  The item is read and
+snapshotted first (`org-canvas--delete-item-snapshot'); a failed
+snapshot stops the delete.  Return `deleted', or nil after logging
+the failure."
   (let* ((feature-name (org-canvas--delete-request-feature-name request))
          (title (org-canvas--delete-request-title request))
          (canvas-id (org-canvas--delete-request-canvas-id request))
@@ -323,7 +346,8 @@ after logging the failure."
     (org-canvas--log-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
       feature-name title canvas-id)
     (condition-case err
-        (progn
+        (let ((snapshot (org-canvas--delete-item-snapshot
+                         feature-name canvas-id (funcall url))))
           (if delete-data
               (org-canvas-api-request 'DELETE (funcall url) :data delete-data)
             (org-canvas-api-request 'DELETE (funcall url)))
@@ -333,7 +357,8 @@ after logging the failure."
           ;; The children went with it on Canvas: clear theirs too (#331)
           (org-canvas--clear-subtree-sync-properties pom)
           (org-canvas--log-info org-canvas--logger "Cleaned local properties")
-          (message "%s '%s' deleted." (capitalize feature-name) title)
+          (message "%s '%s' deleted%s." (capitalize feature-name) title
+                   (org-canvas--delete-snapshot-note snapshot))
           'deleted)
       (error
        (org-canvas--log-error org-canvas--logger "Failed to delete: %s"

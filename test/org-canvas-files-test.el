@@ -496,8 +496,10 @@
                       (lambda (method _url &rest _args)
                         (when (eq method 'DELETE)
                           (setq delete-called t))
-                        nil)))
-             (org-canvas-delete-file-at-point)
+                        ;; The snapshot reads the file first (#669)
+                        (when (eq method 'GET) '((id . 54321))))))
+             (with-delete-snapshot-dir
+               (org-canvas-delete-file-at-point))
              (expect delete-called :to-be t)
              ;; Properties should be cleared
              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))))))

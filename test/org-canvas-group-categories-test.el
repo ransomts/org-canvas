@@ -515,10 +515,12 @@
                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
                  ((symbol-function 'display-buffer) (lambda (_) nil))
                  ((symbol-function 'org-canvas-api-request)
-                  (lambda (_method url &rest _args)
+                  (lambda (method url &rest _args)
                     (setq deleted-url url)
-                    nil)))
-         (org-canvas-delete-group-category-at-point)
+                    ;; The snapshot reads the category first (#669)
+                    (when (eq method 'GET) '((id . 42))))))
+         (with-delete-snapshot-dir
+           (org-canvas-delete-group-category-at-point))
          (expect deleted-url :to-match "api/v1/group_categories/42")
          (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))))
 
