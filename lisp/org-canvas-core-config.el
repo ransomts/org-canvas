@@ -1419,7 +1419,7 @@ link to (issue #413).  Local-only: never pulled, pushed or compared.")
 (defconst org-canvas--validate-accept-property-spec
   '(:org-prop "VALIDATE_ACCEPT" :data-key :validate_accept :type string
     :local-only t
-    :doc "A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent")
+    :doc "A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent")
   "Property spec accepting one validate check on a heading, with a reason.
 Spliced into the registry of every content type whose findings carry
 a check id (issue #538).  Local-only: never pulled, pushed, hashed or

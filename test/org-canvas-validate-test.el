@@ -1187,5 +1187,182 @@ history and not a finding at all.")
         (expect (plist-get stats :suppressed) :to-equal 1)
         (expect (plist-get stats :accepted) :to-equal 0)))))
 
+(defun test-validate-675--findings (dir modules assignments)
+  "Write MODULES and ASSIGNMENTS into DIR; return the module-reach findings.
+Every other file is empty, and DIR's buffers are killed afterwards."
+  (test-validate-create-empty-files dir)
+  (with-temp-file (expand-file-name "modules.org" dir) (insert modules))
+  (with-temp-file (expand-file-name "assignments.org" dir) (insert assignments))
+  (unwind-protect
+      (cl-remove-if-not (lambda (i) (eq (plist-get i :check) 'module-reach))
+                        (plist-get (org-canvas--validate-run-all-specs) :issues))
+    (test-validate-538--cleanup dir)))
+
+(defun test-validate-675--module (title unlock &rest extra)
+  "Return module TITLE, unlocking at UNLOCK, holding Essay.
+EXTRA are more drawer lines."
+  (concat "* " title "\n:PROPERTIES:\n"
+          (if unlock (format ":UNLOCK_AT: %s\n" unlock) "")
+          (apply #'concat extra)
+          ":END:\n** [[file:assignments.org::*Essay][Essay]]\n"))
+
+(defun test-validate-675--essay (&rest lines)
+  "Return the Essay heading, due <2099-11-16 Mon 23:59>, LINES in its drawer."
+  (concat "* Essay\n:PROPERTIES:\n:DUE_AT: <2099-11-16 Mon 23:59>\n"
+          (apply #'concat lines) ":END:\n"))
+
+(describe "a column a module holds locked (issue #675)"
+  (it "warns, rule or no rule, when the module opens at or after the due date"
+    (with-validate-test-dir dir
+      (let* ((org-canvas-validate-min-reach-days nil)
+             (issues (test-validate-675--findings
+                      dir (test-validate-675--module "Week 13" "<2099-11-17 Tue 00:00>")
+                      (test-validate-675--essay ":UNLOCK_AT: <2099-08-19 Wed 00:00>\n")))
+             (issue (car issues)))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get issue :severity) :to-be 'warning)
+        (expect (plist-get issue :heading) :to-equal "Essay")
+        (expect (plist-get issue :line) :to-equal 1)
+        (expect (plist-get issue :push-only) :to-be nil)
+        (expect (plist-get issue :message) :to-equal
+                "Module 'Week 13' unlocks <2099-11-17 Tue 00:00>, not before the due date <2099-11-16 Mon 23:59>: Canvas keeps the column locked until the module opens, whatever its own dates say; move its module item to a module that opens in time"))))
+
+  (it "is silent on a short window when the course sets no minimum"
+    (with-validate-test-dir dir
+      (let ((org-canvas-validate-min-reach-days nil))
+        (expect (test-validate-675--findings
+                 dir (test-validate-675--module "Week 12" "<2099-11-16 Mon 00:00>")
+                 (test-validate-675--essay))
+                :to-be nil))))
+
+  (it "warns when the module opens closer to the due date than the minimum"
+    (with-validate-test-dir dir
+      (let* ((org-canvas-validate-min-reach-days 7)
+             (issues (test-validate-675--findings
+                      dir (test-validate-675--module "Week 12" "<2099-11-16 Mon 00:00>")
+                      (test-validate-675--essay ":UNLOCK_AT: <2099-08-19 Wed 00:00>\n"))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-be 'warning)
+        (expect (plist-get (car issues) :message) :to-equal
+                "Reachable 1.0 day(s) before it is due: students first reach it <2099-11-16 Mon 00:00>, when module 'Week 12' unlocks, and it is due <2099-11-16 Mon 23:59>; the course wants 7 day(s) (move its module item to a module that opens in time)"))))
+
+  (it "passes a module that opens in time, and one with no date"
+    (with-validate-test-dir dir
+      (let ((org-canvas-validate-min-reach-days 7))
+        (expect (test-validate-675--findings
+                 dir (concat (test-validate-675--module "Week 10" "<2099-11-02 Mon 00:00>")
+                             (test-validate-675--module "Week 1" nil))
+                 (test-validate-675--essay))
+                :to-be nil))))
+
+  (it "counts the column's own unlock when it is the later of the two"
+    (with-validate-test-dir dir
+      (let* ((org-canvas-validate-min-reach-days 7)
+             (issues (test-validate-675--findings
+                      dir (test-validate-675--module "Week 10" "<2099-11-02 Mon 00:00>")
+                      (test-validate-675--essay ":UNLOCK_AT: <2099-11-14 Sat 23:59>\n"))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :message) :to-match
+                "\\`Reachable 2.0 day(s) before it is due: students first reach it <2099-11-14 Sat 23:59>, its own unlock date,"))))
+
+  (it "reads the latest of the modules holding the column"
+    (with-validate-test-dir dir
+      (let ((org-canvas-validate-min-reach-days 7))
+        (expect (mapcar (lambda (i) (plist-get i :message))
+                        (test-validate-675--findings
+                         dir (concat (test-validate-675--module "Week 10" "<2099-11-02 Mon 00:00>")
+                                     (test-validate-675--module "Week 12" "<2099-11-14 Sat 23:59>"))
+                         (test-validate-675--essay)))
+                :to-equal
+                '("Reachable 2.0 day(s) before it is due: students first reach it <2099-11-14 Sat 23:59>, when module 'Week 12' unlocks, and it is due <2099-11-16 Mon 23:59>; the course wants 7 day(s) (move its module item to a module that opens in time)")))))
+
+  (it "applies the minimum only to the groups the course names"
+    (with-validate-test-dir dir
+      (let ((org-canvas-validate-min-reach-days 7)
+            (org-canvas-validate-reach-groups '("Essays [GC]"))
+            (modules (test-validate-675--module "Week 12" "<2099-11-16 Mon 00:00>")))
+        (expect (test-validate-675--findings
+                 dir modules
+                 (test-validate-675--essay
+                  ":GROUP: [[file:assignment-groups.org::*Labs][Labs]]\n"))
+                :to-be nil)
+        (expect (length (test-validate-675--findings
+                         dir modules
+                         (test-validate-675--essay
+                          ":GROUP: [[file:assignment-groups.org::*Essays \\[GC\\]][Essays]]\n")))
+                :to-equal 1)
+        (expect (length (test-validate-675--findings
+                         dir modules (test-validate-675--essay ":GROUP: Essays [GC]\n")))
+                :to-equal 1))))
+
+  (it "leaves out a column past due, unpublished, or in a deleted item"
+    (with-validate-test-dir dir
+      (let ((org-canvas-validate-min-reach-days 7)
+            (late (test-validate-675--module "Week 13" "<2099-11-17 Tue 00:00>")))
+        (expect (test-validate-675--findings
+                 dir late (test-validate-675--essay ":PUBLISHED: false\n"))
+                :to-be nil)
+        (expect (test-validate-675--findings
+                 dir (test-validate-675--module "Week 1" "<2020-01-01 Wed 00:00>")
+                 "* Essay\n:PROPERTIES:\n:DUE_AT: <2020-01-01 Wed 12:00>\n:END:\n")
+                :to-be nil)
+        (expect (test-validate-675--findings
+                 dir (concat "* Week 13\n:PROPERTIES:\n:UNLOCK_AT: <2099-11-17 Tue 00:00>\n:END:\n"
+                             "** [[file:assignments.org::*Essay][Essay]]\n"
+                             ":PROPERTIES:\n:CANVAS_DELETED: [2099-01-01 Thu]\n:END:\n")
+                 (test-validate-675--essay))
+                :to-be nil))))
+
+  (it "notes a module that opens on prerequisites, which it cannot time"
+    (with-validate-test-dir dir
+      (let* ((org-canvas-validate-min-reach-days 7)
+             (issues (test-validate-675--findings
+                      dir (test-validate-675--module
+                           "Week 12" nil ":PREREQUISITE_MODULE_IDS: 41\n")
+                      (test-validate-675--essay))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-be 'note)
+        (expect (plist-get (car issues) :message) :to-equal
+                "Module 'Week 12' opens on its prerequisites, not on a date: validate cannot tell when students first reach the column"))))
+
+  (it "can be accepted with a reason, and a read-only course still hears it"
+    (with-validate-test-dir dir
+      (test-validate-create-empty-files dir)
+      (with-temp-file (expand-file-name "modules.org" dir)
+        (insert (test-validate-675--module "Week 13" "<2099-11-17 Tue 00:00>")
+                "** [[file:assignments.org::*Lab][Lab]]\n"))
+      (with-temp-file (expand-file-name "assignments.org" dir)
+        (insert (test-validate-675--essay
+                 ":VALIDATE_ACCEPT: module-reach Submitted in class\n")
+                "* Lab\n:PROPERTIES:\n:DUE_AT: <2099-11-16 Mon 23:59>\n:END:\n"))
+      (unwind-protect
+          (let* ((org-canvas-read-only t)
+                 (data (org-canvas--validate-collect)))
+            (expect (mapcar (lambda (i) (plist-get i :heading))
+                            (cl-remove-if-not
+                             (lambda (i) (eq (plist-get i :check) 'module-reach))
+                             (plist-get data :issues)))
+                    :to-equal '("Lab"))
+            (expect (mapcar (lambda (i) (plist-get i :accepted))
+                            (plist-get data :accepted))
+                    :to-equal '("Submitted in class")))
+        (test-validate-538--cleanup dir))))
+
+  (it "reads modules.org once a run"
+    (with-validate-test-dir dir
+      (spy-on 'org-canvas--validate-read-module-holders :and-call-through)
+      (test-validate-675--findings
+       dir (concat (test-validate-675--module "Week 13" "<2099-11-17 Tue 00:00>")
+                   "** [[file:assignments.org::*Lab][Lab]]\n")
+       (concat (test-validate-675--essay)
+               "* Lab\n:PROPERTIES:\n:DUE_AT: <2099-11-16 Mon 23:59>\n:END:\n"))
+      (expect 'org-canvas--validate-read-module-holders
+              :to-have-been-called-times 1)))
+
+  (it "says nothing without a modules file"
+    (with-validate-test-dir dir
+      (let ((org-canvas-modules-file nil))
+        (expect (org-canvas--validate-module-holders) :to-be nil)))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

@@ -1856,7 +1856,7 @@
 
   (it "lists each check id with what it finds"
     (expect (mapcar #'car org-canvas--validate-checks)
-            :to-equal '(date-order lock-window require-unlock))
+            :to-equal '(date-order lock-window require-unlock module-reach))
     (expect (org-canvas--validate-checked 'date-order nil) :to-be nil)))
 
 (describe "VALIDATE_ACCEPT on a heading (issue #538)"
@@ -1912,7 +1912,7 @@
       (expect (mapcar (lambda (b) (list (nth 0 b) (nth 3 b) (nth 4 b))) brief)
               :to-equal
               '((warning nil "Lock window missing: due <2099-03-10 Tue 23:59> with no lock date; the course locks online columns 48 hour(s) after the due date")
-                (warning nil "VALIDATE_ACCEPT names 'lock-windw', which is not a check validate knows (date-order, lock-window, require-unlock)")
+                (warning nil "VALIDATE_ACCEPT names 'lock-windw', which is not a check validate knows (date-order, lock-window, require-unlock, module-reach)")
                 (warning nil "VALIDATE_ACCEPT lock-window gives no reason, so it accepts nothing: write why after the check id")))
       (expect property :to-equal "VALIDATE_ACCEPT")))
 

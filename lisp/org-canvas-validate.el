@@ -502,6 +502,197 @@ A finding about the course, never push-only; no request is made."
                               (org-canvas--validate-module-orphans var keys))))))
     issues))
 
+;;;; 5a. Columns a Module Holds Locked (issue #675)
+;;
+;; Canvas keeps an item locked while a module holding it is locked,
+;; whatever the item's own dates say, so a published column in a week
+;; module that unlocks the day it is due reads as open in the file
+;; and in the drift report while students cannot reach it.
+
+(defcustom org-canvas-validate-min-reach-days nil
+  "Days before its due date students must be able to reach a column, or nil.
+A column is first reachable at the later of its own UNLOCK_AT and the
+UNLOCK_AT of the modules in `org-canvas-modules-file' holding it.
+`org-canvas-validate' warns about a published assignment, not yet
+due, reachable for less than this many days, counted by the clock.
+`org-canvas-validate-reach-groups' narrows it to some assignment
+groups.  Whatever this says, a module unlocking at or after the due
+date is always a warning.  A course rule: set it in the course's
+`org-canvas-course-config-file'."
+  :type '(choice (const :tag "Off" nil) (number :tag "Days"))
+  :group 'org-canvas)
+
+(defcustom org-canvas-validate-reach-groups nil
+  "Assignment groups `org-canvas-validate-min-reach-days' covers, by name.
+Each is a heading title in the assignment groups file, as a GROUP
+link names it.  Nil covers every assignment."
+  :type '(repeat string)
+  :group 'org-canvas)
+
+(defvar org-canvas--validate-module-holders nil
+  "The module map of the validation run under way, or nil outside one.
+A cons whose car is the map once read, `unread' until then.
+`org-canvas--validate-run-all-specs' binds it, so modules.org is read
+once a run and not once per assignment.")
+
+(defun org-canvas--validate-item-module ()
+  "Return the module of the module item at point, as a plist.
+The keys are :title, :unlock (its UNLOCK_AT) and :prereq (its
+PREREQUISITE_MODULE_IDS)."
+  (save-excursion
+    (org-up-heading-safe)
+    (list :title (org-get-heading t t t t)
+          :unlock (org-entry-get (point) "UNLOCK_AT")
+          :prereq (org-entry-get (point) "PREREQUISITE_MODULE_IDS"))))
+
+(defun org-canvas--validate-read-module-holders (modules-file)
+  "Return a hash from the headings MODULES-FILE's items name to their modules.
+Keys are `org-canvas--validate-heading-key' strings; each value is
+the list of `org-canvas--validate-item-module' plists holding that
+heading.  An item Canvas deleted, or one under a module it deleted,
+holds nothing (issue #402)."
+  (let ((dir (file-name-directory modules-file))
+        (items nil)
+        (holders (make-hash-table :test 'equal)))
+    (with-current-buffer (org-canvas--find-file-noselect modules-file)
+      (org-with-wide-buffer
+       (org-map-entries
+        (lambda ()
+          (when (and (not (org-canvas--sync-deleted-stamp))
+                     (looking-at org-complex-heading-regexp)
+                     (match-string-no-properties 4))
+            (push (cons (match-string-no-properties 4)
+                        (org-canvas--validate-item-module))
+                  items)))
+        "LEVEL=2" 'file)))
+    (dolist (item items)
+      (when-let* ((target (org-canvas--validate-module-link-target
+                           (car item) dir))
+                  ((eq (car target) 'heading))
+                  (key (org-canvas--validate-module-link-key target)))
+        (push (cdr item) (gethash key holders))))
+    holders))
+
+(defun org-canvas--validate-module-holders ()
+  "Return the course's module map, or nil without a modules file.
+Read once a validation run (`org-canvas--validate-module-holders'),
+else on every call."
+  (let ((cache org-canvas--validate-module-holders))
+    (if (and cache (not (eq (car cache) 'unread)))
+        (car cache)
+      (let* ((file (and (boundp 'org-canvas-modules-file)
+                        org-canvas-modules-file
+                        (expand-file-name org-canvas-modules-file)))
+             (holders (and file (file-exists-p file)
+                           (org-canvas--validate-read-module-holders file))))
+        (when cache (setcar cache holders))
+        holders))))
+
+(defun org-canvas--validate-group-name (group)
+  "Return the assignment group GROUP names, a link or plain text."
+  (if (string-match "::\\*\\(.+\\)\\]\\[" group)
+      (org-canvas--unescape-org-brackets (match-string 1 group))
+    (string-trim group)))
+
+(defun org-canvas--validate-reach-scope-p ()
+  "Return non-nil when the column at point is under the minimum reach rule."
+  (and org-canvas-validate-min-reach-days
+       (or (null org-canvas-validate-reach-groups)
+           (when-let* ((group (org-entry-get (point) "GROUP")))
+             (member (org-canvas--validate-group-name group)
+                     org-canvas-validate-reach-groups)))))
+
+(defun org-canvas--validate-latest-module (modules)
+  "Return the one of MODULES with the latest unlock date, or nil.
+A module with no unlock date that parses is passed over."
+  (car (cl-sort (cl-remove-if-not
+                 (lambda (m) (org-canvas--validate-safe-parse-timestamp
+                              (plist-get m :unlock)))
+                 modules)
+                #'string>
+                :key (lambda (m) (org-canvas--validate-safe-parse-timestamp
+                                  (plist-get m :unlock))))))
+
+(defun org-canvas--validate-short-reach (due module loc)
+  "Return a warning when the column at point is reachable too briefly.
+DUE is its due date and MODULE the latest-unlocking module holding
+it.  The column is first reachable at the later of MODULE's unlock
+and its own; LOC locates it.  Nil when that leaves at least
+`org-canvas-validate-min-reach-days'."
+  (let* ((unlock (plist-get module :unlock))
+         (own (org-entry-get (point) "UNLOCK_AT"))
+         (own-hours (and own (org-canvas--validate-wall-hours own due)))
+         (module-hours (org-canvas--validate-wall-hours unlock due))
+         (own-later (and own-hours (< own-hours module-hours)))
+         (hours (if own-later own-hours module-hours)))
+    (when (< hours (* 24 org-canvas-validate-min-reach-days))
+      (org-canvas--validate-make-issue
+       'warning loc "UNLOCK_AT"
+       (format "Reachable %.1f day(s) before it is due: students first reach it %s, %s, and it is due %s; the course wants %s day(s) (move its module item to a module that opens in time)"
+               (/ hours 24.0)
+               (if own-later own unlock)
+               (if own-later "its own unlock date"
+                 (format "when module '%s' unlocks" (plist-get module :title)))
+               due
+               (org-canvas--validate-format-weight
+                org-canvas-validate-min-reach-days))))))
+
+(defun org-canvas--validate-module-after-due (due module loc)
+  "Return a warning when MODULE does not unlock before DUE, else nil.
+LOC locates the column it holds."
+  (when (<= (org-canvas--validate-wall-hours (plist-get module :unlock) due) 0)
+    (org-canvas--validate-make-issue
+     'warning loc "DUE_AT"
+     (format "Module '%s' unlocks %s, not before the due date %s: Canvas keeps the column locked until the module opens, whatever its own dates say; move its module item to a module that opens in time"
+             (plist-get module :title) (plist-get module :unlock) due))))
+
+(defun org-canvas--validate-prerequisite-notes (modules loc)
+  "Return a note per one of MODULES that waits on prerequisites.
+LOC locates the column they hold."
+  (delq nil
+        (mapcar (lambda (m)
+                  (when (org-string-nw-p (plist-get m :prereq))
+                    (org-canvas--validate-make-issue
+                     'note loc "PREREQUISITE_MODULE_IDS"
+                     (format "Module '%s' opens on its prerequisites, not on a date: validate cannot tell when students first reach the column"
+                             (plist-get m :title)))))
+                modules)))
+
+(defun org-canvas--validate-reach-findings (due modules loc)
+  "Return the findings on the column at point, due DUE, held by MODULES.
+LOC locates it."
+  (let* ((latest (org-canvas--validate-latest-module modules))
+         (in-scope (org-canvas--validate-reach-scope-p))
+         (late (and latest
+                    (or (org-canvas--validate-module-after-due due latest loc)
+                        (and in-scope
+                             (org-canvas--validate-short-reach
+                              due latest loc))))))
+    (append (and late (list late))
+            (and in-scope
+                 (org-canvas--validate-prerequisite-notes modules loc)))))
+
+(defun org-canvas--validate-module-reach (loc)
+  "Return findings on when students can first reach the assignment at point.
+LOC is a (:file :line :heading) plist.  A published column not yet
+due is read against the modules holding it in
+`org-canvas-modules-file': a module unlocking at or after the due date
+is a warning, and so, under `org-canvas-validate-min-reach-days', is a
+window shorter than the course's minimum; a module waiting on
+prerequisites is a note, since its release is no date.  The findings
+are check `module-reach' and describe the course, so never push-only
+\(issue #675).  No request is made."
+  (when-let* ((due (org-entry-get (point) "DUE_AT"))
+              (due-iso (org-canvas--validate-safe-parse-timestamp due))
+              ((string< (org-canvas-current-iso8601-timestamp) due-iso))
+              ((not (equal (org-entry-get (point) "PUBLISHED") "false")))
+              (holders (org-canvas--validate-module-holders))
+              (modules (gethash (org-canvas--validate-heading-key
+                                 (plist-get loc :file) (point))
+                                holders)))
+    (mapcar (lambda (issue) (org-canvas--validate-checked 'module-reach issue))
+            (org-canvas--validate-reach-findings due modules loc))))
+
 ;;;; 6. Validation Engine
 
 (defun org-canvas--validate-spec (spec)
@@ -583,12 +774,14 @@ either way, so a per-spec call would report every foreign link twice
 \(issue #172).  So do the body-fragment, local-file-link and
 duplicate-level-id scans.
 The module check reads the modules file against the content files
-once, after the specs (issue #413).
+once, after the specs (issue #413), and the assignments' reach check
+reads it once for the run (issue #675).
 Returns a plist (:issues ISSUES :checked N :skipped N)."
   (let ((all-issues nil)
         (files-checked 0)
         (files-skipped 0)
-        (scanned nil))
+        (scanned nil)
+        (org-canvas--validate-module-holders (list 'unread)))
     (dolist (spec (org-canvas--validate-specs))
       (let* ((file-var (plist-get spec :file))
              (file (and (boundp file-var)
