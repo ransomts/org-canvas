@@ -148,12 +148,12 @@ The submissions directory is a temp directory."
     (expect (org-canvas--quiz-submissions-duration 5432.7) :to-equal "1:30")
     (expect (org-canvas--quiz-submissions-duration nil) :to-equal "-")))
 
-(describe "org-canvas--quiz-submissions-number"
+(describe "org-canvas--table-number"
   (it "renders a score with one decimal, a count as an integer, and a dash"
-    (expect (org-canvas--quiz-submissions-number 7.25) :to-equal "7.2")
-    (expect (org-canvas--quiz-submissions-number 3) :to-equal "3")
-    (expect (org-canvas--quiz-submissions-number nil) :to-equal "-")
-    (expect (org-canvas--quiz-submissions-number "x") :to-equal "x")))
+    (expect (org-canvas--table-number 7.25) :to-equal "7.2")
+    (expect (org-canvas--table-number 3) :to-equal "3")
+    (expect (org-canvas--table-number nil) :to-equal "-")
+    (expect (org-canvas--table-number "x") :to-equal "x")))
 
 (describe "org-canvas--quiz-submissions-summary"
   (it "counts open attempts and retakes and averages the kept scores"

@@ -96,7 +96,7 @@ What would happen?
      (let ((text (org-canvas--new-quiz-parse-question-text)))
        (expect text :to-match "Consider the following scenario")))))
 
-(describe "org-canvas--new-quiz-parse-checkbox-list"
+(describe "org-canvas--parse-checkbox-list on a New Quiz item"
   (it "parses correct and incorrect answers"
     (with-temp-org-buffer
      "* Quiz
@@ -110,7 +110,7 @@ What would happen?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((answers (org-canvas--new-quiz-parse-checkbox-list)))
+     (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (length answers) :to-equal 3)
        (expect (cdr (nth 0 answers)) :to-be t)
        (expect (cdr (nth 1 answers)) :to-be nil)
@@ -126,7 +126,7 @@ What would happen?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((answers (org-canvas--new-quiz-parse-checkbox-list)))
+     (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (cl-count t answers :key #'cdr) :to-equal 2)))))
 
 (describe "org-canvas--new-quiz-parse-matching-list"
@@ -196,7 +196,7 @@ What would happen?
        (expect (car (nth 0 categories)) :to-equal "Fruit")
        (expect (cdr (nth 0 categories)) :to-equal '("apple" "banana"))))))
 
-(describe "org-canvas--new-quiz-parse-numerical-answer"
+(describe "org-canvas--parse-numerical-answer on a New Quiz item"
   (it "parses exact numerical answer"
     (with-temp-org-buffer
      "* Quiz
@@ -207,7 +207,7 @@ What would happen?
      (org-back-to-heading)
      (unless test-org-canvas-emacs-30-p
        (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
-     (let ((num (org-canvas--new-quiz-parse-numerical-answer)))
+     (let ((num (org-canvas--parse-numerical-answer)))
        (expect (plist-get num :type) :to-equal 'exact)
        (expect (plist-get num :value) :to-equal 3.14))))
 
@@ -221,7 +221,7 @@ What would happen?
      (org-back-to-heading)
      (unless test-org-canvas-emacs-30-p
        (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
-     (let ((num (org-canvas--new-quiz-parse-numerical-answer)))
+     (let ((num (org-canvas--parse-numerical-answer)))
        (expect (plist-get num :type) :to-equal 'range)
        (expect (plist-get num :start) :to-equal 10)
        (expect (plist-get num :end) :to-equal 20)))))
@@ -4179,7 +4179,7 @@ SLUG is its interaction_type_slug, \"choice\" by default."
               (before (buffer-string)))
           (expect pushed :to-match "<ul><li>one</li><li>two</li></ul>")
           (test-nq-333--goto-item)
-          (expect (org-canvas--new-quiz-parse-checkbox-list) :to-equal nil)
+          (expect (org-canvas--parse-checkbox-list) :to-equal nil)
           (test-nq-333--pull (test-nq-333--item pushed))
           (expect (buffer-string) :to-equal before)))))
 
@@ -4235,7 +4235,7 @@ SLUG is its interaction_type_slug, \"choice\" by default."
           (expect text :to-match "New prompt\\.\n\n- \\[X\\] Alpha\n- \\[ \\] Beta\n"))
         (test-nq-333--goto-item)
         (expect (org-entry-get (point) "CANVAS_ITEM_ID") :to-equal "7")
-        (expect (org-canvas--new-quiz-parse-checkbox-list)
+        (expect (org-canvas--parse-checkbox-list)
                 :to-equal '(("Alpha" . t) ("Beta"))))))
 
   (it "rewrites a stamped heading in place, its answers kept"

@@ -863,6 +863,81 @@ FILE is nil or missing."
           (goto-char pos)
           (org-get-heading t t t t))))))
 
+(defun org-canvas--bound-file (var)
+  "Return the file VAR names when VAR is bound and the file exists, else nil.
+The people, sections and groups files belong to feature modules a
+reader may not require, so it reads them by name when they exist."
+  (let ((file (and (boundp var) (symbol-value var))))
+    (and file (file-exists-p file) file)))
+
+(defun org-canvas--literal-id (text)
+  "Return the digits of TEXT when it is a literal #123, else nil."
+  (and (string-match "\\`#\\([0-9]+\\)\\'" text) (match-string 1 text)))
+
+(defun org-canvas--resolve-title-or-id (text var property match)
+  "Resolve TEXT, a heading title or #id, to PROPERTY of that heading.
+A literal #id is its own answer.  A title is looked up under MATCH in
+the file VAR names (`org-canvas--bound-file'); nil when VAR is unbound,
+its file is missing or no heading carries the title (issue #667)."
+  (or (org-canvas--literal-id text)
+      (org-canvas--heading-property-by-title
+       (org-canvas--bound-file var) text property match)))
+
+(defun org-canvas--table-columns-by-title (header specs)
+  "Return the column indexes in HEADER of the cells SPECS names.
+SPECS is a list of (TITLE . POSITION), TITLE in lower case.  When
+HEADER, a table's first row, names any TITLE (case and surrounding
+whitespace aside), each column is found by its title and an unnamed
+one is nil: a pulled table drops a column no row fills, so position
+alone would read the wrong cell.  A header naming none falls back to
+each POSITION.  One index per spec, in order (issue #667)."
+  (let* ((titles (mapcar (lambda (cell) (downcase (string-trim cell))) header))
+         (named (cl-some (lambda (spec) (member (car spec) titles)) specs)))
+    (mapcar (lambda (spec)
+              (if named
+                  (cl-position (car spec) titles :test #'string=)
+                (cdr spec)))
+            specs)))
+
+(defun org-canvas--table-number (value &optional decimals)
+  "Render VALUE for a table cell with DECIMALS places, - when absent.
+DECIMALS defaults to one; an integer keeps none, and anything that is
+not a number is written as it stands."
+  (cond ((null value) "-")
+        ((integerp value) (format "%d" value))
+        ((numberp value) (format (format "%%.%df" (or decimals 1)) value))
+        (t (format "%s" value))))
+
+(defun org-canvas--parse-checkbox-list ()
+  "Parse the checkbox list under the heading at point into answer data.
+Returns a list of (text . is-correct) pairs, read to the end of the
+subtree.  A classic quiz question and a New Quiz item write their
+answers alike (issue #667)."
+  (save-excursion
+    (let ((answers nil)
+          (bound (save-excursion (org-end-of-subtree t) (point))))
+      (while (re-search-forward "^[ \t]*- \\(\\[[ X]\\]\\) \\(.+\\)$" bound t)
+        (let ((checkbox (match-string 1))
+              (text (string-trim (match-string 2))))
+          (push (cons text (string= checkbox "[X]")) answers)))
+      (nreverse answers))))
+
+(defun org-canvas--parse-numerical-answer ()
+  "Parse the numerical answer under the heading at point.
+The first checked item is the answer: an exact value, returned as
+\(:type exact :value N), or a [min, max] range, returned as
+\(:type range :start MIN :end MAX).  Nil without a checked item."
+  (save-excursion
+    (let ((bound (save-excursion (org-end-of-subtree t) (point))))
+      (when (re-search-forward "^- \\[X\\] \\(.+\\)$" bound t)
+        (let ((text (string-trim (match-string 1))))
+          (if (string-match "\\[\\([0-9.-]+\\),[ ]*\\([0-9.-]+\\)\\]" text)
+              (list :type 'range
+                    :start (string-to-number (match-string 1 text))
+                    :end (string-to-number (match-string 2 text)))
+            (list :type 'exact
+                  :value (string-to-number text))))))))
+
 (defun org-canvas--publish-at-scheduled-p (pom)
   "Return non-nil when the heading at POM carries a non-blank PUBLISH_AT.
 POM is a position, marker or buffer position.  A hand-written file may

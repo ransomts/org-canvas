@@ -1741,5 +1741,68 @@ Page content.
   (it "returns nil for empty string"
     (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
 
+(defvar test-org-canvas-667-file nil
+  "A file variable for the `org-canvas--bound-file' specs.")
+(defvar test-org-canvas-667-people nil
+  "A people file variable for the `org-canvas--resolve-title-or-id' specs.")
+
+(describe "shared table and lookup helpers (issue #667)"
+  (it "finds columns by title, case and spaces aside, an unnamed one nil"
+    (expect (org-canvas--table-columns-by-title
+             '("Student" " LOCK AT " "Due At")
+             '(("due at" . 1) ("unlock at" . 2) ("lock at" . 3)))
+            :to-equal '(2 nil 1)))
+
+  (it "falls back to the positions when the header names no title"
+    (expect (org-canvas--table-columns-by-title
+             '("Student" "A" "B") '(("extra attempts" . 1) ("extra time" . 2)))
+            :to-equal '(1 2)))
+
+  (it "renders a number cell with one decimal, or DECIMALS, and - when absent"
+    (expect (org-canvas--table-number 2.25) :to-equal "2.2")
+    (expect (org-canvas--table-number 0.7272 2) :to-equal "0.73")
+    (expect (org-canvas--table-number 3) :to-equal "3")
+    (expect (org-canvas--table-number nil) :to-equal "-")
+    (expect (org-canvas--table-number "x") :to-equal "x"))
+
+  (it "reads a literal #id and nothing else"
+    (expect (org-canvas--literal-id "#123") :to-equal "123")
+    (expect (org-canvas--literal-id "Ada #123") :to-be nil)
+    (expect (org-canvas--literal-id "#12a") :to-be nil))
+
+  (it "returns a bound variable's file only when it exists"
+    (let ((file (make-temp-file "bound-file-" nil ".org")))
+      (unwind-protect
+          (progn
+            (let ((test-org-canvas-667-file file))
+              (expect (org-canvas--bound-file 'test-org-canvas-667-file) :to-equal file))
+            (let ((test-org-canvas-667-file (concat file ".missing")))
+              (expect (org-canvas--bound-file 'test-org-canvas-667-file) :to-be nil))
+            (expect (org-canvas--bound-file 'test-org-canvas-667-unbound) :to-be nil))
+        (delete-file file))))
+
+  (it "resolves a title through the file a variable names, or a #id as itself"
+    (let ((file (make-temp-file "resolve-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Students\n** Ada\n:PROPERTIES:\n:USER_ID: 7\n:END:\n"))
+            (let ((test-org-canvas-667-people file))
+              (expect (org-canvas--resolve-title-or-id
+                       "Ada" 'test-org-canvas-667-people "USER_ID" "LEVEL=2")
+                      :to-equal "7")
+              (expect (org-canvas--resolve-title-or-id
+                       "#42" 'test-org-canvas-667-people "USER_ID" "LEVEL=2")
+                      :to-equal "42")
+              (expect (org-canvas--resolve-title-or-id
+                       "Bo" 'test-org-canvas-667-people "USER_ID" "LEVEL=2")
+                      :to-be nil))
+            (expect (org-canvas--resolve-title-or-id
+                     "Ada" 'test-org-canvas-667-unbound "USER_ID" "LEVEL=2")
+                    :to-be nil))
+        (let ((buf (find-buffer-visiting file)))
+          (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

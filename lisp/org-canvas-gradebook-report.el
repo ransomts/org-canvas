@@ -184,7 +184,7 @@ Those are the columns the student can still turn in."
 (defun org-canvas--gradebook-student-percent-text (percent)
   "Return PERCENT as text with its percent sign, or a dash."
   (if (numberp percent)
-      (format "%s%%" (org-canvas--gradebook-number percent))
+      (format "%s%%" (org-canvas--table-number percent))
     "-"))
 
 (defun org-canvas--gradebook-student-drops-text (group)
@@ -205,7 +205,7 @@ Those are the columns the student can still turn in."
 WEIGHTED non-nil shows the group's weight, nil the word unweighted."
   (let ((weight (if weighted
                     (format "weight %s%%"
-                            (org-canvas--gradebook-number (plist-get group :weight)))
+                            (org-canvas--table-number (plist-get group :weight)))
                   "unweighted"))
         (drops (org-canvas--gradebook-student-drops-text group)))
     (if (string-empty-p drops) weight (concat weight ", " drops))))
@@ -225,8 +225,8 @@ A column that does not count toward the grade is named as such."
                   (org-canvas--gradebook-student-name-cell row)
                   (org-canvas--gradebook-student-time (plist-get row :due))
                   (org-canvas--gradebook-student-time (plist-get row :lock))
-                  (org-canvas--gradebook-number (plist-get row :score))
-                  (org-canvas--gradebook-number (plist-get row :points))
+                  (org-canvas--table-number (plist-get row :score))
+                  (org-canvas--table-number (plist-get row :points))
                   (if (plist-get row :excused) "excused" (plist-get row :state))
                   (org-canvas--gradebook-flag (plist-get row :late))
                   (org-canvas--gradebook-flag (plist-get row :missing))
@@ -237,7 +237,7 @@ A column that does not count toward the grade is named as such."
 NOW and BEST are its percentages after the drop rules, nil without
 points possible."
   (format "Hurdle %s%%: %s now, %s at best — %s."
-          (org-canvas--gradebook-number required)
+          (org-canvas--table-number required)
           (org-canvas--gradebook-student-percent-text now)
           (org-canvas--gradebook-student-percent-text best)
           (cond ((and now (>= now required)) "meets it now")
@@ -299,7 +299,7 @@ KEY is `:current' or `:final'; the letter comes from GRADES, honouring
          (name (substring (symbol-name key) 1))
          (letter (org-canvas--alist-get-non-null
                   (intern (format "%s%s_grade" prefix name)) grades)))
-    (concat (org-canvas--gradebook-number (plist-get row key))
+    (concat (org-canvas--table-number (plist-get row key))
             (if (stringp letter) (format " (%s)" letter) ""))))
 
 (defun org-canvas--gradebook-student-unmatched-hurdles (context)
@@ -379,7 +379,7 @@ Nothing is written."
     (list :row row
           :grades (alist-get 'grades (car mine))
           :sections (org-canvas--gradebook-sections-cell
-                     row (org-canvas--gradebook-fetch-section-names))
+                     row (org-canvas--pull-fetch-section-names))
           :weighted (eq (alist-get 'apply_assignment_group_weights course) t)
           :scheme (org-canvas--gradebook-fetch-scheme course enrollments)
           :hurdles org-canvas-gradebook-hurdles
@@ -522,8 +522,8 @@ The letter columns are SCHEME's, best first; none without a scheme."
     (dolist (s series)
       (let ((counts (org-canvas--gradebook-letter-counts (cdr s) scheme)))
         (insert (format "| %s | %s | %s |%s\n" (car s)
-                        (org-canvas--gradebook-number (org-canvas--gradebook-mean (cdr s)))
-                        (org-canvas--gradebook-number (org-canvas--gradebook-median (cdr s)))
+                        (org-canvas--table-number (org-canvas--gradebook-mean (cdr s)))
+                        (org-canvas--table-number (org-canvas--gradebook-median (cdr s)))
                         (mapconcat (lambda (l) (format " %d |" (or (cdr (assoc l counts)) 0)))
                                    letters "")))))))
 
@@ -531,8 +531,8 @@ The letter columns are SCHEME's, best first; none without a scheme."
   "Return the table line comparing GROUP with CANVAS when they disagree.
 Nil when weight, drop rules and never-drop ids agree."
   (let ((cells (mapcar (lambda (key)
-                         (cons (org-canvas--gradebook-number (or (plist-get canvas key) 0))
-                               (org-canvas--gradebook-number (or (plist-get group key) 0))))
+                         (cons (org-canvas--table-number (or (plist-get canvas key) 0))
+                               (org-canvas--table-number (or (plist-get group key) 0))))
                        '(:weight :drop-lowest :drop-highest))))
     (unless (and (cl-every (lambda (c) (equal (car c) (cdr c))) cells)
                  (equal (sort (copy-sequence (plist-get canvas :never-drop)) #'<)
@@ -563,8 +563,8 @@ SCHEME's for Canvas's total, so a change is the table's doing."
       (dolist (r moved)
         (insert (format "| %s | %s | %s | %s | %s |\n"
                         (org-canvas--gradebook-cell-text (nth 0 r))
-                        (org-canvas--gradebook-number (nth 1 r))
-                        (org-canvas--gradebook-number (nth 3 r))
+                        (org-canvas--table-number (nth 1 r))
+                        (org-canvas--table-number (nth 3 r))
                         (or (org-canvas--gradebook-letter (nth 1 r) scheme) "-")
                         (or (org-canvas--gradebook-letter (nth 3 r) scheme) "-"))))))))
 

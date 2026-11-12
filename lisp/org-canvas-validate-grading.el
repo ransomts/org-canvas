@@ -30,9 +30,8 @@ push-only.  ROW-LOC locates the row."
   (let* ((names (split-string text ";" t "[ \t]+"))
          (missing (cl-remove-if
                    (lambda (name)
-                     (or (string-match-p "\\`#[0-9]+\\'" name)
-                         (org-canvas--validate-override-lookup
-                          'org-canvas-people-file name "USER_ID")))
+                     (org-canvas--resolve-title-or-id
+                      name 'org-canvas-people-file "USER_ID" "LEVEL=2"))
                    names))
          (departed (and (null missing) (org-canvas--validate-departed-people names))))
     (cond
@@ -59,9 +58,8 @@ touches nothing on Canvas.  ROW-LOC locates the row."
   (cond
    ((string-match "\\`Group:[ \t]*\\(.+?\\)[ \t]*\\'" target)
     (let ((title (match-string 1 target)))
-      (unless (or (string-match-p "\\`#[0-9]+\\'" title)
-                  (org-canvas--validate-override-lookup
-                   'org-canvas-groups-file title "CANVAS_ID"))
+      (unless (org-canvas--resolve-title-or-id
+               title 'org-canvas-groups-file "CANVAS_ID" "LEVEL=2")
         (org-canvas--validate-push-only
          (org-canvas--validate-make-issue
           'warning row-loc nil

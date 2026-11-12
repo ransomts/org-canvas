@@ -61,12 +61,12 @@
       (expect (plist-get (cadr rows) :missing) :to-be nil)
       (expect (plist-get (car rows) :current) :to-be nil))))
 
-(describe "org-canvas--gradebook-number"
+(describe "org-canvas--table-number"
   (it "renders a score with one decimal, a count as an integer, and a dash for nothing"
-    (expect (org-canvas--gradebook-number 91.25) :to-equal "91.2")
-    (expect (org-canvas--gradebook-number 3) :to-equal "3")
-    (expect (org-canvas--gradebook-number nil) :to-equal "-")
-    (expect (org-canvas--gradebook-number "A") :to-equal "A")))
+    (expect (org-canvas--table-number 91.25) :to-equal "91.2")
+    (expect (org-canvas--table-number 3) :to-equal "3")
+    (expect (org-canvas--table-number nil) :to-equal "-")
+    (expect (org-canvas--table-number "A") :to-equal "A")))
 
 (describe "org-canvas--gradebook-cell-text"
   (it "collapses pipes and line breaks with the blanks around them, and blanks a non-string"

@@ -264,13 +264,13 @@ CORRECT marks it right, as Canvas marks a survey's first option."
     (expect (org-canvas--quiz-results-duration 3661.4) :to-equal "1:01")
     (expect (org-canvas--quiz-results-duration nil) :to-be nil)))
 
-(describe "org-canvas--quiz-results-number"
+(describe "org-canvas--table-number"
   (it "renders with the asked decimals, an integer as is, and a dash for nothing"
-    (expect (org-canvas--quiz-results-number 24.55) :to-equal "24.6")
-    (expect (org-canvas--quiz-results-number 0.7272 2) :to-equal "0.73")
-    (expect (org-canvas--quiz-results-number 27) :to-equal "27")
-    (expect (org-canvas--quiz-results-number nil) :to-equal "-")
-    (expect (org-canvas--quiz-results-number "A") :to-equal "A")))
+    (expect (org-canvas--table-number 24.55) :to-equal "24.6")
+    (expect (org-canvas--table-number 0.7272 2) :to-equal "0.73")
+    (expect (org-canvas--table-number 27) :to-equal "27")
+    (expect (org-canvas--table-number nil) :to-equal "-")
+    (expect (org-canvas--table-number "A") :to-equal "A")))
 
 (describe "org-canvas-pull-quiz-results"
   (it "writes one heading per published quiz, in order, with its properties and table"

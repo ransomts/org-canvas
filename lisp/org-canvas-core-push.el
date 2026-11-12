@@ -871,6 +871,25 @@ adopted id as a string, or nil."
           (plist-put data :canvas-id id)
           id)))))
 
+(defun org-canvas--child-remote-list (markers id-property url-fn label what noun)
+  "Return the remote children when a heading at MARKERS lacks an id.
+ID-PROPERTY is the stamp a child heading carries; URL-FN, called with
+no arguments, returns the URL that lists the children.  The list
+serves the twin adoption of `org-canvas--adopt-child-twin' (issue
+#179); nothing is fetched while every child is stamped, and a list
+that could not be read is `unknown', which adopts nothing.  The
+warning that says so starts with LABEL, names the list WHAT (\"quiz
+7's questions\") and one child NOUN.  A classic quiz's questions and
+a New Quiz's items are read this way (issue #667)."
+  (when (cl-some (lambda (m) (not (org-entry-get m id-property))) markers)
+    (condition-case err
+        (org-canvas-api-request-all-pages 'GET (funcall url-fn))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "%s Could not list %s (%s); an unstamped %s is created rather than adopted"
+         label what (error-message-string err) noun)
+       'unknown))))
+
 (defun org-canvas--sync-children (markers label item-fn)
   "Run ITEM-FN at each heading at MARKERS and count the outcomes.
 ITEM-FN is called with point on the heading, in the heading's own

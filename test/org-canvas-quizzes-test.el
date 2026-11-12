@@ -70,7 +70,7 @@ What would happen if X occurred?
      (let ((text (org-canvas--quiz-parse-question-text)))
        (expect text :to-match "Consider the following scenario")))))
 
-(describe "org-canvas--quiz-parse-checkbox-list"
+(describe "org-canvas--parse-checkbox-list on a classic quiz question"
   (it "parses correct and incorrect answers"
     (with-temp-org-buffer
      "* Quiz
@@ -84,7 +84,7 @@ What would happen if X occurred?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((answers (org-canvas--quiz-parse-checkbox-list)))
+     (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (length answers) :to-equal 3)
        (expect (cdr (nth 0 answers)) :to-be t)  ; First is correct
        (expect (cdr (nth 1 answers)) :to-be nil)  ; Second is wrong
@@ -103,7 +103,7 @@ What would happen if X occurred?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((answers (org-canvas--quiz-parse-checkbox-list)))
+     (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (cdr (nth 0 answers)) :to-be t)
        (expect (cdr (nth 1 answers)) :to-be t)
        (expect (cdr (nth 2 answers)) :to-be nil)))))
@@ -902,7 +902,7 @@ Description.
        (expect (cdr (nth 0 answers)) :to-be t)  ; correct is t
        (expect (cdr (nth 1 answers)) :to-be nil)))))  ; wrong is nil
 
-(describe "org-canvas--quiz-parse-numerical-answer"
+(describe "org-canvas--parse-numerical-answer on a classic quiz question"
   ;; These tests require Emacs 30+ due to org-mode heading recognition differences
   (it "parses exact numerical value"
     (unless test-org-canvas-emacs-30-p
@@ -914,7 +914,7 @@ Description.
 "
      (search-forward "What is 2+2")
      (org-back-to-heading)
-     (let ((num (org-canvas--quiz-parse-numerical-answer)))
+     (let ((num (org-canvas--parse-numerical-answer)))
        (expect (plist-get num :type) :to-equal 'exact)
        (expect (plist-get num :value) :to-equal 4))))
 
@@ -928,7 +928,7 @@ Description.
 "
      (search-forward "Estimate pi")
      (org-back-to-heading)
-     (let ((num (org-canvas--quiz-parse-numerical-answer)))
+     (let ((num (org-canvas--parse-numerical-answer)))
        (expect (plist-get num :type) :to-equal 'range)
        (expect (plist-get num :start) :to-equal 3.1)
        (expect (plist-get num :end) :to-equal 3.2))))
@@ -941,7 +941,7 @@ Description.
 "
      (search-forward "No answer")
      (org-back-to-heading)
-     (expect (org-canvas--quiz-parse-numerical-answer) :to-be nil))))
+     (expect (org-canvas--parse-numerical-answer) :to-be nil))))
 
 ;;;; Additional Quiz Parse Tests
 
