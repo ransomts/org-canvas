@@ -143,7 +143,27 @@ What would happen?
      (let ((matches (org-canvas--new-quiz-parse-matching-list)))
        (expect (length matches) :to-equal 3)
        (expect (car (nth 0 matches)) :to-equal "DNA")
-       (expect (cdr (nth 0 matches)) :to-equal "Deoxyribonucleic acid")))))
+       (expect (cdr (nth 0 matches)) :to-equal "Deoxyribonucleic acid"))))
+
+  (it "keeps a line without = as a distractor, in its place (issue #668)"
+    (with-temp-org-buffer
+     "* Quiz
+** Match the capitals
+- Paris = France
+- Lisbon
+- Madrid = Spain
+"
+     (search-forward "Match the capitals")
+     (org-back-to-heading)
+     (expect (org-canvas--new-quiz-parse-matching-list)
+             :to-equal '(("Paris" . "France") ("Lisbon")
+                         ("Madrid" . "Spain")))))
+
+  (it "reads neither a checkbox nor a line with a bare = as a distractor"
+    (expect (org-canvas--new-quiz-parse-matching-line "[X] Paris")
+            :to-be nil)
+    (expect (org-canvas--new-quiz-parse-matching-line "x=1")
+            :to-be nil)))
 
 (describe "org-canvas--new-quiz-parse-ordering-list"
   (it "parses numbered list items"
@@ -1218,7 +1238,34 @@ Click the heart.
         (expect (nth 0 answers) :to-equal "Deoxyribonucleic acid")
         (expect (nth 1 answers) :to-equal "Ribonucleic acid")
         ;; No per-question scoring_data
-        (expect (alist-get 'scoring_data (nth 0 questions)) :to-be nil)))))
+        (expect (alist-get 'scoring_data (nth 0 questions)) :to-be nil))))
+
+  (it "puts a distractor in answers and asks no question of it (issue #668)"
+    (with-temp-org-buffer
+     "* Quiz
+** Match the capitals
+- Lisbon
+- Paris = France
+- Madrid = Spain
+"
+     (search-forward "Match the capitals")
+     (org-back-to-heading)
+     (let* ((built (org-canvas--new-quiz-item-build-scoring-data
+                    "matching"
+                    (org-canvas--new-quiz-item-build-interaction-data
+                     "matching")))
+            (value (alist-get 'value (car built)))
+            (questions (append (alist-get 'questions (cdr built)) nil))
+            (answers (append (alist-get 'answers (cdr built)) nil)))
+       (expect (mapcar (lambda (q) (alist-get 'item_body q)) questions)
+               :to-equal '("Paris" "Madrid"))
+       (expect answers :to-equal '("France" "Spain" "Lisbon"))
+       (expect (hash-table-count value) :to-equal 2)
+       (expect (gethash (alist-get 'id (nth 0 questions)) value)
+               :to-equal "France")
+       (expect (gethash (alist-get 'id (nth 1 questions)) value)
+               :to-equal "Spain")
+       (expect (hash-table-values value) :not :to-contain "Lisbon")))))
 
 (describe "org-canvas--new-quiz-item-build-ordering-data"
   (it "builds choices as keyed hash-table with UUID IDs"
@@ -2631,7 +2678,40 @@ Click the heart.
         (item_body . "")
         (interaction_type_slug . "essay")
         (points_possible . 10)))
-     (expect (buffer-string) :to-match "Question"))))
+     (expect (buffer-string) :to-match "Question")))
+
+  (it "keeps a matching item's distractor lines through a pull (issue #668)"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 42
+:END:
+** Match the capitals
+:PROPERTIES:
+:CANVAS_ITEM_ID: item-9
+:TYPE: matching
+:END:
+
+- Paris = France
+- Madrid = Spain
+- Lisbon
+"
+     (goto-char (point-min))
+     (org-canvas--new-quiz-pull-insert-item
+      '((id . "item-9") (points_possible . 2) (entry_type . "Item")
+        (entry . ((item_body . "<p>Match the capitals</p>")
+                  (interaction_type_slug . "matching")
+                  (interaction_data
+                   . ((questions . [((id . "1") (item_body . "Paris"))
+                                    ((id . "2") (item_body . "Madrid"))])
+                      (answers . ["France" "Spain" "Lisbon"])))
+                  (scoring_data
+                   . ((value . ((\1 . "France") (\2 . "Spain")))))))))
+     (search-forward "Match the capitals")
+     (org-back-to-heading t)
+     (expect (org-canvas--new-quiz-parse-matching-list)
+             :to-equal '(("Paris" . "France") ("Madrid" . "Spain")
+                         ("Lisbon"))))))
 
 (describe "A New Quiz item pull leaves the file as a re-pull does (issue #314)"
   (dolist (layout '(("* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
