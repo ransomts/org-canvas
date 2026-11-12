@@ -236,6 +236,35 @@
        (expect (plist-get (nth 1 entries) :name) :to-equal "notes.pdf")
        (expect (plist-get (nth 1 entries) :url) :to-equal "https://example.com/files/2/download")
        (expect (plist-get (nth 1 entries) :local) :to-equal "files/HW/Adams__Alice/notes.pdf"))))
+  (it "parses a remote name holding brackets (#676)"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download?verifier=x][Notes [final draft].pdf]]\n"
+     (org-back-to-heading)
+     (let ((entries (org-canvas--submissions-attachment-entries)))
+       (expect (length entries) :to-equal 1)
+       (expect (plist-get (car entries) :name) :to-equal "Notes [final draft].pdf")
+       (expect (plist-get (car entries) :url)
+               :to-equal "https://example.com/files/1/download?verifier=x"))))
+  (it "reads back a local entry it wrote for a name holding brackets (#676)"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- placeholder\n"
+     (org-back-to-heading)
+     (let ((entry (list :name "Notes [final draft].pdf"
+                        :url "https://example.com/files/1/download"
+                        :local "files/HW/Adams__Alice/Notes [final draft].pdf")))
+       (org-canvas--submissions-rewrite-attachments (list entry))
+       (expect (buffer-string)
+               :to-match (regexp-quote "[[file:files/HW/Adams__Alice/Notes \\[final draft\\].pdf][Notes [final draft].pdf]]"))
+       (expect (org-canvas--submissions-attachment-entries) :to-equal (list entry))
+       (re-search-forward "\\[\\[file:")
+       (expect (org-element-property :path (org-element-context))
+               :to-equal "files/HW/Adams__Alice/Notes [final draft].pdf"))))
+  (it "reads a local path written before escaping (#676)"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[file:files/HW/Adams__Alice/a [b.pdf][a [b.pdf]] ([[https://example.com/files/2/download][Canvas]])\n"
+     (org-back-to-heading)
+     (expect (plist-get (car (org-canvas--submissions-attachment-entries)) :local)
+             :to-equal "files/HW/Adams__Alice/a [b.pdf")))
   (it "renders a downloaded attachment with the local link first"
     (let* ((dir (make-temp-file "org-canvas-subs-" t))
            (org-canvas-submissions-directory dir)

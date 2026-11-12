@@ -1,0 +1,2 @@
+* Fixed
+- #676 A submission attachment whose filename holds a bracket, such as =Notes [final draft].pdf=, is downloaded again: the grading file's Attachments line for it was written but never read back, so the bulk download skipped the student as one with nothing uploaded and a refresh did not name the file as missing. The local link now escapes brackets in its path the way Org does, so it opens from the grading file too.
