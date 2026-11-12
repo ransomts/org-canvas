@@ -293,6 +293,57 @@
                    "#+attr_html: :alt \"\"\n"
                    "[[file:content/org-canvas-images/rule.JPG]]")))))))
 
+(describe "Image alt text round trip wherever the image sits (issue #679)"
+  ;; Real pandoc 3 output for the HTML below: every <img> a bare link.
+  (let ((pandoc-out
+         (concat "See [[https://x.com/courses/1/files/11/preview]] here and"
+                 " [[https://x.com/courses/1/files/12/preview]]\n\n"
+                 "- [[https://x.com/courses/1/files/11/preview]]\n"
+                 "- text [[https://x.com/courses/1/files/12/preview]]\n\n"
+                 "| [[https://x.com/courses/1/files/11/preview]] | x |"))
+        (html (concat
+               "<p>See <img src=\"https://x.com/courses/1/files/11/preview\""
+               " alt=\"A screenshot of the grades page\"> here and"
+               " <img src=\"https://x.com/courses/1/files/12/preview\" alt=\"\"></p>"
+               "<ul><li><img src=\"https://x.com/courses/1/files/11/preview\""
+               " alt=\"Grades again\"></li>"
+               "<li>text <img src=\"https://x.com/courses/1/files/12/preview\""
+               " alt=\"A rule\"></li></ul>"
+               "<table><tr><td><img src=\"https://x.com/courses/1/files/11/preview\""
+               " alt=\"In a cell\"></td><td>x</td></tr></table>")))
+    (it "sends back Canvas's alt for an image in text, a list or a table"
+      (let ((org-canvas--file-id-cache (make-hash-table :test 'equal))
+            (org-canvas--image-cache (make-hash-table :test 'equal)))
+        (puthash "11" "content/org-canvas-images/grades.png"
+                 org-canvas--file-id-cache)
+        (puthash "12" "content/org-canvas-images/rule.JPG"
+                 org-canvas--file-id-cache)
+        (puthash "grades.png" "https://x.com/courses/1/files/11/preview"
+                 org-canvas--image-cache)
+        (puthash "rule.JPG" "https://x.com/courses/1/files/12/preview"
+                 org-canvas--image-cache)
+        (let ((org (cl-letf (((symbol-function 'executable-find)
+                              (lambda (_) "pandoc"))
+                             ((symbol-function 'call-process-region)
+                              (lambda (start end &rest _)
+                                (delete-region start end)
+                                (insert pandoc-out)
+                                0)))
+                     (org-canvas--html-to-org-with-rewrite html))))
+          (expect org :not :to-match "^\\(See\\|- \\||\\).*\n#\\+attr")
+          (with-temp-buffer
+            (insert "* Page\n" org "\n")
+            (org-mode)
+            (goto-char (point-min))
+            (let ((out (org-canvas--export-subtree-body-to-html)))
+              (dolist (alt '("files/11/preview\" alt=\"A screenshot of the grades page\""
+                             "files/12/preview\" alt=\"\""
+                             "<li><img src=\"[^\"]+/files/11/preview\" alt=\"Grades again\""
+                             "<li>text <img src=\"[^\"]+/files/12/preview\" alt=\"A rule\""
+                             "<td[^>]*><img src=\"[^\"]+/files/11/preview\" alt=\"In a cell\""))
+                (expect out :to-match alt))
+              (expect out :not :to-match "alt=\"\\(grades\\.png\\|rule\\.JPG\\)\""))))))))
+
 (describe "org-canvas--html-to-org-inline-with-rewrite"
   (it "returns empty string for nil"
     (expect (org-canvas--html-to-org-inline-with-rewrite nil) :to-equal ""))
