@@ -1,0 +1,5 @@
+* Added
+- #674 =org-canvas-gradebook-hurdle-report= (=scripts/org-canvas hurdles [GROUP]=) prints every student against each hurdle group in one read of the class: their section, the group's percentage now, with past-due work that has nothing in counted zero, and at best, the average still needed on the work left to earn, a verdict, and each column's bucket (its score, awaiting, nothing in, ahead or excused). It sends nothing but GETs and writes nothing.
+* Fixed
+- #674 The student report's "at best" counts a column submitted and awaiting its grade at full marks even once it has locked, instead of zero, so it no longer reads below the student's current figure.
+- #674 The student report's Due, Lock and Open are the student's own: an override naming the student or one of their sections replaces the column's dates, as Canvas resolves them, so a column every section has closed by override no longer shows open or counts as still earnable.

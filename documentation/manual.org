@@ -210,6 +210,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =student NAME-OR-USER-ID=    | =org-canvas-gradebook-student=: one student's every column, what is still open, the best possible grade (#542) |   |
+| =hurdles [GROUP]=            | =org-canvas-gradebook-hurdle-report=: every student against each hurdle group, or the one GROUP names (#674) |   |
 | =person NAME-OR-USER-ID=    | =org-canvas-people-person=: one person's roster entry and ids, from people.org (#543) |   |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
@@ -324,6 +325,7 @@ scores, so a script can read class standing without opening the file
 =org-canvas-gradebook-student= reads, and prints that student's whole
 record to standard output, writing nothing (see [[*One Student's
 Standing][One Student's Standing]]); nothing is sent but GETs.
+=hurdles= prints every student against each hurdle group, or only the group named, the same way (see [[*Every Student Against a Hurdle][Every Student Against a Hurdle]]).
 
 The exit status is 0 when the command succeeded, 1 as the table says,
 2 for a command line it could not read and 3 when an error stopped it
@@ -3008,14 +3010,23 @@ never written to a file, and sends nothing but GETs:
   course lacks is reported at the end.
 - The columns past due but not locked, counted and ungraded — the only
   work the student can still turn in.
-- The best possible total: every graded score stands, every
-  still-open ungraded column scores full marks, every closed ungraded
-  one zero, and the drop rules run over those items as Canvas's final
-  grade would.
+- The best possible total: every graded score stands, every still-open ungraded column and every column submitted and awaiting its grade scores full marks (work already in is not lost when the column locks), every closed column with nothing in scores zero, and the drop rules run over those items as Canvas's final grade would.
 
-The dates are each column's own, not the student's override: a student
-with an extension may still submit a column the report shows closed.
-Under =emacs --batch= the report is printed to standard output.
+The Due and Lock dates, and so Open, are the student's own: an override naming the student or one of their sections replaces the column's dates, the latest date winning when several apply and an override with no lock leaving the column open, as Canvas resolves them (#674).  The overrides come with the assignment groups read, so they cost no extra request.  A group override is not resolved, since the report reads no group memberships.  Under =emacs --batch= the report is printed to standard output.
+
+*** Every Student Against a Hurdle
+
+=M-x org-canvas-gradebook-hurdle-report=, or =scripts/org-canvas hurdles [GROUP]= from the shell (issue #674), checks a hurdle for the whole class at once: one table per group of =org-canvas-gradebook-hurdles=, or only the group GROUP names (with or without a hurdle set for it).  It reads the roster, the assignment groups with their overrides and every submission, prints the report and writes nothing; nothing is sent but GETs.  One row per student:
+
+- Student and Section.
+- Now: the group's percentage after its drop rules over graded work only, Canvas's current-score arithmetic.
+- Past due as 0: the same with every column past due (or locked) with nothing in counted zero.  This is the honest "now" for a hurdle: Canvas's current score leaves those columns out and reads high.
+- At best: the student report's ceiling for the group.
+- Needed: the average percentage the work still to be earned (still open, or submitted and awaiting a grade) must score for the group to reach the hurdle, the drop rules kept; 0 when the hurdle is met with that work at nothing, a dash when nothing is left to earn or full marks fall short.
+- Verdict: =meets it now= when Past due as 0 reaches the hurdle, =within reach= when At best does, else =out of reach=.
+- One cell per column of the group, by due date: its score, =awaiting= (submitted, no grade yet), =nothing in= (past due or locked, nothing submitted), =ahead= (still open, not yet due), =excused=, or a dash when the student has no submission for it.
+
+Each student's dates are their own, overrides applied as in the student report.  A last line counts the verdicts; a hurdle naming a group the course lacks is named.
 
 ** grading-schemes.org
 
@@ -6112,6 +6123,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
 | =org-canvas-gradebook-student=    | Print one student's standing: every column, what is still open, the best possible total (read-only; see [[*One Student's Standing][One Student's Standing]]) |
+| =org-canvas-gradebook-hurdle-report= | Print every student against each hurdle group: now, past due as 0, at best, the average still needed and each column's bucket (read-only; see [[*Every Student Against a Hurdle][Every Student Against a Hurdle]]) |
 | =org-canvas-people-person=       | Print one person's roster entry and institution ids, from people.org (read-only; see [[*Looking One Person Up][Looking One Person Up]]) |
 | =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (Lisp and batch; see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |

@@ -108,6 +108,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/grading-and-submissions.org::*A Late Note Is Drafted From the File and the Policy, Never Rewritten (issue #484)][A Late Note Is Drafted From the File and the Policy, Never Rewritten (issue #484)]]
 - [[file:decisions/grading-and-submissions.org::*Comment Rules Warn as Well as Fail, and Live Beside the Course (issue #499)][Comment Rules Warn as Well as Fail, and Live Beside the Course (issue #499)]]
 - [[file:decisions/grading-and-submissions.org::*A Student's Standing Is Printed, Not Written (issue #542)][A Student's Standing Is Printed, Not Written (issue #542)]]
+- [[file:decisions/grading-and-submissions.org::*A Hurdle Is Checked for the Class, on the Student's Own Dates (issue #674)][A Hurdle Is Checked for the Class, on the Student's Own Dates (issue #674)]]
 - [[file:decisions/grading-and-submissions.org::*Final Grade Overrides Ride the Gradebook's Own Mutation (issue #556)][Final Grade Overrides Ride the Gradebook's Own Mutation (issue #556)]]
 - [[file:decisions/grading-and-submissions.org::*The Rubric Is Read Back, Not Only Written (issue #567)][The Rubric Is Read Back, Not Only Written (issue #567)]]
 

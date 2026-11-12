@@ -227,7 +227,8 @@ request per hundred submissions."
 Each pair is (GROUP-NAME . PERCENT): the group's percentage after its
 drop rules must reach PERCENT for the student to pass — a recitation
 hurdle.  `org-canvas-gradebook-student' prints the group's percentage
-standing and at best beside it, and names a group the course lacks."
+standing and at best beside it, and names a group the course lacks;
+`org-canvas-gradebook-hurdle-report' prints every student against it."
   :type '(alist :key-type (string :tag "Assignment group")
                 :value-type (number :tag "Percent"))
   :group 'org-canvas)
