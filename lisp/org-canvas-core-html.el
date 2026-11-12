@@ -12,6 +12,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'dom)
 (require 'org)
 (require 'ox)
 (require 'ox-html)
@@ -232,17 +233,70 @@ INFO is the export communication channel."
          (eq link (org-element-map paragraph 'link #'identity info t))
          (plist-get (org-export-read-attribute :attr_html paragraph) :alt))))
 
+;; An image ox-html cannot lend a paragraph's `#+ATTR_HTML' (one in
+;; running text, a list, a table) carries its alt on an
+;; `#+attr_canvas: [[LINK]] :alt ALT' line above the element that
+;; holds it, the form a pull writes (issue #679).
+
+(defconst org-canvas--image-canvas-alt-re
+  (concat "\\`\\[\\[\\(\\(?:\\\\.\\|[^]\\]\\)+\\)\\]\\]"
+          "[ \t]+:alt\\(?:[ \t]+\\(.*?\\)\\)?[ \t]*\\'")
+  "Match one `#+attr_canvas' value.  G1 = link path, G2 = alt.")
+
+(defconst org-canvas--attr-lines-in-order
+  (if (version< (org-release) "9.7") #'reverse #'identity)
+  "Put an element's `#+attr_' lines in buffer order.
+Org before 9.7 parses repeated `#+attr_' lines in reverse.")
+
+(defun org-canvas--image-canvas-alts (element)
+  "Return the (PATH . ALT) pairs ELEMENT's `#+attr_canvas' lines name.
+PATH is the bare link's path, unescaped as Org reads a link; ALT is
+the :alt value ox-html reads, `\"\"' when the line gives none.  The
+pairs come in buffer order (`org-canvas--attr-lines-in-order')."
+  (let ((lines (org-element-property :attr_canvas element))
+        (pairs nil))
+    (dolist (line (funcall org-canvas--attr-lines-in-order lines))
+      (when (string-match org-canvas--image-canvas-alt-re line)
+        (push (cons (org-link-unescape (match-string 1 line))
+                    (or (match-string 2 line) "\"\""))
+              pairs)))
+    (nreverse pairs)))
+
+(defun org-canvas--image-canvas-alt-apply (element info)
+  "Give each bare link in ELEMENT the alt its `#+attr_canvas' names.
+Each line is used once, by the first bare link to its path not yet
+given one.  INFO is the export communication channel."
+  (let ((alts (org-canvas--image-canvas-alts element)))
+    (org-element-map element 'link
+      (lambda (link)
+        (let ((entry (and (null (org-element-contents link))
+                          (assoc (org-element-property :raw-link link)
+                                 alts))))
+          (when entry
+            (setq alts (delq entry alts))
+            (org-element-put-property
+             link :attr_html (list (concat ":alt " (cdr entry)))))))
+      info)))
+
 (defun org-canvas--image-default-alt-filter (tree _backend info)
-  "Give each uploaded image link in TREE its file name as default alt.
-A parse-tree filter: a bare link to a URL in `org-canvas--image-cache'
-whose paragraph names no :alt gets one, so the `<img>' does not read
+  "Give each image link in TREE its alt, or its file name as default.
+A parse-tree filter.  A bare link an element's `#+attr_canvas' line
+names gets that alt (issue #679).  A bare link to a URL in
+`org-canvas--image-cache' with no alt of its own, and whose paragraph
+names no :alt, gets its file name, so the `<img>' does not read
 \"preview\".  INFO is the export communication channel."
+  (org-element-map tree org-element-all-elements
+    (lambda (element)
+      (when (org-element-property :attr_canvas element)
+        (org-canvas--image-canvas-alt-apply element info)))
+    info)
   (org-element-map tree 'link
     (lambda (link)
       (let ((name (org-canvas--image-url-name
                    (org-element-property :raw-link link))))
         (when (and name
                    (null (org-element-contents link))
+                   (null (org-element-property :attr_html link))
                    (not (org-canvas--image-paragraph-alt-p link info)))
           (org-element-put-property
            link :attr_html (list (concat ":alt " name))))))
@@ -938,6 +992,132 @@ Returns TEXT itself when it carries no headline."
   (replace-regexp-in-string
    "^#\\+\\(?:begin\\|end\\)_h[1-6][ \t]*\\(?:\n\\|\\'\\)" "" text))
 
+;; IMAGE ALT TEXT (issue #679)
+;; ============================
+;; pandoc writes an `<img>' as a bare link and drops its alt, so a
+;; pull lost every `#+attr_html: :alt' line, and the next push gave
+;; each image its file name (`org-canvas--image-default-alt-filter'):
+;; written descriptions were replaced, decorative images unmarked.
+;; The alts are read from the HTML before pandoc runs and written back
+;; above the outermost element that holds each image.  An image that
+;; is its paragraph's whole content gets `#+attr_html: :alt', which
+;; ox-html lends to that image.  Any other image (in running text, a
+;; list, a table or a heading block) gets `#+attr_canvas: [[LINK]] :alt ALT',
+;; an affiliated keyword ox-html ignores; the push's parse-tree filter
+;; lends that alt to the bare link LINK inside the element.  LINK is
+;; written as the link itself, so the pull's file rewrite and the push's
+;; image upload rewrite it along with the image, and the two still match.
+
+(defvar org-canvas--html-image-alts-inhibit nil
+  "Non-nil while a conversion is collapsed to one line.
+`org-canvas--html-to-org-restore-image-alts' then writes no alt lines:
+a keyword line has no place in a title or an answer.")
+
+(defun org-canvas--html-image-alts (html)
+  "Return (SRC . ALT) for each `<img>' in HTML carrying an alt.
+In document order; an image with no alt attribute is left out, and an
+empty alt stays the empty string, the mark of a decorative image."
+  (when (libxml-available-p)
+    (with-temp-buffer
+      (insert html)
+      (let ((dom (libxml-parse-html-region (point-min) (point-max))))
+        (delq nil
+              (mapcar (lambda (img)
+                        (let ((src (dom-attr img 'src))
+                              (alt (dom-attr img 'alt)))
+                          (and src alt (cons src alt))))
+                      (dom-by-tag dom 'img)))))))
+
+(defun org-canvas--image-alt-keyword (alt &optional link)
+  "Return the keyword line that gives an image ALT.
+Without LINK it is `#+attr_html', for an image that begins its
+paragraph; with LINK, the bare link's text, it is `#+attr_canvas'
+naming that link.  An empty ALT is written `\"\"'."
+  (let* ((text (string-trim
+                (replace-regexp-in-string "[ \t\n\r]+" " " alt)))
+         (value (if (string-empty-p text) "\"\"" text)))
+    (if link
+        (format "#+attr_canvas: %s :alt %s\n" link value)
+      (format "#+attr_html: :alt %s\n" value))))
+
+(defun org-canvas--image-alt-link-text (link)
+  "Return the buffer text of LINK when it is a bare bracket link."
+  (and (eq (org-element-property :format link) 'bracket)
+       (null (org-element-property :contents-begin link))
+       (buffer-substring-no-properties
+        (org-element-property :begin link)
+        (- (org-element-property :end link)
+           (org-element-property :post-blank link)))))
+
+(defun org-canvas--image-alt-top-element (link)
+  "Return the outermost element holding LINK, or nil in a headline."
+  (let ((el (org-element-property :parent link)))
+    (while (and el (not (memq (org-element-type
+                               (org-element-property :parent el))
+                              '(section org-data))))
+      (setq el (org-element-property :parent el)))
+    (unless (memq (org-element-type el) '(nil headline)) el)))
+
+(defun org-canvas--image-alt-standalone-p (link element)
+  "Return non-nil when LINK is the whole of ELEMENT, a paragraph.
+ox-html lends such a paragraph's `#+attr_html' to the image alone;
+with other text beside it the paragraph's own `<p>' takes it too."
+  (and (eq (org-element-type element) 'paragraph)
+       (cl-every (lambda (object)
+                   (or (eq object link)
+                       (and (stringp object) (string-blank-p object))))
+                 (org-element-contents element))))
+
+(defun org-canvas--image-alt-hit (link text alt)
+  "Return (POSITION . LINE) giving LINK, written TEXT, its ALT.
+POSITION is where the keyword LINE goes: after the affiliated
+keywords of the outermost element holding LINK.  Nil when LINK sits
+in a headline, which has no place for one."
+  (let ((top (org-canvas--image-alt-top-element link)))
+    (when top
+      (cons (org-element-property :post-affiliated top)
+            (if (org-canvas--image-alt-standalone-p link top)
+                (org-canvas--image-alt-keyword alt)
+              (org-canvas--image-alt-keyword alt text))))))
+
+(defun org-canvas--image-alt-hits (alts)
+  "Return (POSITION . LINE) for each image in the buffer ALTS names.
+In document order; each entry of ALTS, a (SRC . ALT) pair, is used
+once, by the first bare link to SRC not yet given one."
+  (let ((alts (copy-sequence alts))
+        (hits nil))
+    (org-element-map (org-element-parse-buffer) 'link
+      (lambda (link)
+        (let* ((text (org-canvas--image-alt-link-text link))
+               (entry (and text (assoc (substring text 2 -2) alts)))
+               (hit (and entry (org-canvas--image-alt-hit
+                                link text (cdr entry)))))
+          (when hit
+            (setq alts (delq entry alts))
+            (push hit hits)))))
+    (nreverse hits)))
+
+(defun org-canvas--html-to-org-restore-image-alts (text alts)
+  "Write each image alt in ALTS back into TEXT, converted Org.
+ALTS is the list `org-canvas--html-image-alts' returns.  Each bare
+link whose path is a source in ALTS gets a keyword line above the
+outermost element holding it (`org-canvas--image-alt-keyword'), each
+entry used once (issue #679).  Returns TEXT itself when ALTS is empty
+or `org-canvas--html-image-alts-inhibit' is non-nil."
+  (if (or (null alts) org-canvas--html-image-alts-inhibit)
+      text
+    (with-temp-buffer
+      (insert text)
+      (org-mode)
+      (let ((hits (mapcar (lambda (hit)
+                            (cons (copy-marker (car hit) t) (cdr hit)))
+                          (org-canvas--image-alt-hits alts))))
+        (dolist (hit hits)
+          (goto-char (car hit))
+          (insert (cdr hit))
+          (set-marker (car hit) nil)))
+      (buffer-string))))
+
 (defun org-canvas--html-to-org-pandoc (html)
   "Convert HTML to Org text through pandoc.
 Returns the post-processed Org text, or the raw HTML behind a
@@ -961,10 +1141,14 @@ if pandoc is not available.  Output passes through
 whitespace-only lines, and missing spacing before inline timestamps,
 and then, whichever path produced it, through
 `org-canvas--org-body-neutralize-headlines': a body never carries an
-Org headline (issue #175)."
-  (org-canvas--org-body-neutralize-headlines
-   (if (executable-find "pandoc")
-       (org-canvas--html-to-org-pandoc html)
+Org headline (issue #175).  Last, the image alts pandoc drops are
+written back (`org-canvas--html-to-org-restore-image-alts')."
+  (if (executable-find "pandoc")
+      (org-canvas--html-to-org-restore-image-alts
+       (org-canvas--org-body-neutralize-headlines
+        (org-canvas--html-to-org-pandoc html))
+       (org-canvas--html-image-alts html))
+    (org-canvas--org-body-neutralize-headlines
      (concat "# WARNING: pandoc not found, raw HTML below\n" html))))
 
 (defun org-canvas--html-to-org-inline (html)
@@ -972,14 +1156,16 @@ Org headline (issue #175)."
 Delegates to `org-canvas--html-to-org', then replaces newlines with spaces
 and trims whitespace.  Suitable for table cells, list items, and heading
 titles where multi-line output would break formatting.  A heading
-block's marker lines are dropped first; its text stays.
+block's marker lines are dropped first; its text stays.  No image
+alt line is written (`org-canvas--html-image-alts-inhibit').
 Returns empty string for nil or empty HTML."
   (if (or (null html) (string-empty-p html))
       ""
-    (string-trim
-     (replace-regexp-in-string "[\n\r]+" " "
-                               (org-canvas--strip-heading-block-markers
-                                (org-canvas--html-to-org html))))))
+    (let ((org-canvas--html-image-alts-inhibit t))
+      (string-trim
+       (replace-regexp-in-string "[\n\r]+" " "
+                                 (org-canvas--strip-heading-block-markers
+                                  (org-canvas--html-to-org html)))))))
 
 (provide 'org-canvas-core-html)
 ;;; org-canvas-core-html.el ends here

@@ -277,13 +277,6 @@ NAMES maps section ids to the names the course reports."
          name)
         name)))
 
-(defun org-canvas--people-fetch-section-names ()
-  "Return an alist of section id to name for the course."
-  (mapcar (lambda (s) (cons (alist-get 'id s) (alist-get 'name s)))
-          (append (org-canvas-api-request-all-pages
-                   'GET (org-canvas-api-course-endpoint "sections"))
-                  nil)))
-
 ;;;; Headings
 
 (defun org-canvas--people-role-heading-pos (heading)
@@ -572,7 +565,7 @@ course repository."
 (defun org-canvas--people-write (file people)
   "Upsert PEOPLE into FILE and mark the headings Canvas no longer lists.
 Returns the departures, as `org-canvas--people-mark-departures' does."
-  (let ((names (org-canvas--people-fetch-section-names))
+  (let ((names (org-canvas--pull-fetch-section-names))
         (count 0)
         (departures nil))
     (org-canvas--create-file file)

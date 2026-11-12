@@ -880,19 +880,26 @@ be linked and graded as the new one (issue #457)."
 (defun org-canvas--submissions-attachment-line (name url local)
   "Return the Attachments list line for NAME at URL.
 With LOCAL, the downloaded copy's link path, the local file comes first
-and the Canvas link stays beside it."
+and the Canvas link stays beside it.  LOCAL is written through
+`org-link-escape', so a bracket in a filename stays inside the link
+\(issue #676); NAME, the description, needs no escape."
   (if local
-      (format "- [[file:%s][%s]] ([[%s][Canvas]])\n" local name url)
+      (format "- [[file:%s][%s]] ([[%s][Canvas]])\n"
+              (org-link-escape local) name url)
     (format "- [[%s][%s]]\n" url name)))
 
 (defconst org-canvas--submissions-attachment-line-re
   (concat "^- \\(?:"
-          "\\[\\[file:\\([^]]+\\)\\]\\[\\([^]]+\\)\\]\\] (\\[\\[\\(https?://[^]]+\\)\\]\\[Canvas\\]\\])"
+          "\\[\\[file:\\(\\(?:[^]\\]\\|\\\\+[][]\\|\\\\+[^][]\\)+\\)\\]"
+          "\\[\\(.+?\\)\\]\\] (\\[\\[\\(https?://[^]]+\\)\\]\\[Canvas\\]\\])"
           "\\|"
-          "\\[\\[\\(https?://[^]]+\\)\\]\\[\\([^]]+\\)\\]\\]"
+          "\\[\\[\\(https?://[^]]+\\)\\]\\[\\(.+?\\)\\]\\]"
           "\\)[ \t]*$")
   "An Attachments entry, in either form.
-Local: groups 1 path, 2 name, 3 url.  Remote: groups 4 url, 5 name.")
+Local: groups 1 path, 2 name, 3 url.  Remote: groups 4 url, 5 name.
+A name may hold brackets, and the path escaped ones, as Org writes
+them; the line's anchored tail ends the name (issue #676).  The path
+also takes a bare `[', as lines written before the escape held.")
 
 (defun org-canvas--submissions-attachments-region ()
   "Return (START . END) of the Attachments list under the heading at point, or nil."
@@ -916,9 +923,28 @@ Each has :name, :url, and :local (the downloaded copy's link path or nil)."
         (while (re-search-forward org-canvas--submissions-attachment-line-re (cdr region) t)
           (push (if (match-beginning 4)
                     (list :name (match-string 5) :url (match-string 4) :local nil)
-                  (list :name (match-string 2) :url (match-string 3) :local (match-string 1)))
+                  (list :name (match-string 2) :url (match-string 3)
+                        :local (org-link-unescape (match-string 1))))
                 entries))))
     (nreverse entries)))
+
+(defun org-canvas--submissions-unparsed-attachment-lines ()
+  "Return the Attachments lines of the heading at point that do not parse.
+Each is the line's text, trimmed; a blank line is no entry and is left
+out.  An entry `org-canvas--submissions-attachment-entries' cannot read
+is otherwise invisible to everything that walks the list: the download
+skips it and a refresh does not name it (issue #676).  Nil when the
+heading has no Attachments list."
+  (let ((region (org-canvas--submissions-attachments-region))
+        (lines nil))
+    (when region
+      (dolist (line (split-string (buffer-substring-no-properties
+                                   (car region) (cdr region))
+                                  "\n"))
+        (unless (or (string-match-p "\\`[ \t]*\\'" line)
+                    (string-match-p org-canvas--submissions-attachment-line-re line))
+          (push (string-trim line) lines))))
+    (nreverse lines)))
 
 (defun org-canvas--submissions-rewrite-attachments (entries)
   "Replace the Attachments list of the heading at point with ENTRIES."

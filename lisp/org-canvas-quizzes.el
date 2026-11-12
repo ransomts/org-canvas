@@ -209,59 +209,19 @@ never description text (issue #298)."
   "Get the body text of current heading, excluding subheadings.
 If a `** Description' subheading is present, return its body.
 Otherwise return the inline text between the current heading and
-the first subheading."
+the first subheading (`org-canvas--pull-entry-text-bounds')."
   (or (org-canvas--quiz-parse-description-subheading)
-      (save-excursion
-        (org-back-to-heading t)
-        (let ((start (save-excursion
-		       (org-end-of-meta-data t)
-		       (point)))
-	      (end (save-excursion
-		     (outline-next-heading)
-		     (point))))
-          ;; Check if there's a subheading before end of subtree
-          (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-	    (when (> end subtree-end)
-	      (setq end subtree-end)))
-          ;; The accommodations table (issue #230) sits in this body
-          ;; and is a table for the sync, not description text.
-          (string-trim (org-canvas--strip-named-tables
-                        (buffer-substring-no-properties start end)
-                        '("accommodations")))))))
+      (let ((bounds (org-canvas--pull-entry-text-bounds)))
+        ;; The accommodations table (issue #230) sits in this body
+        ;; and is a table for the sync, not description text.
+        (string-trim (org-canvas--strip-named-tables
+                      (buffer-substring-no-properties (car bounds) (cdr bounds))
+                      '("accommodations"))))))
 
 (defun org-canvas--quiz-parse-question-text ()
   "Get the question prompt text, excluding answer lists.
 Returns only the text before the first list item (- or *)."
-  (save-excursion
-    (org-back-to-heading t)
-    (let ((start (save-excursion
-		   (org-end-of-meta-data t)
-		   (point)))
-	  (end (save-excursion
-		 (outline-next-heading)
-		 (point))))
-      ;; Check if there's a subheading before end of subtree
-      (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-	(when (> end subtree-end)
-	  (setq end subtree-end)))
-      ;; Find the first list item and stop there
-      (goto-char start)
-      (when (re-search-forward "^[ \t]*[-*+] " end t)
-	(setq end (match-beginning 0)))
-      (string-trim (buffer-substring-no-properties start end)))))
-
-(defun org-canvas--quiz-parse-checkbox-list ()
-  "Parse a checkbox list under point, returning answer data.
-Returns a list of (text . is-correct) pairs."
-  (save-excursion
-    (let ((answers nil)
-	  (bound (save-excursion (org-end-of-subtree t) (point))))
-      ;; Find all checkbox items
-      (while (re-search-forward "^[ \t]*- \\(\\[[ X]\\]\\) \\(.+\\)$" bound t)
-	(let ((checkbox (match-string 1))
-	      (text (string-trim (match-string 2))))
-	  (push (cons text (string= checkbox "[X]")) answers)))
-      (nreverse answers))))
+  (org-canvas--pull-entry-text "^[ \t]*[-*+] "))
 
 (defun org-canvas--quiz-parse-nested-blanks ()
   "Parse nested blank answers for fill_in_multiple_blanks or multiple_dropdowns.
@@ -288,44 +248,6 @@ Returns alist of (blank_id . ((text . is-correct) ...))."
 	      (push (cons text (string= checkbox "[X]")) answers)))
 	  (push (cons blank-id (nreverse answers)) blanks)))
       (nreverse blanks))))
-
-(defun org-canvas--quiz-parse-matching-list ()
-  "Parse matching question format: left = right.
-Returns list of (left . right) pairs; a `- text' line with no `='
-is a distractor, returned as (text . nil) (#407)."
-  (save-excursion
-    (let* ((start (point))
-	   (matches nil)
-	   (bound (save-excursion (org-end-of-subtree t) (point))))
-      (while (re-search-forward "^- \\(.+?\\) = \\(.+\\)$" bound t)
-	(push (cons (string-trim (match-string 1))
-		    (string-trim (match-string 2)))
-	      matches))
-      ;; Also check for distractors (items without =), restarting from
-      ;; the heading: the pairs loop left point after the last match, so
-      ;; a distractor written above it was never scanned
-      (goto-char start)
-      (while (re-search-forward "^- \\([^=\n]+\\)$" bound t)
-	(let ((text (string-trim (match-string 1))))
-	  (unless (string-match-p "\\[[ X]\\]" text)  ; Skip checkboxes
-	    (push (cons text nil) matches))))
-      (nreverse matches))))
-
-(defun org-canvas--quiz-parse-numerical-answer ()
-  "Parse numerical answer format.
-Supports: exact value, or [min, max] range."
-  (save-excursion
-    (let ((bound (save-excursion (org-end-of-subtree t) (point))))
-      (when (re-search-forward "^- \\[X\\] \\(.+\\)$" bound t)
-	(let ((text (string-trim (match-string 1))))
-	  (if (string-match "\\[\\([0-9.-]+\\),[ ]*\\([0-9.-]+\\)\\]" text)
-	      ;; Range answer
-	      (list :type 'range
-		    :start (string-to-number (match-string 1 text))
-		    :end (string-to-number (match-string 2 text)))
-	    ;; Exact answer
-	    (list :type 'exact
-		  :value (string-to-number text))))))))
 
 ;;;; Quiz Parsing (Level 1)
 
@@ -761,7 +683,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 
 (defun org-canvas--question-build-checkbox-answers ()
   "Build answers from checkbox list where all items get weights."
-  (let ((answers (org-canvas--quiz-parse-checkbox-list)))
+  (let ((answers (org-canvas--parse-checkbox-list)))
     (cl-loop for (text . correct) in answers
              collect `((answer_text . ,text)
                        (answer_weight . ,(if correct
@@ -770,7 +692,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 
 (defun org-canvas--question-build-short-answers ()
   "Build answers from checkbox list, keeping only correct items."
-  (let ((answers (org-canvas--quiz-parse-checkbox-list)))
+  (let ((answers (org-canvas--parse-checkbox-list)))
     (cl-loop for (text . correct) in answers
              when correct
              collect `((answer_text . ,text)
@@ -795,7 +717,7 @@ A line with no `=' is a distractor, which Canvas takes on the question
 as `matching_answer_incorrect_matches', not as an answer: an answer
 with a left side alone made a pair whose right side was empty (issue
 #407).  `org-canvas--question-matching-distractors' reads those."
-  (cl-loop for (left . right) in (org-canvas--quiz-parse-matching-list)
+  (cl-loop for (left . right) in (org-canvas--parse-matching-list)
            when right
            collect `((answer_match_left . ,left)
                      (answer_match_right . ,right))))
@@ -803,13 +725,16 @@ with a left side alone made a pair whose right side was empty (issue
 (defun org-canvas--question-matching-distractors ()
   "Return the distractors of the matching question at point, in order.
 The `- text' lines with no `=', seeded into every dropdown beside the
-right sides."
-  (cl-loop for (left . right) in (org-canvas--quiz-parse-matching-list)
-           unless right collect left))
+right sides.  A line holding a checkbox anywhere is not one: the
+classic parser has skipped those since #407, where the shared
+`org-canvas--parse-matching-list' skips only a leading one."
+  (cl-loop for (left . right) in (org-canvas--parse-matching-list)
+           unless (or right (string-match-p "\\[[ X]\\]" left))
+           collect left))
 
 (defun org-canvas--question-build-numerical-answer ()
   "Build answer from numerical value or range."
-  (let ((num (org-canvas--quiz-parse-numerical-answer)))
+  (let ((num (org-canvas--parse-numerical-answer)))
     (when num
       (if (eq (plist-get num :type) 'range)
           `(((numerical_answer_type . "range_answer")
@@ -989,20 +914,12 @@ Returns a cons (SUCCESS . FAIL) count."
 
 (defun org-canvas--quiz-remote-questions (quiz-id markers)
   "Return QUIZ-ID's questions when a heading at MARKERS has no CANVAS_ID.
-The list serves the twin adoption of `org-canvas--adopt-child-twin'
-\(issue #179); nothing is fetched while every question is stamped, and
-a list that could not be read is `unknown', which adopts nothing.
-Question groups have no list endpoint on Canvas, so they are not
-adopted."
-  (when (cl-some (lambda (m) (not (org-entry-get m "CANVAS_ID"))) markers)
-    (condition-case err
-        (org-canvas-api-request-all-pages
-         'GET (org-canvas-api-course-endpoint "quizzes/%s/questions" quiz-id))
-      (error
-       (org-canvas--log-warning org-canvas--logger
-         "[Question] Could not list quiz %s's questions (%s); an unstamped question is created rather than adopted"
-         quiz-id (error-message-string err))
-       'unknown))))
+See `org-canvas--child-remote-list'.  Question groups have no list
+endpoint on Canvas, so they are not adopted."
+  (org-canvas--child-remote-list
+   markers "CANVAS_ID"
+   (lambda () (org-canvas-api-course-endpoint "quizzes/%s/questions" quiz-id))
+   "[Question]" (format "quiz %s's questions" quiz-id) "question"))
 
 (defun org-canvas--question-twin-p (data item)
   "Return non-nil when remote question ITEM carries DATA's name."

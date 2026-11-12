@@ -30,9 +30,8 @@ push-only.  ROW-LOC locates the row."
   (let* ((names (split-string text ";" t "[ \t]+"))
          (missing (cl-remove-if
                    (lambda (name)
-                     (or (string-match-p "\\`#[0-9]+\\'" name)
-                         (org-canvas--validate-override-lookup
-                          'org-canvas-people-file name "USER_ID")))
+                     (org-canvas--resolve-title-or-id
+                      name 'org-canvas-people-file "USER_ID" "LEVEL=2"))
                    names))
          (departed (and (null missing) (org-canvas--validate-departed-people names))))
     (cond
@@ -59,9 +58,8 @@ touches nothing on Canvas.  ROW-LOC locates the row."
   (cond
    ((string-match "\\`Group:[ \t]*\\(.+?\\)[ \t]*\\'" target)
     (let ((title (match-string 1 target)))
-      (unless (or (string-match-p "\\`#[0-9]+\\'" title)
-                  (org-canvas--validate-override-lookup
-                   'org-canvas-groups-file title "CANVAS_ID"))
+      (unless (org-canvas--resolve-title-or-id
+               title 'org-canvas-groups-file "CANVAS_ID" "LEVEL=2")
         (org-canvas--validate-push-only
          (org-canvas--validate-make-issue
           'warning row-loc nil
@@ -286,14 +284,18 @@ checked (issue #402)."
                "LEVEL=1" 'file))))))
     (nreverse issues)))
 
+(declare-function org-canvas--validate-module-reach "org-canvas-validate" (loc))
+
 (defun org-canvas--validate-assignment-structure (loc)
   "Check the LTI tool, grading period, posting schedule and override table.
-LOC is a (:file :line :heading) plist."
+Also when students can first reach the column through its modules
+\(issue #675).  LOC is a (:file :line :heading) plist."
   (let ((late-window (org-canvas--validate-late-window-defaults)))
     (nconc (org-canvas--validate-external-tool loc)
            (org-canvas--validate-due-in-grading-period loc)
            (org-canvas--validate-post-schedule loc)
            (org-canvas--validate-heading-late-window loc late-window)
+           (org-canvas--validate-module-reach loc)
            (org-canvas--validate-override-table loc late-window))))
 
 (cl-defun org-canvas--validate-override-table (loc &optional late-window)

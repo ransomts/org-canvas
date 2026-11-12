@@ -646,11 +646,20 @@ Drop by.
      (with-org-canvas-test-config
        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
                  ((symbol-function 'org-canvas-api-request)
-                  (lambda (_method _url &rest _args) nil))
+                  ;; The snapshot reads the event first (#669)
+                  (lambda (method _url &rest _args)
+                    (when (eq method 'GET) '((id . 42)))))
                  ((symbol-function 'org-canvas-clear-log) (lambda () nil))
                  ((symbol-function 'display-buffer) (lambda (_) nil))
                  ((symbol-function 'save-buffer) (lambda () nil)))
-         (org-canvas-delete-calendar-event-at-point)
+         (with-delete-snapshot-dir
+           (org-canvas-delete-calendar-event-at-point)
+           ;; The file is named as the drift report's and delete-all's
+           ;; are, by the plural feature (#669)
+           (expect (length (directory-files
+                            snapshot-dir nil
+                            "\\`[0-9T]+-calendar-events-42\\.json\\'"))
+                   :to-equal 1))
          (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
          (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 

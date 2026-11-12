@@ -74,6 +74,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/drift-report.org::*The Drift Report Compares Overrides Tables (issue #411)][The Drift Report Compares Overrides Tables (issue #411)]]
 - [[file:decisions/drift-report.org::*New Quizzes Join the Drift Report Through Their Pull-Only Entry (issue #313)][New Quizzes Join the Drift Report Through Their Pull-Only Entry (issue #313)]]
 - [[file:decisions/drift-report.org::*New Quiz Items in the Drift Report, Paired as the Sync Adopts Them (issue #322)][New Quiz Items in the Drift Report, Paired as the Sync Adopts Them (issue #322)]]
+- [[file:decisions/drift-report.org::*A Heading Is Checked for Drift on Its Own, With the Full Report's Row (issue #670)][A Heading Is Checked for Drift on Its Own, With the Full Report's Row (issue #670)]]
 
 ** Grading and Submissions
 [[file:decisions/grading-and-submissions.org][decisions/grading-and-submissions.org]]
@@ -108,6 +109,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/grading-and-submissions.org::*A Late Note Is Drafted From the File and the Policy, Never Rewritten (issue #484)][A Late Note Is Drafted From the File and the Policy, Never Rewritten (issue #484)]]
 - [[file:decisions/grading-and-submissions.org::*Comment Rules Warn as Well as Fail, and Live Beside the Course (issue #499)][Comment Rules Warn as Well as Fail, and Live Beside the Course (issue #499)]]
 - [[file:decisions/grading-and-submissions.org::*A Student's Standing Is Printed, Not Written (issue #542)][A Student's Standing Is Printed, Not Written (issue #542)]]
+- [[file:decisions/grading-and-submissions.org::*A Hurdle Is Checked for the Class, on the Student's Own Dates (issue #674)][A Hurdle Is Checked for the Class, on the Student's Own Dates (issue #674)]]
 - [[file:decisions/grading-and-submissions.org::*Final Grade Overrides Ride the Gradebook's Own Mutation (issue #556)][Final Grade Overrides Ride the Gradebook's Own Mutation (issue #556)]]
 - [[file:decisions/grading-and-submissions.org::*The Rubric Is Read Back, Not Only Written (issue #567)][The Rubric Is Read Back, Not Only Written (issue #567)]]
 
@@ -131,6 +133,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/validation-and-verify.org::*Cross-Course Links Are the Validator's Business (issue #172)][Cross-Course Links Are the Validator's Business (issue #172)]]
 - [[file:decisions/validation-and-verify.org::*Validation Is Read-Only Aware (issue #168)][Validation Is Read-Only Aware (issue #168)]]
 - [[file:decisions/validation-and-verify.org::*A Published Heading No Module Holds Is a Validate Note (issue #413)][A Published Heading No Module Holds Is a Validate Note (issue #413)]]
+- [[file:decisions/validation-and-verify.org::*A Column Its Module Keeps Locked Is a Validate Warning (issue #675)][A Column Its Module Keeps Locked Is a Validate Warning (issue #675)]]
 - [[file:decisions/validation-and-verify.org::*An Announcement Is Verified Through the Existing =verify= (issue #502)][An Announcement Is Verified Through the Existing =verify= (issue #502)]]
 - [[file:decisions/validation-and-verify.org::*Assignments, Modules and Files Are Verified Through the Same =verify= (issue #524)][Assignments, Modules and Files Are Verified Through the Same =verify= (issue #524)]]
 - [[file:decisions/validation-and-verify.org::*Validate Accepts One Check With a Reason (issue #538)][Validate Accepts One Check With a Reason (issue #538)]]

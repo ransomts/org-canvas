@@ -3,15 +3,16 @@
 
 ;;; Commentary:
 
-;; The two read-only reports `org-canvas-gradebook' grew past the
+;; The read-only reports `org-canvas-gradebook' grew past the
 ;; course-wide tables: one student's standing (`org-canvas-gradebook-student',
-;; issue #542) and the what-if over assignment-groups.org
-;; (`org-canvas-gradebook-what-if', #452).  Both print to a buffer and send
-;; nothing; the student report also prints to stdout under
-;; `noninteractive', so `scripts/org-canvas student NAME' answers "can I
-;; still pass?" without a REST script.
+;; issue #542), the class against each hurdle
+;; (`org-canvas-gradebook-hurdle-report', #674) and the what-if over
+;; assignment-groups.org (`org-canvas-gradebook-what-if', #452).  All print
+;; to a buffer and send nothing; the student and hurdle reports also print
+;; to stdout under `noninteractive', so `scripts/org-canvas student NAME'
+;; answers "can I still pass?" without a REST script.
 ;;
-;; Neither writes anything: the pull, the grades and the scores file they
+;; None writes anything: the pull, the grades and the scores file they
 ;; read stay in `org-canvas-gradebook.el', and the arithmetic they share is
 ;; in `org-canvas-gradebook-scores.el'.
 
@@ -38,11 +39,78 @@
 ;; still pass?" without a REST script.
 ;;
 ;; The ceiling keeps every graded score, scores every still-open
-;; ungraded column at its full points and every closed ungraded one at
-;; zero, then runs the drop rules over those items: work the student can
-;; no longer submit counts zero, as Canvas's final grade counts it.  A
-;; column is open while its lock is in the future or absent; the dates
-;; are the column's own, not the student's override.
+;; ungraded column and every submitted one awaiting a grade at its full
+;; points and every closed one with nothing in at zero, then runs the
+;; drop rules over those items: work the student can no longer submit
+;; counts zero, as Canvas's final grade counts it, and work already in is
+;; not lost by a lock (#674).  A column is open while the student's lock
+;; is in the future or absent; the student's dates are the column's own
+;; unless an override for the student or one of their sections sets one,
+;; read from the same assignment groups request (#674).
+
+(defconst org-canvas--gradebook-groups-params
+  '(("include[]" . "assignments") ("include[]" . "overrides"))
+  "Query parameters of the assignment groups read the reports make.
+Each assignment carries its overrides, so a column's dates are the ones
+that apply to the student (issue #674).")
+
+(defun org-canvas--gradebook-fetch-groups ()
+  "Return the course's assignment groups, each with its assignments.
+Each assignment carries its overrides."
+  (append (org-canvas-api-request-all-pages
+           'GET (org-canvas-api-course-endpoint "assignment_groups")
+           org-canvas--gradebook-groups-params)
+          nil))
+
+(defun org-canvas--gradebook-override-map (raw-groups)
+  "Return an alist of assignment id to its overrides, from RAW-GROUPS.
+An assignment without overrides is left out."
+  (let (map)
+    (dolist (group raw-groups)
+      (dolist (a (append (alist-get 'assignments group) nil))
+        (let ((overrides (alist-get 'overrides a)))
+          (when (and (sequencep overrides) (> (length overrides) 0))
+            (push (cons (alist-get 'id a) (append overrides nil)) map)))))
+    (nreverse map)))
+
+(defun org-canvas--gradebook-override-applies-p (override who)
+  "Return non-nil when OVERRIDE is for the student WHO.
+WHO is a plist with :user-id and :section-ids.  An override applies
+when it names the student or one of their sections; a group override
+is not resolved, since the report reads no group memberships."
+  (let ((students (alist-get 'student_ids override))
+        (section (alist-get 'course_section_id override)))
+    (or (and (sequencep students)
+             (memql (plist-get who :user-id) (append students nil))
+             t)
+        (and (numberp section) (memql section (plist-get who :section-ids)) t))))
+
+(defun org-canvas--gradebook-lenient-date (overrides key base)
+  "Return the KEY date in force under OVERRIDES, as Canvas resolves it.
+OVERRIDES are the ones that apply to the student.  Of those that set
+KEY, one setting no date wins, else the latest; BASE, the column's own
+date, applies when none sets KEY.  The result is a time value or nil."
+  (let ((dates (mapcar (lambda (o) (org-canvas--parse-iso8601-time (alist-get key o)))
+                       (cl-remove-if-not (lambda (o) (assq key o)) overrides))))
+    (cond ((null dates) (org-canvas--parse-iso8601-time base))
+          ((memq nil dates) nil)
+          (t (car (sort dates (lambda (a b) (time-less-p b a))))))))
+
+(defun org-canvas--gradebook-student-dates (assignment who)
+  "Return (DUE . LOCK) of ASSIGNMENT for the student WHO, as time values.
+WHO's :overrides maps an assignment id to its overrides; those naming
+the student or their sections replace the column's own dates."
+  (let ((applying (cl-remove-if-not
+                   (lambda (o) (org-canvas--gradebook-override-applies-p o who))
+                   (alist-get (alist-get 'id assignment) (plist-get who :overrides)))))
+    (cons (org-canvas--gradebook-lenient-date applying 'due_at (alist-get 'due_at assignment))
+          (org-canvas--gradebook-lenient-date applying 'lock_at (alist-get 'lock_at assignment)))))
+
+(defun org-canvas--gradebook-submitted-p (submission)
+  "Return t when the student has turned SUBMISSION in, graded or not."
+  (and (or (stringp (alist-get 'submitted_at submission))
+           (member (alist-get 'workflow_state submission) '("submitted" "pending_review")))
+       t))
 
 (defun org-canvas--gradebook-student-params (user-id)
   "Return the query parameters of USER-ID's submissions read.
@@ -112,16 +180,19 @@ completion and again by the command itself."
                                enrollments)))))
     (completing-read "Student (name or user id): " names nil t)))
 
-(defun org-canvas--gradebook-student-row (submission assignments now)
+(defun org-canvas--gradebook-student-row (submission assignments now &optional who)
   "Return SUBMISSION as one row of the student report.
 ASSIGNMENTS is the map from `org-canvas--gradebook-assignment-map';
-NOW a time value the lock dates are read at.  The row plist holds
-:id :name :group-id :points :score :state :late :missing :excused :due
-:lock (time values, or nil without a date) :counted :open and :item,
-the counted graded item or nil."
+NOW a time value the lock dates are read at; WHO the student, as
+`org-canvas--gradebook-student-dates' takes it, or nil to read the
+column's own dates.  The row plist holds :id :name :group-id :points
+:score :state :late :missing :excused :submitted :due :lock (time
+values, or nil without a date) :counted :open and :item, the counted
+graded item or nil."
   (let* ((assignment (alist-get 'assignment submission))
          (id (alist-get 'assignment_id submission))
-         (lock (org-canvas--parse-iso8601-time (alist-get 'lock_at assignment))))
+         (dates (org-canvas--gradebook-student-dates assignment who))
+         (lock (cdr dates)))
     (list :id id
           :name (or (alist-get 'name assignment) (format "Assignment %s" id))
           :group-id (alist-get 'assignment_group_id assignment)
@@ -131,19 +202,27 @@ the counted graded item or nil."
           :late (alist-get 'late submission)
           :missing (alist-get 'missing submission)
           :excused (eq (alist-get 'excused submission) t)
-          :due (org-canvas--parse-iso8601-time (alist-get 'due_at assignment))
+          :submitted (org-canvas--gradebook-submitted-p submission)
+          :due (car dates)
           :lock lock
           :counted (and (alist-get id assignments) t)
           :open (and (or (null lock) (time-less-p now lock)) t)
           :item (org-canvas--gradebook-submission-item
                  submission assignments org-canvas-gradebook-unposted))))
 
-(defun org-canvas--gradebook-student-rows (submissions assignments now)
+(defun org-canvas--gradebook-student-rows (submissions assignments now &optional who)
   "Return one row for each of SUBMISSIONS, in the order given.
 Each row is what `org-canvas--gradebook-student-row' builds from the
-submission, ASSIGNMENTS and NOW."
-  (mapcar (lambda (s) (org-canvas--gradebook-student-row s assignments now))
+submission, ASSIGNMENTS, NOW and WHO."
+  (mapcar (lambda (s) (org-canvas--gradebook-student-row s assignments now who))
           submissions))
+
+(defun org-canvas--gradebook-who (row raw-groups)
+  "Return the student of the roster ROW as the dates read them.
+RAW-GROUPS, read with their assignments' overrides, give :overrides."
+  (list :user-id (plist-get row :user-id)
+        :section-ids (plist-get row :section-ids)
+        :overrides (org-canvas--gradebook-override-map raw-groups)))
 
 (defun org-canvas--gradebook-student-graded-items (rows)
   "Return ROWS' counted graded items: the student's scores as they stand."
@@ -152,10 +231,11 @@ submission, ASSIGNMENTS and NOW."
 (defun org-canvas--gradebook-student-ceiling-item (row)
   "Return ROW's item for the ceiling, the best it can still become.
 A graded score stands; an excused or uncounted column counts nothing; a
-still-open ungraded column scores its full points; a closed one zero."
+still-open ungraded column, or one submitted and awaiting its grade,
+scores its full points; a closed one with nothing in zero (#674)."
   (cond ((plist-get row :item))
         ((or (plist-get row :excused) (not (plist-get row :counted))) nil)
-        ((plist-get row :open)
+        ((or (plist-get row :open) (plist-get row :submitted))
          (list (plist-get row :id) (plist-get row :points) (plist-get row :points)))
         (t (list (plist-get row :id) 0 (plist-get row :points)))))
 
@@ -184,7 +264,7 @@ Those are the columns the student can still turn in."
 (defun org-canvas--gradebook-student-percent-text (percent)
   "Return PERCENT as text with its percent sign, or a dash."
   (if (numberp percent)
-      (format "%s%%" (org-canvas--gradebook-number percent))
+      (format "%s%%" (org-canvas--table-number percent))
     "-"))
 
 (defun org-canvas--gradebook-student-drops-text (group)
@@ -205,7 +285,7 @@ Those are the columns the student can still turn in."
 WEIGHTED non-nil shows the group's weight, nil the word unweighted."
   (let ((weight (if weighted
                     (format "weight %s%%"
-                            (org-canvas--gradebook-number (plist-get group :weight)))
+                            (org-canvas--table-number (plist-get group :weight)))
                   "unweighted"))
         (drops (org-canvas--gradebook-student-drops-text group)))
     (if (string-empty-p drops) weight (concat weight ", " drops))))
@@ -225,8 +305,8 @@ A column that does not count toward the grade is named as such."
                   (org-canvas--gradebook-student-name-cell row)
                   (org-canvas--gradebook-student-time (plist-get row :due))
                   (org-canvas--gradebook-student-time (plist-get row :lock))
-                  (org-canvas--gradebook-number (plist-get row :score))
-                  (org-canvas--gradebook-number (plist-get row :points))
+                  (org-canvas--table-number (plist-get row :score))
+                  (org-canvas--table-number (plist-get row :points))
                   (if (plist-get row :excused) "excused" (plist-get row :state))
                   (org-canvas--gradebook-flag (plist-get row :late))
                   (org-canvas--gradebook-flag (plist-get row :missing))
@@ -237,7 +317,7 @@ A column that does not count toward the grade is named as such."
 NOW and BEST are its percentages after the drop rules, nil without
 points possible."
   (format "Hurdle %s%%: %s now, %s at best — %s."
-          (org-canvas--gradebook-number required)
+          (org-canvas--table-number required)
           (org-canvas--gradebook-student-percent-text now)
           (org-canvas--gradebook-student-percent-text best)
           (cond ((and now (>= now required)) "meets it now")
@@ -299,7 +379,7 @@ KEY is `:current' or `:final'; the letter comes from GRADES, honouring
          (name (substring (symbol-name key) 1))
          (letter (org-canvas--alist-get-non-null
                   (intern (format "%s%s_grade" prefix name)) grades)))
-    (concat (org-canvas--gradebook-number (plist-get row key))
+    (concat (org-canvas--table-number (plist-get row key))
             (if (stringp letter) (format " (%s)" letter) ""))))
 
 (defun org-canvas--gradebook-student-unmatched-hurdles (context)
@@ -364,22 +444,19 @@ Nothing is written."
          (row (car (org-canvas--gradebook-rows mine nil)))
          (course (org-canvas-api-request
                   'GET (org-canvas-api-course-endpoint "")))
-         (raw-groups (append (org-canvas-api-request-all-pages
-                              'GET (org-canvas-api-course-endpoint "assignment_groups")
-                              '(("include[]" . "assignments")))
-                             nil))
+         (raw-groups (org-canvas--gradebook-fetch-groups))
          (assignments (org-canvas--gradebook-assignment-map raw-groups))
          (groups (org-canvas--gradebook-canvas-groups raw-groups))
          (now (current-time))
          (rows (org-canvas--gradebook-student-rows
                 (org-canvas--gradebook-student-submissions (plist-get row :user-id))
-                assignments now))
+                assignments now (org-canvas--gradebook-who row raw-groups)))
          (items (org-canvas--gradebook-student-graded-items rows))
          (ceiling (org-canvas--gradebook-student-ceiling-items rows)))
     (list :row row
           :grades (alist-get 'grades (car mine))
           :sections (org-canvas--gradebook-sections-cell
-                     row (org-canvas--gradebook-fetch-section-names))
+                     row (org-canvas--pull-fetch-section-names))
           :weighted (eq (alist-get 'apply_assignment_group_weights course) t)
           :scheme (org-canvas--gradebook-fetch-scheme course enrollments)
           :hurdles org-canvas-gradebook-hurdles
@@ -410,6 +487,265 @@ is sent and nothing written (issue #542)."
      (org-canvas--gradebook-insert-student-report
       (org-canvas--gradebook-student-context name-or-id)))
    #'org-mode))
+
+;;;; Class-Wide Hurdles
+;;
+;; A hurdle (`org-canvas-gradebook-hurdles') is a promise to every
+;; student, so checking it one `student' report at a time meant a
+;; scratch script over the roster.  `org-canvas-gradebook-hurdle-report'
+;; (issue #674) reads the class once — the roster, the assignment groups
+;; with their overrides, every submission — and prints one table per
+;; hurdle group: per student their section, the group's percentage now
+;; (Canvas's current arithmetic: graded work only), with past-due work
+;; that has nothing in counted zero, and at best (the student report's
+;; ceiling), the average still needed on the work left to earn, the
+;; verdict, and every column's bucket — its score, awaiting (submitted,
+;; no grade yet), nothing in (past due or locked with nothing
+;; submitted), ahead (still open, not yet due) or excused.  Each student's
+;; dates are their own, through the same overrides the student report
+;; reads.  Read-only: nothing is sent and nothing written.
+;;
+;; The figure with past-due work zeroed is the honest "now" for a
+;; hurdle: Canvas's current score leaves those columns out and reads
+;; high.  The verdict reads it: meets it now when it reaches the
+;; hurdle, within reach when the ceiling does, else out of reach.  The
+;; average still needed is the least fraction of every earnable column's
+;; points (still open, or awaiting a grade) that brings the group to the
+;; hurdle after its drop rules, found by halving, since the drop makes it
+;; no closed form; it is blank when nothing is earnable or the hurdle is
+;; out of reach.
+
+(defun org-canvas--gradebook-hurdle-bucket (row now)
+  "Return ROW's bucket at NOW.
+One of `scored', `excused', `awaiting' (submitted, no grade yet),
+`ahead' (still open, not yet due) or `nothing-in'."
+  (let ((due (plist-get row :due)))
+    (cond ((plist-get row :item) 'scored)
+          ((plist-get row :excused) 'excused)
+          ((plist-get row :submitted) 'awaiting)
+          ((and (plist-get row :open) (or (null due) (time-less-p now due))) 'ahead)
+          (t 'nothing-in))))
+
+(defun org-canvas--gradebook-hurdle-cell (row now)
+  "Return ROW's bucket at NOW as a table cell; a dash without a ROW."
+  (pcase (and row (org-canvas--gradebook-hurdle-bucket row now))
+    ('nil "-")
+    ('scored (org-canvas--table-number (nth 1 (plist-get row :item))))
+    ('nothing-in "nothing in")
+    (bucket (symbol-name bucket))))
+
+(defun org-canvas--gradebook-hurdle-earnable-p (row)
+  "Return non-nil when ROW can still earn points.
+Ungraded and not excused, and either still open or awaiting a grade."
+  (and (null (plist-get row :item))
+       (not (plist-get row :excused))
+       (or (plist-get row :open) (plist-get row :submitted))))
+
+(defun org-canvas--gradebook-hurdle-item (row now fraction)
+  "Return ROW's item at NOW with earnable work scored at FRACTION, or nil.
+A score stands and an excused column counts nothing.  With FRACTION, a
+column that can still earn scores that fraction of its points; without
+it, such a column counts nothing unless it is past due with nothing in.
+A column with nothing in that cannot earn counts zero."
+  (let ((bucket (org-canvas--gradebook-hurdle-bucket row now))
+        (points (plist-get row :points)))
+    (cond ((eq bucket 'scored) (plist-get row :item))
+          ((eq bucket 'excused) nil)
+          ((and fraction (org-canvas--gradebook-hurdle-earnable-p row))
+           (list (plist-get row :id) (* fraction points) points))
+          ((eq bucket 'nothing-in) (list (plist-get row :id) 0 points)))))
+
+(defun org-canvas--gradebook-hurdle-percent (rows group now fraction)
+  "Return GROUP's percentage over ROWS at NOW, earnable work at FRACTION.
+FRACTION nil counts past-due work with nothing in as zero and leaves
+the rest of the unscored work out; see `org-canvas--gradebook-hurdle-item'."
+  (org-canvas--gradebook-percent
+   (org-canvas--gradebook-group-sums
+    (delq nil (mapcar (lambda (row) (org-canvas--gradebook-hurdle-item row now fraction))
+                      rows))
+    group)))
+
+(defun org-canvas--gradebook-hurdle-bisect (fn target)
+  "Return, as a percent, the least fraction in [0, 1] where FN reaches TARGET.
+FN is non-decreasing and reaches TARGET at 1 but not at 0; forty
+halvings settle the fraction far below a tenth of a percent."
+  (let ((low 0.0) (high 1.0))
+    (dotimes (_ 40)
+      (let ((mid (/ (+ low high) 2)))
+        (if (>= (funcall fn mid) target) (setq high mid) (setq low mid))))
+    (* 100 high)))
+
+(defun org-canvas--gradebook-hurdle-needed (rows group now required)
+  "Return the average percent ROWS' earnable work needs for REQUIRED in GROUP.
+The buckets are read at NOW.  Zero when the hurdle is met with that
+work at nothing; nil without a hurdle, without earnable work, or when
+full marks fall short."
+  (let ((at (lambda (fraction)
+              (or (org-canvas--gradebook-hurdle-percent rows group now fraction) 0))))
+    (cond ((or (null required)
+               (not (cl-some (lambda (r) (org-canvas--gradebook-hurdle-earnable-p r)) rows))
+               (< (funcall at 1) required))
+           nil)
+          ((>= (funcall at 0) required) 0)
+          (t (org-canvas--gradebook-hurdle-bisect at required)))))
+
+(defun org-canvas--gradebook-hurdle-verdict (required zeroed best)
+  "Return the verdict on REQUIRED from the ZEROED and BEST percentages."
+  (cond ((null required) "-")
+        ((and zeroed (>= zeroed required)) "meets it now")
+        ((and best (>= best required)) "within reach")
+        (t "out of reach")))
+
+(defun org-canvas--gradebook-hurdle-columns (raw-group assignments)
+  "Return RAW-GROUP's assignments that count, as ASSIGNMENTS has them.
+By due date, undated last, then by name."
+  (sort (cl-remove-if-not (lambda (a) (alist-get (alist-get 'id a) assignments))
+                          (append (alist-get 'assignments raw-group) nil))
+        (lambda (a b) (org-canvas--gradebook-self-before-p
+                       `((assignment . ,a)) `((assignment . ,b))))))
+
+(defun org-canvas--gradebook-hurdle-subs (submissions)
+  "Return a hash of (USER-ID . ASSIGNMENT-ID) to each of SUBMISSIONS."
+  (let ((by (make-hash-table :test 'equal)))
+    (dolist (s submissions)
+      (puthash (cons (alist-get 'user_id s) (alist-get 'assignment_id s)) s by))
+    by))
+
+(defun org-canvas--gradebook-hurdle-rows (student columns context)
+  "Return STUDENT's row for each of COLUMNS, nil where none was made.
+STUDENT is a roster row; CONTEXT the report's plist."
+  (let ((who (list :user-id (plist-get student :user-id)
+                   :section-ids (plist-get student :section-ids)
+                   :overrides (plist-get context :overrides))))
+    (mapcar (lambda (column)
+              (let ((sub (gethash (cons (plist-get student :user-id) (alist-get 'id column))
+                                  (plist-get context :subs))))
+                (and sub (org-canvas--gradebook-student-row
+                          (cons (cons 'assignment column) sub)
+                          (plist-get context :assignments) (plist-get context :now) who))))
+            columns)))
+
+(defun org-canvas--gradebook-hurdle-line (student group columns context)
+  "Return STUDENT's line in GROUP's table as (VERDICT . TEXT).
+COLUMNS are the group's assignments; CONTEXT the report's plist."
+  (let* ((rows (org-canvas--gradebook-hurdle-rows student columns context))
+         (present (delq nil (copy-sequence rows)))
+         (now (plist-get context :now))
+         (required (plist-get group :required))
+         (zeroed (org-canvas--gradebook-hurdle-percent present group now nil))
+         (best (org-canvas--gradebook-hurdle-percent present group now 1))
+         (verdict (org-canvas--gradebook-hurdle-verdict required zeroed best)))
+    (cons verdict
+          (format "| %s | %s | %s | %s | %s | %s | %s |%s\n"
+                  (org-canvas--gradebook-cell-text (plist-get student :name))
+                  (org-canvas--gradebook-sections-cell student (plist-get context :names))
+                  (org-canvas--table-number
+                   (org-canvas--gradebook-percent
+                    (org-canvas--gradebook-group-sums
+                     (delq nil (mapcar (lambda (r) (plist-get r :item)) present)) group)))
+                  (org-canvas--table-number zeroed)
+                  (org-canvas--table-number best)
+                  (org-canvas--table-number
+                   (org-canvas--gradebook-hurdle-needed present group now required))
+                  verdict
+                  (mapconcat (lambda (r) (format " %s |" (org-canvas--gradebook-hurdle-cell r now)))
+                             rows "")))))
+
+(defun org-canvas--gradebook-hurdle-tally (verdicts)
+  "Return the closing line counting VERDICTS."
+  (format "%d student%s: %d meets it now, %d within reach, %d out of reach.\n"
+          (length verdicts) (if (= (length verdicts) 1) "" "s")
+          (cl-count "meets it now" verdicts :test #'equal)
+          (cl-count "within reach" verdicts :test #'equal)
+          (cl-count "out of reach" verdicts :test #'equal)))
+
+(defun org-canvas--gradebook-insert-hurdle-group (raw-group required context)
+  "Insert the hurdle table of RAW-GROUP, whose hurdle is REQUIRED, at point.
+REQUIRED is a percent, or nil for none; CONTEXT is the report's plist."
+  (let* ((group (plist-put (org-canvas--gradebook-canvas-group raw-group) :required required))
+         (columns (org-canvas--gradebook-hurdle-columns
+                   raw-group (plist-get context :assignments)))
+         (drops (org-canvas--gradebook-student-drops-text group))
+         (lines (mapcar (lambda (s) (org-canvas--gradebook-hurdle-line s group columns context))
+                        (plist-get context :students))))
+    (insert (format "* %s\n" (org-canvas--gradebook-cell-text (plist-get group :name))))
+    (insert (format "%s%s.\n"
+                    (if required
+                        (format "Hurdle %s%%" (org-canvas--table-number required))
+                      "No hurdle set")
+                    (if (string-empty-p drops) "" (concat ", " drops))))
+    (insert (format "| Student | Section | Now | Past due as 0 | At best | Needed | Verdict |%s\n"
+                    (mapconcat (lambda (c) (format " %s |" (org-canvas--gradebook-cell-text
+                                                            (alist-get 'name c))))
+                               columns ""))
+            "|---|\n")
+    (mapc (lambda (line) (insert (cdr line))) lines)
+    (when required
+      (insert (org-canvas--gradebook-hurdle-tally (mapcar #'car lines))))
+    (insert "\n")))
+
+(defun org-canvas--gradebook-insert-hurdle-report (context)
+  "Insert the whole hurdle report for CONTEXT at point."
+  (insert "#+TITLE: Hurdles\n\n")
+  (insert (format "Read %s (%s scores); nothing was sent, nothing written.\n\n"
+                  (format-time-string "%Y-%m-%d %H:%M" (plist-get context :now))
+                  (if (plist-get context :unposted) "unposted" "posted")))
+  (dolist (target (plist-get context :targets))
+    (let ((raw (cl-find-if (lambda (g) (equal (alist-get 'name g) (car target)))
+                           (plist-get context :raw-groups))))
+      (if raw
+          (org-canvas--gradebook-insert-hurdle-group raw (cdr target) context)
+        (insert (format "No group named %s.\n\n" (car target))))))
+  (delay-mode-hooks (org-mode))
+  (org-table-map-tables #'org-table-align t))
+
+(defun org-canvas--gradebook-hurdle-targets (group)
+  "Return the (NAME . PERCENT) pairs the hurdle report covers.
+GROUP names one assignment group, its percent from
+`org-canvas-gradebook-hurdles' or nil; without GROUP, every hurdle."
+  (cond (group (list (cons group (cdr (assoc group org-canvas-gradebook-hurdles)))))
+        (org-canvas-gradebook-hurdles)
+        (t (user-error "No hurdle to report: set `org-canvas-gradebook-hurdles' or name a group"))))
+
+(defun org-canvas--gradebook-hurdle-context (targets)
+  "Return the hurdle report's context for TARGETS, reading the class once.
+The roster, the section names, the assignment groups with their
+assignments and overrides, and every student's submissions.  Nothing
+is written."
+  (let ((raw-groups (org-canvas--gradebook-fetch-groups)))
+    (list :targets targets
+          :students (org-canvas--gradebook-rows (org-canvas--gradebook-fetch-enrollments) nil)
+          :names (org-canvas--pull-fetch-section-names)
+          :raw-groups raw-groups
+          :assignments (org-canvas--gradebook-assignment-map raw-groups)
+          :overrides (org-canvas--gradebook-override-map raw-groups)
+          :subs (org-canvas--gradebook-hurdle-subs
+                 (append (org-canvas-api-request-all-pages
+                          'GET (org-canvas-api-course-endpoint "students/submissions")
+                          '(("student_ids[]" . "all")))
+                         nil))
+          :now (current-time)
+          :unposted org-canvas-gradebook-unposted)))
+
+;;;###autoload
+(defun org-canvas-gradebook-hurdle-report (&optional group)
+  "Report every student against each hurdle group, or the one GROUP names.
+The hurdles are `org-canvas-gradebook-hurdles'; GROUP names one
+assignment group, with or without a hurdle.  Per student the table
+shows their section, the group's percentage now, with past-due work
+that has nothing in counted zero, and at best, the average still
+needed on the work left to earn, the verdict, and each column's
+bucket: its score, awaiting, nothing in, ahead or excused.  Each
+student's dates are their own, overrides applied.  Read-only: nothing
+is sent and nothing written (issue #674)."
+  (interactive)
+  (let ((targets (org-canvas--gradebook-hurdle-targets group)))
+    (org-canvas--report-display
+     "*canvas-hurdles*"
+     (lambda ()
+       (org-canvas--gradebook-insert-hurdle-report
+        (org-canvas--gradebook-hurdle-context targets)))
+     #'org-mode)))
 
 ;;;; What-If
 ;;
@@ -522,8 +858,8 @@ The letter columns are SCHEME's, best first; none without a scheme."
     (dolist (s series)
       (let ((counts (org-canvas--gradebook-letter-counts (cdr s) scheme)))
         (insert (format "| %s | %s | %s |%s\n" (car s)
-                        (org-canvas--gradebook-number (org-canvas--gradebook-mean (cdr s)))
-                        (org-canvas--gradebook-number (org-canvas--gradebook-median (cdr s)))
+                        (org-canvas--table-number (org-canvas--gradebook-mean (cdr s)))
+                        (org-canvas--table-number (org-canvas--gradebook-median (cdr s)))
                         (mapconcat (lambda (l) (format " %d |" (or (cdr (assoc l counts)) 0)))
                                    letters "")))))))
 
@@ -531,8 +867,8 @@ The letter columns are SCHEME's, best first; none without a scheme."
   "Return the table line comparing GROUP with CANVAS when they disagree.
 Nil when weight, drop rules and never-drop ids agree."
   (let ((cells (mapcar (lambda (key)
-                         (cons (org-canvas--gradebook-number (or (plist-get canvas key) 0))
-                               (org-canvas--gradebook-number (or (plist-get group key) 0))))
+                         (cons (org-canvas--table-number (or (plist-get canvas key) 0))
+                               (org-canvas--table-number (or (plist-get group key) 0))))
                        '(:weight :drop-lowest :drop-highest))))
     (unless (and (cl-every (lambda (c) (equal (car c) (cdr c))) cells)
                  (equal (sort (copy-sequence (plist-get canvas :never-drop)) #'<)
@@ -563,8 +899,8 @@ SCHEME's for Canvas's total, so a change is the table's doing."
       (dolist (r moved)
         (insert (format "| %s | %s | %s | %s | %s |\n"
                         (org-canvas--gradebook-cell-text (nth 0 r))
-                        (org-canvas--gradebook-number (nth 1 r))
-                        (org-canvas--gradebook-number (nth 3 r))
+                        (org-canvas--table-number (nth 1 r))
+                        (org-canvas--table-number (nth 3 r))
                         (or (org-canvas--gradebook-letter (nth 1 r) scheme) "-")
                         (or (org-canvas--gradebook-letter (nth 3 r) scheme) "-"))))))))
 

@@ -167,16 +167,11 @@ which sit under it as headings, are not part of it.  A nil or empty
 message leaves an empty body.  The conversion goes through
 `org-canvas--html-to-org', the chokepoint that keeps a body from
 introducing a headline (Hard Rule 22)."
-  (let* ((meta-end (save-excursion (org-end-of-meta-data t) (point)))
-         (next (save-excursion (outline-next-heading) (point)))
-         (body-start (save-excursion
-                       (goto-char (min meta-end next))
-                       (skip-chars-backward " \t\n")
-                       (point)))
+  (let* ((bounds (org-canvas--pull-entry-text-bounds))
          (text (and message-html (not (string-empty-p message-html))
                     (string-trim (org-canvas--html-to-org message-html)))))
-    (delete-region body-start next)
-    (goto-char body-start)
+    (delete-region (car bounds) (cdr bounds))
+    (goto-char (car bounds))
     (insert "\n")
     (when (and text (not (string-empty-p text)))
       (insert text "\n"))))

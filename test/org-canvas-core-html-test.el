@@ -438,6 +438,91 @@ Second text.
         (expect result :to-match "WARNING.*pandoc conversion failed")
         (expect result :to-match "<p>Test</p>")))))
 
+(describe "org-canvas--html-image-alts (issue #679)"
+  (it "returns each image's source and alt in order"
+    (expect (org-canvas--html-image-alts
+             (concat "<p><img src=\"/a?x=1&amp;y=2\" alt=\"First &quot;one&quot;\">"
+                     "<img src=\"b\"><img src=\"c\" alt=\"\"></p>"))
+            :to-equal '(("/a?x=1&y=2" . "First \"one\"") ("c" . ""))))
+  (it "returns nil without libxml"
+    (cl-letf (((symbol-function 'libxml-available-p) #'ignore))
+      (expect (org-canvas--html-image-alts "<img src=\"a\" alt=\"A\">")
+              :to-be nil))))
+
+(describe "org-canvas--html-to-org-restore-image-alts (issue #679)"
+  (it "returns the text itself with no alts"
+    (expect (org-canvas--html-to-org-restore-image-alts "[[a]]" nil)
+            :to-equal "[[a]]"))
+  (it "writes an alt above an image that is its paragraph"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "[[a]]\n\n#+caption: Cap\n[[b]]"
+             '(("a" . "Alpha\n  two") ("b" . "  ")))
+            :to-equal (concat "#+attr_html: :alt Alpha two\n[[a]]\n\n"
+                              "#+caption: Cap\n#+attr_html: :alt \"\"\n"
+                              "[[b]]")))
+  (it "uses each alt once, so a repeated image keeps its own"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "[[a]]\n\n[[a]]\n\n[[a]]"
+             '(("a" . "One") ("a" . "Two")))
+            :to-equal (concat "#+attr_html: :alt One\n[[a]]\n\n"
+                              "#+attr_html: :alt Two\n[[a]]\n\n[[a]]")))
+  (it "carries an image inside running text on an attr_canvas line"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "See [[a]] and [[b]] here."
+             '(("a" . "Alpha") ("b" . "")))
+            :to-equal (concat "#+attr_canvas: [[a]] :alt Alpha\n"
+                              "#+attr_canvas: [[b]] :alt \"\"\n"
+                              "See [[a]] and [[b]] here.")))
+  (it "writes the line above the list or table that holds the image"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "Intro\n\n- [[a]]\n- text [[b]]\n\n| [[c]] | x |\n"
+             '(("a" . "One") ("b" . "Two") ("c" . "Cell")))
+            :to-equal (concat "Intro\n\n"
+                              "#+attr_canvas: [[a]] :alt One\n"
+                              "#+attr_canvas: [[b]] :alt Two\n"
+                              "- [[a]]\n- text [[b]]\n\n"
+                              "#+attr_canvas: [[c]] :alt Cell\n"
+                              "| [[c]] | x |\n")))
+  (it "puts an image that leads a paragraph of text on attr_canvas too"
+    ;; ox-html would put a paragraph's :alt on its <p> as well.
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "[[a]] then [[b]]" '(("a" . "One") ("b" . "Two")))
+            :to-equal (concat "#+attr_canvas: [[a]] :alt One\n"
+                              "#+attr_canvas: [[b]] :alt Two\n"
+                              "[[a]] then [[b]]")))
+  (it "leaves an image in a headline alone"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "* [[a]] Head" '(("a" . "One")))
+            :to-equal "* [[a]] Head"))
+  (it "carries an image in a heading block above the block"
+    (expect (org-canvas--html-to-org-restore-image-alts
+             "#+begin_h2\n[[a]] Head\n#+end_h2" '(("a" . "Logo")))
+            :to-equal (concat "#+attr_canvas: [[a]] :alt Logo\n"
+                              "#+begin_h2\n[[a]] Head\n#+end_h2")))
+  (it "leaves a described link and a link to another source alone"
+    (let ((text "See [[a][the chart]] and [[z]]"))
+      (expect (org-canvas--html-to-org-restore-image-alts
+               text '(("a" . "Alpha")))
+              :to-equal text)))
+  (it "writes nothing when the conversion is for one line"
+    (let ((org-canvas--html-image-alts-inhibit t))
+      (expect (org-canvas--html-to-org-restore-image-alts
+               "[[a]]" '(("a" . "Alpha")))
+              :to-equal "[[a]]"))))
+
+(describe "Inline conversion and image alts (issue #679)"
+  (it "keeps a one-line conversion free of alt lines"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+              ((symbol-function 'call-process-region)
+               (lambda (start end &rest _)
+                 (delete-region start end)
+                 (insert "[[https://x.com/courses/1/files/9/preview]] Yes")
+                 0)))
+      (expect (org-canvas--html-to-org-inline
+               (concat "<img src=\"https://x.com/courses/1/files/9/preview\""
+                       " alt=\"A tick\"> Yes"))
+              :to-equal "[[https://x.com/courses/1/files/9/preview]] Yes"))))
+
 (describe "org-canvas--html-strip-ids"
   (it "removes a single id attribute"
     (expect (org-canvas--html-strip-ids "<div id=\"content\">Hi</div>")
@@ -803,6 +888,47 @@ Bind `html' to the pushed HTML in BODY."
         "* Page\n[[https://canvas.example.com/courses/1/files/99/preview]]\n"
       (expect html :to-match "<a href=")
       (expect html :not :to-match "<img")))
+
+  (it "gives an image in running text its attr_canvas alt (issue #679)"
+    (test-org-canvas-with-image-export
+        (concat "* Page\n#+attr_canvas: [[file:diagram.png]] :alt Bar chart\n"
+                "See [[file:diagram.png]] here.\n")
+      (expect html :to-match
+              "<img src=\"[^\"]+/files/42/preview\" alt=\"Bar chart\"")))
+
+  (it "gives images in a list and a table their own alts (issue #679)"
+    (test-org-canvas-with-image-export
+        (concat "* Page\n"
+                "#+attr_canvas: [[file:other.png]] :alt Other one\n"
+                "#+attr_canvas: [[file:diagram.png]] :alt \"\"\n"
+                "- [[file:other.png]]\n- text [[file:diagram.png]]\n\n"
+                "#+attr_canvas: [[file:diagram.png]] :alt In a cell\n"
+                "| [[file:diagram.png]] | x |\n")
+      (puthash "other.png" "https://canvas.example.com/courses/1/files/43/preview"
+               org-canvas--image-cache)
+      (let ((html (save-excursion
+                    (goto-char (point-min))
+                    (org-canvas--export-subtree-body-to-html))))
+        (expect html :to-match "files/43/preview\" alt=\"Other one\"")
+        (expect html :to-match "<li>text <img src=\"[^\"]+/files/42/preview\" alt=\"\"")
+        (expect html :to-match "<td[^>]*><img src=\"[^\"]+/files/42/preview\" alt=\"In a cell\""))))
+
+  (it "uses each attr_canvas line once, in order (issue #679)"
+    (test-org-canvas-with-image-export
+        (concat "* Page\n"
+                "#+attr_canvas: [[file:diagram.png]] :alt First\n"
+                "#+attr_canvas: [[file:diagram.png]] :alt Second\n"
+                "A [[file:diagram.png]] b [[file:diagram.png]] c [[file:diagram.png]]\n")
+      (expect html :to-match
+              (concat "alt=\"First\" />[^<]*b <img [^>]*alt=\"Second\" />"
+                      "[^<]*c <img [^>]*alt=\"diagram\\.png\""))))
+
+  (it "ignores an attr_canvas line that names no image in its element"
+    (test-org-canvas-with-image-export
+        (concat "* Page\n#+attr_canvas: [[file:gone.png]] :alt Gone\n"
+                "#+attr_canvas: no link here\n"
+                "See [[file:diagram.png]] here.\n")
+      (expect html :to-match "files/42/preview\" alt=\"diagram\\.png\"")))
 
   (it "exports the same body to the same HTML twice (no random figure id)"
     (test-org-canvas-with-image-export

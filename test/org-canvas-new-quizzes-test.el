@@ -96,7 +96,7 @@ What would happen?
      (let ((text (org-canvas--new-quiz-parse-question-text)))
        (expect text :to-match "Consider the following scenario")))))
 
-(describe "org-canvas--new-quiz-parse-checkbox-list"
+(describe "org-canvas--parse-checkbox-list on a New Quiz item"
   (it "parses correct and incorrect answers"
     (with-temp-org-buffer
      "* Quiz
@@ -110,7 +110,7 @@ What would happen?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((answers (org-canvas--new-quiz-parse-checkbox-list)))
+     (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (length answers) :to-equal 3)
        (expect (cdr (nth 0 answers)) :to-be t)
        (expect (cdr (nth 1 answers)) :to-be nil)
@@ -126,10 +126,10 @@ What would happen?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((answers (org-canvas--new-quiz-parse-checkbox-list)))
+     (let ((answers (org-canvas--parse-checkbox-list)))
        (expect (cl-count t answers :key #'cdr) :to-equal 2)))))
 
-(describe "org-canvas--new-quiz-parse-matching-list"
+(describe "org-canvas--parse-matching-list on a New Quiz item"
   (it "parses matching pairs"
     (with-temp-org-buffer
      "* Quiz
@@ -140,10 +140,30 @@ What would happen?
 "
      (search-forward "Match the terms")
      (org-back-to-heading)
-     (let ((matches (org-canvas--new-quiz-parse-matching-list)))
+     (let ((matches (org-canvas--parse-matching-list)))
        (expect (length matches) :to-equal 3)
        (expect (car (nth 0 matches)) :to-equal "DNA")
-       (expect (cdr (nth 0 matches)) :to-equal "Deoxyribonucleic acid")))))
+       (expect (cdr (nth 0 matches)) :to-equal "Deoxyribonucleic acid"))))
+
+  (it "keeps a line without = as a distractor, in its place (issue #668)"
+    (with-temp-org-buffer
+     "* Quiz
+** Match the capitals
+- Paris = France
+- Lisbon
+- Madrid = Spain
+"
+     (search-forward "Match the capitals")
+     (org-back-to-heading)
+     (expect (org-canvas--parse-matching-list)
+             :to-equal '(("Paris" . "France") ("Lisbon")
+                         ("Madrid" . "Spain")))))
+
+  (it "reads neither a checkbox nor a line with a bare = as a distractor"
+    (expect (org-canvas--parse-matching-line "[X] Paris")
+            :to-be nil)
+    (expect (org-canvas--parse-matching-line "x=1")
+            :to-be nil)))
 
 (describe "org-canvas--new-quiz-parse-ordering-list"
   (it "parses numbered list items"
@@ -176,7 +196,7 @@ What would happen?
        (expect (car (nth 0 categories)) :to-equal "Fruit")
        (expect (cdr (nth 0 categories)) :to-equal '("apple" "banana"))))))
 
-(describe "org-canvas--new-quiz-parse-numerical-answer"
+(describe "org-canvas--parse-numerical-answer on a New Quiz item"
   (it "parses exact numerical answer"
     (with-temp-org-buffer
      "* Quiz
@@ -187,7 +207,7 @@ What would happen?
      (org-back-to-heading)
      (unless test-org-canvas-emacs-30-p
        (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
-     (let ((num (org-canvas--new-quiz-parse-numerical-answer)))
+     (let ((num (org-canvas--parse-numerical-answer)))
        (expect (plist-get num :type) :to-equal 'exact)
        (expect (plist-get num :value) :to-equal 3.14))))
 
@@ -201,7 +221,7 @@ What would happen?
      (org-back-to-heading)
      (unless test-org-canvas-emacs-30-p
        (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
-     (let ((num (org-canvas--new-quiz-parse-numerical-answer)))
+     (let ((num (org-canvas--parse-numerical-answer)))
        (expect (plist-get num :type) :to-equal 'range)
        (expect (plist-get num :start) :to-equal 10)
        (expect (plist-get num :end) :to-equal 20)))))
@@ -1218,7 +1238,34 @@ Click the heart.
         (expect (nth 0 answers) :to-equal "Deoxyribonucleic acid")
         (expect (nth 1 answers) :to-equal "Ribonucleic acid")
         ;; No per-question scoring_data
-        (expect (alist-get 'scoring_data (nth 0 questions)) :to-be nil)))))
+        (expect (alist-get 'scoring_data (nth 0 questions)) :to-be nil))))
+
+  (it "puts a distractor in answers and asks no question of it (issue #668)"
+    (with-temp-org-buffer
+     "* Quiz
+** Match the capitals
+- Lisbon
+- Paris = France
+- Madrid = Spain
+"
+     (search-forward "Match the capitals")
+     (org-back-to-heading)
+     (let* ((built (org-canvas--new-quiz-item-build-scoring-data
+                    "matching"
+                    (org-canvas--new-quiz-item-build-interaction-data
+                     "matching")))
+            (value (alist-get 'value (car built)))
+            (questions (append (alist-get 'questions (cdr built)) nil))
+            (answers (append (alist-get 'answers (cdr built)) nil)))
+       (expect (mapcar (lambda (q) (alist-get 'item_body q)) questions)
+               :to-equal '("Paris" "Madrid"))
+       (expect answers :to-equal '("France" "Spain" "Lisbon"))
+       (expect (hash-table-count value) :to-equal 2)
+       (expect (gethash (alist-get 'id (nth 0 questions)) value)
+               :to-equal "France")
+       (expect (gethash (alist-get 'id (nth 1 questions)) value)
+               :to-equal "Spain")
+       (expect (hash-table-values value) :not :to-contain "Lisbon")))))
 
 (describe "org-canvas--new-quiz-item-build-ordering-data"
   (it "builds choices as keyed hash-table with UUID IDs"
@@ -2631,7 +2678,40 @@ Click the heart.
         (item_body . "")
         (interaction_type_slug . "essay")
         (points_possible . 10)))
-     (expect (buffer-string) :to-match "Question"))))
+     (expect (buffer-string) :to-match "Question")))
+
+  (it "keeps a matching item's distractor lines through a pull (issue #668)"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 42
+:END:
+** Match the capitals
+:PROPERTIES:
+:CANVAS_ITEM_ID: item-9
+:TYPE: matching
+:END:
+
+- Paris = France
+- Madrid = Spain
+- Lisbon
+"
+     (goto-char (point-min))
+     (org-canvas--new-quiz-pull-insert-item
+      '((id . "item-9") (points_possible . 2) (entry_type . "Item")
+        (entry . ((item_body . "<p>Match the capitals</p>")
+                  (interaction_type_slug . "matching")
+                  (interaction_data
+                   . ((questions . [((id . "1") (item_body . "Paris"))
+                                    ((id . "2") (item_body . "Madrid"))])
+                      (answers . ["France" "Spain" "Lisbon"])))
+                  (scoring_data
+                   . ((value . ((\1 . "France") (\2 . "Spain")))))))))
+     (search-forward "Match the capitals")
+     (org-back-to-heading t)
+     (expect (org-canvas--parse-matching-list)
+             :to-equal '(("Paris" . "France") ("Madrid" . "Spain")
+                         ("Lisbon"))))))
 
 (describe "A New Quiz item pull leaves the file as a re-pull does (issue #314)"
   (dolist (layout '(("* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
@@ -4099,7 +4179,7 @@ SLUG is its interaction_type_slug, \"choice\" by default."
               (before (buffer-string)))
           (expect pushed :to-match "<ul><li>one</li><li>two</li></ul>")
           (test-nq-333--goto-item)
-          (expect (org-canvas--new-quiz-parse-checkbox-list) :to-equal nil)
+          (expect (org-canvas--parse-checkbox-list) :to-equal nil)
           (test-nq-333--pull (test-nq-333--item pushed))
           (expect (buffer-string) :to-equal before)))))
 
@@ -4155,7 +4235,7 @@ SLUG is its interaction_type_slug, \"choice\" by default."
           (expect text :to-match "New prompt\\.\n\n- \\[X\\] Alpha\n- \\[ \\] Beta\n"))
         (test-nq-333--goto-item)
         (expect (org-entry-get (point) "CANVAS_ITEM_ID") :to-equal "7")
-        (expect (org-canvas--new-quiz-parse-checkbox-list)
+        (expect (org-canvas--parse-checkbox-list)
                 :to-equal '(("Alpha" . t) ("Beta"))))))
 
   (it "rewrites a stamped heading in place, its answers kept"

@@ -210,6 +210,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =pull-queue=                  | =org-canvas-submissions-pull-queue=                |                    |
 | =gradebook=                   | =org-canvas-pull-gradebook=, then the Sections table and course scores (for a student, My grades and their totals) | |
 | =student NAME-OR-USER-ID=    | =org-canvas-gradebook-student=: one student's every column, what is still open, the best possible grade (#542) |   |
+| =hurdles [GROUP]=            | =org-canvas-gradebook-hurdle-report=: every student against each hurdle group, or the one GROUP names (#674) |   |
 | =person NAME-OR-USER-ID=    | =org-canvas-people-person=: one person's roster entry and ids, from people.org (#543) |   |
 | =reports [--save]=            | =org-canvas-submissions-reports= (=--save=: also to a dated file) |                    |
 | =pull FEATURE or FEATURE:TITLE...= | a bare feature: its =org-canvas-pull-<feature>=, adopting Canvas-made items; =FEATURE:TITLE=: =org-canvas-pull-headings= | any pull failed |
@@ -237,6 +238,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
 | =quiz-regrade QUIZ QUESTION-TEXT [--score N] [--dry-run]= | =org-canvas-quiz-regrade=: every attempt that drew the question scored with N (the default =full=, the question's points) and read back | an attempt failed to send or read back at another score |
 | =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
+| =diff FEATURE:TITLE...=       | =org-canvas-diff-headings=: only the named headings, one read each, writing nothing (=--json=: one JSON object) | a named heading drifted or could not be checked |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
 | =search REGEXP= | =org-canvas-search-live=: every match of REGEXP in the live course's text, with its object, field and context |   |
@@ -324,6 +326,7 @@ scores, so a script can read class standing without opening the file
 =org-canvas-gradebook-student= reads, and prints that student's whole
 record to standard output, writing nothing (see [[*One Student's
 Standing][One Student's Standing]]); nothing is sent but GETs.
+=hurdles= prints every student against each hurdle group, or only the group named, the same way (see [[*Every Student Against a Hurdle][Every Student Against a Hurdle]]).
 
 The exit status is 0 when the command succeeded, 1 as the table says,
 2 for a command line it could not read and 3 when an error stopped it
@@ -917,7 +920,16 @@ A bare image link becomes an =<img>= in the pushed body, whose =src= is the imag
 [[file:images/scores.png]]
 #+end_src
 
-An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file, so a pull followed by a push sends it back as an image; pandoc drops an =<img>='s alt text, though, so a pull does not bring =#+ATTR_HTML= back.
+An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file (=.JPG= as much as =.png=), so a pull followed by a push sends it back as an image, and it writes Canvas's alt text back above it, =:alt ""= for a decorative image.  An image that is a paragraph on its own gets =#+attr_html: :alt ...=.  A paragraph's =#+ATTR_HTML= reaches only that kind of image, though, so an image anywhere else (in running text, a list, a table cell, a quote or a heading block) gets an =#+attr_canvas= line above the element that holds it, naming the image by its link:
+
+#+begin_src org
+,#+attr_canvas: [[file:content/org-canvas-images/grades.png]] :alt The grades page
+,#+attr_canvas: [[file:content/org-canvas-images/rule.png]] :alt ""
+- Open [[file:content/org-canvas-images/grades.png]] first.
+- Then [[file:content/org-canvas-images/rule.png]] the rest.
+#+end_src
+
+A push gives each bare link in the element the alt its line names, one line per occurrence in order, so the same image twice can carry two alts.  Org's own HTML export ignores the keyword.  You can write these lines by hand as well; one whose link no longer appears in the element below it is ignored, and that image gets its file name.  A one-line conversion (a quiz answer, a title) writes no alt line, so an image there still loses its alt on a pull.
 
 *** Links to Other Local Files
 
@@ -1583,10 +1595,12 @@ drift report compares them (issue #321).
 | =essay=                | =essay=                | No answers needed                         |
 | =file-upload=          | =file_upload=          | No answers needed                         |
 | =numerical=            | =numerical=            | =[X] 42= or =[X] [10, 20]= (range)          |
-| =matching=             | =matching=             | =Left = Right= pairs                       |
+| =matching=             | =matching=             | =Left = Right= pairs (distractors have no =) |
 | =ordering=             | =ordering=             | Numbered list =1. item=                     |
 | =categorization=       | =categorization=       | =Category: item1, item2=                   |
 | =hot-spot=             | =hot-spot=             | Pulled only: regions in =HOTSPOTS= (see below) |
+
+A =matching= line with no = sign is a distractor, an answer no prompt matches, as in a classic quiz: =- Lisbon= under =- Paris = France= and =- Madrid = Spain= offers Lisbon in every dropdown and grades no prompt against it.  The push sends it as an extra entry in the item's =answers=, after the pairs' answers, and leaves it out of the scoring.  A pull keeps the answer list as it is written, distractors included.
 
 *Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.  Validation reports =TYPE: fill-in-the-blank= as an invalid value, and a sync refuses such a question rather than pushing it as another type.
 
@@ -1965,6 +1979,24 @@ for a course whose =modules.org= is missing or links to nothing.
 =org-canvas-files-file= to check file headings too (a direct file link
 and a =files.org= heading link both count, a hidden file is left out),
 or set it to nil to turn the check off.
+
+*** Columns a Module Keeps Locked
+
+Canvas keeps an item locked while a module holding it is locked, whatever the item's own dates say. A published assignment whose module item sits in a week module that unlocks the day it is due reads as open in =assignments.org= and in the drift report, while students have hours to reach it. =org-canvas-validate= reads each published assignment not yet due against the modules in =modules.org= that hold it (#675):
+
+#+begin_example
+assignments.org:140: warning: Module 'Week 13' unlocks <2026-11-17 Tue 00:00>, not before the due date <2026-11-16 Mon 23:59>: Canvas keeps the column locked until the module opens, whatever its own dates say; move its module item to a module that opens in time
+assignments.org:152: warning: Reachable 1.0 day(s) before it is due: students first reach it <2026-11-16 Mon 00:00>, when module 'Week 12' unlocks, and it is due <2026-11-16 Mon 23:59>; the course wants 7 day(s) (move its module item to a module that opens in time)
+#+end_example
+
+A module that unlocks at or after the due date is always a warning. A short window is a course's rule, off by default: =org-canvas-validate-min-reach-days= is the fewest days a column must be reachable before it is due, and =org-canvas-validate-reach-groups= narrows it to the assignment groups named (nil covers every assignment). The column is first reachable at the later of its own =UNLOCK_AT= and the latest =UNLOCK_AT= of the modules holding it, counted by the clock. Under the rule, a module that waits on =PREREQUISITE_MODULE_IDS= is a note, since its release is no date.
+
+#+begin_src emacs-lisp
+(setq org-canvas-validate-min-reach-days 7
+      org-canvas-validate-reach-groups '("Global Challenge Essay"))
+#+end_src
+
+An unpublished column, one already past due, and an item or module Canvas deleted are left out. The findings describe the course rather than a push, so a read-only course hears them too; they are check =module-reach=, which a heading can accept with a reason (see [[*Accepting a Finding With a Reason][Accepting a Finding With a Reason]]). The check reads only the Org files and makes no request.
 
 *** Example
 
@@ -3008,14 +3040,23 @@ never written to a file, and sends nothing but GETs:
   course lacks is reported at the end.
 - The columns past due but not locked, counted and ungraded — the only
   work the student can still turn in.
-- The best possible total: every graded score stands, every
-  still-open ungraded column scores full marks, every closed ungraded
-  one zero, and the drop rules run over those items as Canvas's final
-  grade would.
+- The best possible total: every graded score stands, every still-open ungraded column and every column submitted and awaiting its grade scores full marks (work already in is not lost when the column locks), every closed column with nothing in scores zero, and the drop rules run over those items as Canvas's final grade would.
 
-The dates are each column's own, not the student's override: a student
-with an extension may still submit a column the report shows closed.
-Under =emacs --batch= the report is printed to standard output.
+The Due and Lock dates, and so Open, are the student's own: an override naming the student or one of their sections replaces the column's dates, the latest date winning when several apply and an override with no lock leaving the column open, as Canvas resolves them (#674).  The overrides come with the assignment groups read, so they cost no extra request.  A group override is not resolved, since the report reads no group memberships.  Under =emacs --batch= the report is printed to standard output.
+
+*** Every Student Against a Hurdle
+
+=M-x org-canvas-gradebook-hurdle-report=, or =scripts/org-canvas hurdles [GROUP]= from the shell (issue #674), checks a hurdle for the whole class at once: one table per group of =org-canvas-gradebook-hurdles=, or only the group GROUP names (with or without a hurdle set for it).  It reads the roster, the assignment groups with their overrides and every submission, prints the report and writes nothing; nothing is sent but GETs.  One row per student:
+
+- Student and Section.
+- Now: the group's percentage after its drop rules over graded work only, Canvas's current-score arithmetic.
+- Past due as 0: the same with every column past due (or locked) with nothing in counted zero.  This is the honest "now" for a hurdle: Canvas's current score leaves those columns out and reads high.
+- At best: the student report's ceiling for the group.
+- Needed: the average percentage the work still to be earned (still open, or submitted and awaiting a grade) must score for the group to reach the hurdle, the drop rules kept; 0 when the hurdle is met with that work at nothing, a dash when nothing is left to earn or full marks fall short.
+- Verdict: =meets it now= when Past due as 0 reaches the hurdle, =within reach= when At best does, else =out of reach=.
+- One cell per column of the group, by due date: its score, =awaiting= (submitted, no grade yet), =nothing in= (past due or locked, nothing submitted), =ahead= (still open, not yet due), =excused=, or a dash when the student has no submission for it.
+
+Each student's dates are their own, overrides applied as in the student report.  A last line counts the verdicts; a hurdle naming a group the course lacks is named.
 
 ** grading-schemes.org
 
@@ -4452,7 +4493,8 @@ object is deleted at the URL =k= would use.  The rules:
   returned it, is written to =<time>-<feature>-<id>.json= under
   =org-canvas-diff-delete-snapshot-directory= (default
   =canvas-snapshots/= in the course directory), so a mistaken delete can
-  be rebuilt.  =k= writes one too.  A delete-all writes its own snapshot
+  be rebuilt.  =k= writes one too, and so does a delete at point or by
+  heading (#669).  A delete-all writes its own snapshot
   under the same directory before its first DELETE (#555); see
   [[*Deleting All Items of a Type][Deleting All Items of a Type]].
 - *Dry run and read-only.*  Under a dry run the objects are read and
@@ -4485,6 +4527,21 @@ their row.
 
 After stamping, the next report shows each item as a RELOCATE row, and the
 next sync moves it into its new module, keeping its id.
+
+** Checking Named Headings Before a Push
+
+The full report is one list request per feature and every row, which is a lot to pay before pushing two assignments and a file by heading.  =M-x org-canvas-diff-at-point= checks the heading at point alone, and =org-canvas-diff-headings= the headings named as =org-canvas-pull-headings= names them, =(("assignment" . "Lab 1") ("file" "4412" canvas-id))= (#670).  From the shell, =diff= with headings checks only those, and its exit status can gate the push:
+
+#+begin_src sh
+scripts/org-canvas diff "assignment:Closer 07" "assignment:Closer 08" "file#4412" \
+  && scripts/org-canvas push "assignment:Closer 07" "assignment:Closer 08" "file#4412"
+#+end_src
+
+Each heading's object is read on its own, by the id its drawer holds now, and compared exactly as the full report compares it, so the row is the one the full report would give that heading: CHANGED with the fields that differ and Canvas's stamp when it is newer than the heading's baseline, MISSING when Canvas no longer holds the id, a NOTE, or PENDING for a heading with no id yet.  Because the id is read from the drawer each time, a file re-uploaded by the last push is checked under its new id.  A quiz question is checked as its quiz, which a push sends whole.
+
+What only a list can show stays the full report's: EXTRA, UNCLAIMED and MOVED rows, module items, New Quiz items and assignment overrides.
+
+The commands return, and =diff= exits with, the number of divergences plus one for each heading that could not be checked (not found, found twice, or the read failed), so a non-zero answer means "do not push yet".  PENDING and NOTE rows are shown and not counted.  Nothing is written, locally or on Canvas.  Interactively the rows land in the report's mode, so the row verbs work on them, and =g= checks the same headings again.  Under =--json= the object has the full report's keys, with =headings= (each heading's =feature=, =title=, =canvas_id=, =state= =checked= or =error=, and =error=) in place of =features=, =acknowledged= and =referenced=.
 
 ** Cost and Safety
 
@@ -4552,7 +4609,7 @@ The file is named after the column, but it belongs to the column's id: the =CANV
 ** Workflow
 
 1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment (from Lisp, name it: the command takes an assignment id or exact name, and a second argument to download every attachment as well — see [[*Batch Use][Batch Use]]); the grading file is written, saved, and visited. Its =Assignment:= line links the assignment's heading in the assignments file (when one carries the id), its Canvas page, and SpeedGrader, and every student heading carries an =Open in SpeedGrader= link. When the assignment has a rubric, a =Rubric:= line follows, linking the rubric's heading in the rubrics file and its Canvas page, and then the rubric itself in the shape of =rubrics.org=: a =* Rubric= heading with one sub-heading per criterion — its description and points, its long description as prose, and a =| Rating | Points | Description |= table — so the work can be read against the rubric offline, the text that separates one rating from the next included. Set =org-canvas-submissions-include-rubric-criteria= to =summary= for one =| Criterion | Points | Ratings |= line per criterion instead, or to nil for just the =Rubric:= line. The =* Rubric= heading carries no =USER_ID=, so nothing that walks the students takes it for one. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
-2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far (one item per comment, labelled with its author, date and Canvas id, a longer one's paragraphs indented under the label; see [[*Editing Sent Comments][Editing Sent Comments]]), and, on an assignment with a rubric, a =Rubric= section: a table with one row per criterion — its Canvas id, description, points, and a =Score= cell — and under it one =- <id> :: comment= item per criterion, both pre-filled when Canvas already holds an assessment. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file. After a download each =Attachments= entry links the local copy first, with the Canvas link kept beside it, and a later pull keeps that local link as long as the file is still there and is the attachment listed: a copy older than the attachment, or of another size (an earlier attempt uploaded under the same name), is not linked, and =D= fetches the new one. To read the whole column at once, =u= (=M-x org-canvas-submissions-upload-text=, transient: Submissions, =L=) shows the text of every downloaded upload, one block per student — a PDF through =pdftotext= (=org-canvas-submissions-pdftotext-program=, from poppler-utils), a =.docx=, =.odt=, =.rtf= or =.epub= through pandoc, a text file as it is; when the program is missing, or the file is an image, the block says so — and names the attachments not yet downloaded. It also groups the students who uploaded the same document, as on pair work: the same Google Doc id, found in the text or in the PDF's own links, or else the same file byte for byte. A doc id more than =org-canvas-submissions-same-as-max-group= students carry (default 4) is a link everyone copied, the template or the instructions, and is ignored. The groups are listed at the top of the report, a pair's text is shown once, under its first member, and each grouped heading gets =:SAME_AS:= naming the others, so one reading and one set of scores covers both; an ungrouped heading loses it. A refresh keeps =SAME_AS= while the student's attempt is the one it was worked out from; run =u= again after a resubmission. With a prefix argument the report is also written as =uploads.org= in the column's =files/= folder. Nothing is read from Canvas.
+2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far (one item per comment, labelled with its author, date and Canvas id, a longer one's paragraphs indented under the label; see [[*Editing Sent Comments][Editing Sent Comments]]), and, on an assignment with a rubric, a =Rubric= section: a table with one row per criterion — its Canvas id, description, points, and a =Score= cell — and under it one =- <id> :: comment= item per criterion, both pre-filled when Canvas already holds an assessment. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file. After a download each =Attachments= entry links the local copy first, with the Canvas link kept beside it, and a later pull keeps that local link as long as the file is still there and is the attachment listed: a copy older than the attachment, or of another size (an earlier attempt uploaded under the same name), is not linked, and =D= fetches the new one. A student with no =Attachments= list is skipped quietly, but an =Attachments= line that cannot be read back is not taken for a student with nothing uploaded: =D= names each such line, with its student, as not downloaded in its closing message, and =d= names them in place of "No attachments found". To read the whole column at once, =u= (=M-x org-canvas-submissions-upload-text=, transient: Submissions, =L=) shows the text of every downloaded upload, one block per student — a PDF through =pdftotext= (=org-canvas-submissions-pdftotext-program=, from poppler-utils), a =.docx=, =.odt=, =.rtf= or =.epub= through pandoc, a text file as it is; when the program is missing, or the file is an image, the block says so — and names the attachments not yet downloaded. It also groups the students who uploaded the same document, as on pair work: the same Google Doc id, found in the text or in the PDF's own links, or else the same file byte for byte. A doc id more than =org-canvas-submissions-same-as-max-group= students carry (default 4) is a link everyone copied, the template or the instructions, and is ignored. The groups are listed at the top of the report, a pair's text is shown once, under its first member, and each grouped heading gets =:SAME_AS:= naming the others, so one reading and one set of scores covers both; an ungrouped heading loses it. A refresh keeps =SAME_AS= while the student's attempt is the one it was worked out from; run =u= again after a resubmission. With a prefix argument the report is also written as =uploads.org= in the column's =files/= folder. Nothing is read from Canvas.
 3. Grade. Edit the =:SCORE:= property on each heading: a number, =EX= to excuse, or =none= (=-= works too) to take away a grade Canvas holds, as when a submission is ruled not graded after someone scored it in SpeedGrader. A =SCORE= that is absent or blank leaves the grade alone, so deleting the property never clears anything, and any other value stops the push before anything is sent. On a rubric assignment, fill the =Score= cells of the student's =Rubric= table instead — points per criterion, within each row's =Max=; Canvas picks the rating from the points — and write each criterion's comment after its =- <id> ::= item under the table. A comment can run to several lines and paragraphs: continue it on lines indented two spaces under the item, and leave one blank line (indented or not) between paragraphs; the line breaks reach Canvas as typed. An item left empty sends no comment, and a row whose item you deleted is read the same way. When the rubric is used for grading (the file's =CANVAS_RUBRIC_USE_FOR_GRADING=), the rows' total becomes the =SCORE= at push time, so leave it alone; a =SCORE= you typed that disagrees with the total stops the push before anything is sent. A table you fill only partly is pushed as a partial assessment and named as such in the confirmation. A row left blank is left out of the push, as a blank =SCORE= is. To take away a row Canvas already holds, write =none= (or =-=) in its =Score= cell: its points go, and its comment too unless you write one under its item; =none= in every row takes the whole assessment away. Once pushed, the cell is emptied, as a pull of it would show it. A table you emptied by hand while Canvas holds an assessment stops the push before anything is sent, naming =none=, since Canvas would otherwise keep rows the file no longer shows; a refresh keeps such emptied rows, and cleared ones, as typed rather than filling them back from Canvas. Write any comment for the student under their =Comment to post= heading; the lines there that begin with =#= are instructions and are never sent, and a blank line between paragraphs reaches Canvas as one. =c= still posts a one-off comment through a prompt, immediately. Your own remarks go under the student's =Notes= heading, which is never sent and survives a re-pull, as do unposted drafts. For completion-graded work, =M-x org-canvas-submissions-apply-completion-rule= (transient: Submissions, =a=) fills every empty =SCORE= at once: full credit for a submission within =org-canvas-submissions-late-window-days= of the due date (default 2, the value comes from the file's =POINTS_POSSIBLE=), 0 for a later or missing one; hand-entered scores and =EX= rows are left alone unless you give a prefix argument. On a rubric assignment full credit also fills every =Rubric= row at its =Max=, so the cells the student sees are populated; a 0 leaves the rows empty. To mark a student late, missing or extended — SpeedGrader's status menu — set =:LATE_STATUS:= on their heading to =late=, =missing=, =extended= or =none= (none: not late, whatever the due date says); the pull writes it where Canvas already holds one, and you add it where it does not. Review, then push.
 4. =S= pushes. Every heading whose =SCORE= differs from its =CANVAS_SCORE=, or whose =Rubric= rows differ from its =CANVAS_RUBRIC=, is listed and, after one confirmation, sent: one change as a single PUT, several through Canvas's bulk endpoint, each student's grade and rubric assessment in the same request. One exception: on a rubric used for grading, rows that carry comments but no points make Canvas set no grade, clearing one already there and discarding a grade sent beside them, so such a student's rows go first and the grade (the typed one, or the one Canvas held) follows in a second request once Canvas has stored the rows; the dry run shows it as =then {"posted_grade": …}=. Canvas applies a bulk push in a background job, so the push waits for it, reading the job's progress every =org-canvas-submissions-progress-interval= seconds (default 2) for up to =org-canvas-submissions-progress-timeout= seconds (default 180), with a =Waiting for Canvas to apply …= line in the echo area. Only a job that completed counts as pushed. When the job fails, or the wait runs out, the closing message says so (with Canvas's reason, or =still running after 180s=), no =CANVAS_SCORE= or =CANVAS_RUBRIC= is recorded for those grades and no posting is offered, so the next =S= sends them again; after a timeout, =g= first, since a re-pull confirms a typed score Canvas has come to hold and leaves the others to push. Drafted comments go in the same push, one request each; a posted comment moves under the student's =Comments= heading as a dated record and the draft resets to the template. A =LATE_STATUS= that differs from its =CANVAS_LATE_STATUS= goes in the same push, one GraphQL request per student (=updateSubmissionGradeStatus=), sent before the grades, since Canvas applies a row's late policy when its grade is written: a grade sent while the row was still marked late would lose the late deduction you meant to take away; a value other than the four is refused before anything is sent, and a student Canvas refuses is named in the closing message and the log while the others go through. A cleared grade is sent as an empty =posted_grade=, which Canvas reads as no grade, listed as =92 → clear= and counted in the confirmation (=2 grade change(s) (1 clearing a grade)=); once it lands, =SCORE= and =CANVAS_SCORE= both leave the heading, as a pull shows an ungraded row. A =none= on a heading without =CANVAS_SCORE= is no change. Only the grade is cleared: a rubric assessment Canvas holds stays unless its rows say =none= too, and =none= beside =Rubric= rows that carry points on a rubric used for grading stops the push, since Canvas would derive a grade from those rows. A ruled score beside a cleared assessment (=SCORE: 0= with every row =none=) goes as described above: the rows first, the score after them. Pushed scores become the new =CANVAS_SCORE=, pushed rows the new =CANVAS_RUBRIC=, the late status as Canvas stored it the new =CANVAS_LATE_STATUS= (with =DAYS_LATE= updated from the lateness Canvas now counts), and the file is saved, so a second =S= pushes nothing. New and edited items of the =Comment Bank= section go in the same push (see [[*The Comment Bank][The Comment Bank]]), and so do the sent comments of yours you rewrote or marked =DELETE= (see [[*Editing Sent Comments][Editing Sent Comments]]). Set =org-canvas-submissions-comment-template= to nil to leave the draft heading out.
 
@@ -4561,7 +4618,7 @@ The file is named after the column, but it belongs to the column's id: the =CANV
 
 =v= shows a read-only summary table derived from the file's headings, so it reflects grades not yet pushed; =v= there returns to the file. =g= re-pulls from Canvas and rewrites the file, but everything you typed in it comes back after the re-pull: scores (a =SCORE= that differs from its =CANVAS_SCORE=, the 0 on a missing row included, and a =none= until Canvas holds no grade), late statuses, drafted comments, notes, =Rubric= scores and comments, and sent comments you rewrote or marked =DELETE= and have not pushed. Nothing is asked first. The summary table is the one place a refresh loses an edit, so there =g= still asks when it holds unpushed scores (and goes ahead, saying so, when Emacs runs in batch and cannot ask).
 
-A refresh also says what changed since the file was last written, which is the reason anyone refreshes. The echo area gets the counts — =Refreshed Journal 02: 3 new, 1 resubmitted after grading, 105 posted, 1 left the course (1 kept)= — and the log one line per student. The kinds, one per student: *new* work arrived (a first submission, a later attempt on an ungraded row, a student the file did not have); *resubmitted after grading*, a new attempt on a row that carries a score, whose heading is marked =:CONFLICT: attempt: 2 submitted after grading= so the old score is not mistaken for a grade of the new file, and =:GRADED_ATTEMPT: 1= naming the attempt the score was given on, while the log sets the two attempts side by side (when each was submitted, its files, its word count), read from Canvas's attempt history for those rows only; *scored on Canvas since the pull*, the =CANVAS_SCORE= moved (someone graded in SpeedGrader); *posted*, the grade became visible to the student; *left the course*, a student no longer in the pull. When nothing moved the line says so, naming the previous =PULLED_AT=; the first pull of a file says nothing. Once anything in the column has been downloaded, the line also names each attachment the file lists that is not on disk — =; 1 attachment(s) not on disk, D downloads them: Adams, Alice (essay.pdf, an older copy is there)= — so a resubmission's file is not graded from the earlier attempt's copy. A departed student's heading is dropped unless it holds work of yours — notes, a draft, =Rubric= rows, a typed score — in which case it stays with =:STATUS: left= and whatever it held, and no push or completion rule ever touches it; delete the heading when you are done with it.
+A refresh also says what changed since the file was last written, which is the reason anyone refreshes. The echo area gets the counts — =Refreshed Journal 02: 3 new, 1 resubmitted after grading, 105 posted, 1 left the course (1 kept)= — and the log one line per student. The kinds, one per student: *new* work arrived (a first submission, a later attempt on an ungraded row, a student the file did not have); *resubmitted after grading*, a new attempt on a row that carries a score, whose heading is marked =:CONFLICT: attempt: 2 submitted after grading= so the old score is not mistaken for a grade of the new file, and =:GRADED_ATTEMPT: 1= naming the attempt the score was given on, while the log sets the two attempts side by side (when each was submitted, its files, its word count), read from Canvas's attempt history for those rows only; *scored on Canvas since the pull*, the =CANVAS_SCORE= moved (someone graded in SpeedGrader); *posted*, the grade became visible to the student; *left the course*, a student no longer in the pull. When nothing moved the line says so, naming the previous =PULLED_AT=; the first pull of a file says nothing. Once anything in the column has been downloaded, the line also names each attachment the file lists that is not on disk — =; 1 attachment(s) not on disk, D downloads them: Adams, Alice (essay.pdf, an older copy is there)= — so a resubmission's file is not graded from the earlier attempt's copy. Whether or not anything was downloaded, the line also names each =Attachments= line that does not parse — =; 1 Attachments line(s) did not parse: Cruz, Cal (...)= — since nothing that reads the list could see it otherwise.A departed student's heading is dropped unless it holds work of yours — notes, a draft, =Rubric= rows, a typed score — in which case it stays with =:STATUS: left= and whatever it held, and no push or completion rule ever touches it; delete the heading when you are done with it.
 
 ** The Push in One Picture
 
@@ -5585,6 +5642,7 @@ read whole.  The checks that can be accepted:
 | =date-order=     | dates out of order: unlock, due, lock (a heading's or a row's)         |
 | =lock-window=    | a lock date missing, or off =org-canvas-validate-lock-after-due-hours= |
 | =require-unlock= | no unlock date where =org-canvas-validate-require-unlock= asks for one |
+| =module-reach=   | a column its module keeps locked until after, or near, its due date    |
 
 An accept covers that check on that heading only: any other finding
 on the heading still prints, and so does the same check on the
@@ -6112,6 +6170,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-gradebook-what-if=    | Recompute every total under assignment-groups.org as it stands (no API calls) |
 | =org-canvas-gradebook-student=    | Print one student's standing: every column, what is still open, the best possible total (read-only; see [[*One Student's Standing][One Student's Standing]]) |
+| =org-canvas-gradebook-hurdle-report= | Print every student against each hurdle group: now, past due as 0, at best, the average still needed and each column's bucket (read-only; see [[*Every Student Against a Hurdle][Every Student Against a Hurdle]]) |
 | =org-canvas-people-person=       | Print one person's roster entry and institution ids, from people.org (read-only; see [[*Looking One Person Up][Looking One Person Up]]) |
 | =org-canvas-batch-setup=          | Load a course directory's credentials for a batch script (Lisp and batch; see [[*Running from the Shell][Running from the Shell]]) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
@@ -6124,6 +6183,8 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found (Lisp and batch) |
+| =org-canvas-diff-at-point=        | The drift report's row for the heading at point alone, one read, writing nothing (see [[*Checking Named Headings Before a Push][Checking Named Headings Before a Push]]) |
+| =org-canvas-diff-headings=        | The same for headings named by title or Canvas id (Lisp and batch) |
 | =org-canvas-browse-at-point=      | Open the heading at point on Canvas in a browser; =C-u= for the edit page (no API calls) |
 | =org-canvas-browse-edit-at-point= | Open the heading's edit page on Canvas         |
 | =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= / =-stamp-move= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
@@ -6303,7 +6364,7 @@ Deleting items that are no longer needed.
 
 1. Navigate to the heading in the =.org= file.
 2. Run the delete-at-point command (e.g., =M-x org-canvas-delete-assignment-at-point=).
-3. This deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
+3. This reads the item and writes its JSON, as Canvas returns it, to =<time>-<feature>-<id>.json= (the feature as the drift report names its own files, =assignments= or =calendar-events=) under =org-canvas-diff-delete-snapshot-directory= (default =canvas-snapshots/= in the course directory), the directory the drift report's and delete-all's snapshots go to (#669); if the read comes back empty or the file cannot be written, nothing is deleted.  A course marked =org-canvas-read-only= is refused before the read, and a dry run reads and writes nothing.  It then deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
 4. Optionally remove the heading from the Org file, and any =modules.org= item linking to it: Canvas removes the module item with the item it points at, and nothing removes the Org side for you.
 
 A script names the headings instead of visiting them (#525):
@@ -6673,7 +6734,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
-| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent |
 | =POST_POLICY= | enum | automatic, manual |  | Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit |
 | =POST_GRADES_AT= | timestamp |  |  | When Canvas posts the grades (needs POST_COMMENTS_AT and manual posting); omit to keep Canvas's schedule |
 | =POST_COMMENTS_AT= | timestamp |  |  | When Canvas posts the comments, no later than POST_GRADES_AT; omit to keep Canvas's schedule |
@@ -6734,7 +6795,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether the discussion is visible to students (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
-| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent |
 | =DISCUSSION_TYPE= | enum | side_comment, threaded |  | side_comment, threaded |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | points, percent (for graded) |
 | =POINTS= | number |  |  | Points possible (for graded) |
@@ -6945,7 +7006,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  | The kind of quiz |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
-| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
 | =ALLOWED_ATTEMPTS= | number |  |  | Max attempts (-1 = unlimited) |

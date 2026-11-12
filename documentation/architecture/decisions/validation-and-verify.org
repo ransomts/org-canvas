@@ -45,6 +45,20 @@ Students reach a course through its modules. A column pushed from =assignments.o
 
 The live-side counterpart the issue offered (an assignment Canvas holds that no Canvas module item points to, for a column made in the web UI) is left for the drift report to take up if it bites. A web-UI column appears there as EXTRA already, and once pulled, this check covers it.
 
+* A Column Its Module Keeps Locked Is a Validate Warning (issue #675)
+
+Canvas keeps an item locked while a module holding it is locked, whatever the item's own dates say. On course 297530 an essay milestone carried =UNLOCK_AT= Aug 19 and =DUE_AT= Nov 16 23:59, and its item sat in a week module unlocking Nov 16 00:00: students had under a day, validate and the drift report were both clean, and finding it took GETs over the assignment, the module list and the module's items. Everything that answer needed is already in the Org files, so the check is offline.
+
+=org-canvas--validate-module-reach= runs from the assignment spec's structural function, per heading, rather than as a run-wide pass like #413's coverage: a heading's =VALIDATE_ACCEPT= is applied in =org-canvas--validate-entry-at-marker= to that heading's own findings, so a check that should be acceptable has to report there. To keep that from reading =modules.org= once per assignment, =org-canvas--validate-run-all-specs= binds =org-canvas--validate-module-holders= to an unread cell that the first assignment fills (=org-canvas--validate-read-module-holders=: heading key to the modules holding it, with the same link resolution and deleted-item rule as #413); outside a run each call reads afresh.
+
+- *What is a warning without asking.* A module that unlocks at or after the due date: students cannot reach the column before it is due, on any course.
+- *What is a course rule.* A short window is a matter of taste (a "do it today" item in its own day's module is fine), so =org-canvas-validate-min-reach-days= is off by default and =org-canvas-validate-reach-groups= narrows it to named assignment groups, matching the course validator's =big-assignment-short-window=. The first reachable time is the later of the column's own =UNLOCK_AT= and the latest module unlock, counted by the clock (=org-canvas--validate-wall-hours=, as #536).
+- *Prerequisites.* A module that waits on =PREREQUISITE_MODULE_IDS= opens when a student finishes another, not at a date, so under the rule it is a note: validate cannot time it.
+- *What is left out.* Unpublished columns, columns already past due (where they ran is a record), and items or modules Canvas deleted.
+- *Severity and read-only.* A warning, since a student is locked out; not push-only, since it is true of the course whatever is pushed next (#168). Check id =module-reach=, so a column meant to open the day it is due accepts it with a reason (#538).
+
+=org-canvas show= printing the module and the first reachable time, which the issue also offered, is left until it is wanted.
+
 * An Announcement Is Verified Through the Existing =verify= (issue #502)
 
 A pushed announcement had no read-back: the drift report is often told to leave announcements out (=org-canvas-diff-excluded-features=), and confirming that a reminder posted now, not on a leftover =DELAYED_POST_AT=, with comments off and its text intact took a script listing every topic. =org-canvas-announcements-verify.el=, a command file requiring diff and announcements, reads each named topic on its own through the feature registry's item URL and compares five rows: title, =PUBLISHED=, posting, =ALLOW_COMMENTS= against =locked=, and the body.

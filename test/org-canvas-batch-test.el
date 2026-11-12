@@ -318,15 +318,15 @@
             :to-equal '("--download" "Essay")))
 
   (it "refuses malformed command lines"
-    (dolist (args '(("-x" "diff") ("-C") ("frobnicate") ("diff" "extra")
+    (dolist (args '(("-x" "diff") ("-C") ("frobnicate") ("overview" "extra")
                     ("push") ("validate" "--all" "more")))
       (expect (org-canvas-batch-parse-args args)
               :to-throw 'org-canvas-batch-usage-error)))
 
   (it "names what a command takes when its arguments are wrong"
-    (expect (condition-case err (org-canvas-batch-parse-args '("diff" "x"))
+    (expect (condition-case err (org-canvas-batch-parse-args '("overview" "x"))
               (org-canvas-batch-usage-error (cadr err)))
-            :to-equal "diff takes no arguments")
+            :to-equal "overview takes no arguments")
     (expect (condition-case err (org-canvas-batch-parse-args '("push"))
               (org-canvas-batch-usage-error (cadr err)))
             :to-equal "push takes [--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE...")))
@@ -830,6 +830,21 @@
       (test-batch--quietly messages
         (expect (test-batch--run '("extend" "Lab 1" "#1")) :to-equal 2))
       (expect (car messages) :to-match "extend takes ASSIGNMENT STUDENT DUE"))))
+
+(describe "the hurdles command (issue #674)"
+  (it "takes no group or one and prints the hurdle report"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-gradebook-hurdle-report)
+                 (lambda (&rest args) (push args calls))))
+        (expect (test-batch--run '("hurdles")) :to-equal 0)
+        (expect (test-batch--run '("hurdles" "Recitation")) :to-equal 0))
+      (expect (reverse calls) :to-equal '((nil) ("Recitation")))))
+
+  (it "is a usage error with two groups"
+    (let (messages)
+      (test-batch--quietly messages
+        (expect (test-batch--run '("hurdles" "Recitation" "Labs")) :to-equal 2))
+      (expect (car messages) :to-match "hurdles takes \\[GROUP\\]"))))
 
 (describe "the student command (issue #542)"
   (it "takes exactly one student and prints their standing"

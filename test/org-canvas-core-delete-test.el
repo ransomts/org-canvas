@@ -1123,9 +1123,10 @@ The pages file is the same file, so a page spec can name its headings."
   (it "reports a missing heading or a refused delete, and runs the next"
     (test-delete-headings--with-file file test-delete-headings--assignments
       (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method url &rest _)
+                 (lambda (method url &rest _)
                    (when (string-match-p "2497506" url) (error "Forbidden"))
-                   nil)))
+                   ;; Journal 07's snapshot reads it first (#669)
+                   (when (eq method 'GET) '((id . 2497507))))))
         (let* ((org-canvas-delete-confirmed t)
                (results (org-canvas-delete-headings
                          '((assignment . "No Such")
@@ -1145,6 +1146,85 @@ The pages file is the same file, so a page spec can name its headings."
         (expect (plist-get (car results) :outcome) :to-be 'deleted)
         (expect (plist-get (car results) :id-property) :to-equal "CANVAS_URL")
         (expect-api-called 'DELETE "pages/week-1"))))
+
+  (it "snapshots the object as Canvas holds it before its DELETE (#669)"
+    (with-delete-snapshot-dir
+      (test-delete-headings--with-file _file test-delete-headings--assignments
+        (let ((order nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (push (list method url
+                                   (length (directory-files snapshot-dir nil "\\.json\\'")))
+                             order)
+                       (when (eq method 'GET)
+                         '((id . 2497506) (name . "Journal 06"))))))
+            (let* ((org-canvas-delete-confirmed t)
+                   (results (org-canvas-delete-headings
+                             '((assignment . "Journal 06")))))
+              (expect (plist-get (car results) :outcome) :to-be 'deleted)))
+          ;; Named by the registry's feature, as the drift report's
+          ;; delete names its file, not by the singular "assignment"
+          (let ((files (directory-files snapshot-dir t "[0-9]-assignments-2497506\\.json\\'")))
+            (expect (length files) :to-equal 1)
+            (expect (alist-get 'name (json-read-file (car files)))
+                    :to-equal "Journal 06"))
+          ;; The GET came first, and the file was there before the DELETE.
+          (expect (mapcar (lambda (c) (list (car c) (nth 2 c))) (reverse order))
+                  :to-equal '((GET 0) (DELETE 1)))))))
+
+  (it "names the registry's feature for a delete's snapshot, else the singular"
+    (expect (org-canvas--delete-registry-name "assignment") :to-equal "Assignments")
+    (expect (org-canvas--delete-registry-name "group-category")
+            :to-equal "Group Categories")
+    (expect (org-canvas--delete-registry-name "no-such-thing")
+            :to-equal "no-such-thing"))
+
+  (it "keeps the item when its snapshot cannot be written (#669)"
+    (with-delete-snapshot-dir
+      (test-delete-headings--with-file file test-delete-headings--assignments
+        (cl-letf (((symbol-function 'org-canvas--diff-snapshot-write)
+                   (lambda (&rest _) (error "Disk full"))))
+          (let* ((org-canvas-delete-confirmed t)
+                 (results (org-canvas-delete-headings
+                           '((assignment . "Journal 06")))))
+            (expect (plist-get (car results) :outcome) :to-be 'failed)
+            (expect (test-org-canvas-api-called-p 'DELETE "assignments/2497506")
+                    :to-be nil)
+            (expect (test-delete-headings--file-text file) :to-match "2497506"))))))
+
+  (it "keeps the item when Canvas returns nothing to snapshot (#669)"
+    (with-delete-snapshot-dir
+      (test-delete-headings--with-file _file test-delete-headings--assignments
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _)
+                     (when (eq method 'DELETE) (error "Must not delete"))
+                     nil)))
+          (let* ((org-canvas-delete-confirmed t)
+                 (results (org-canvas-delete-headings
+                           '((assignment . "Journal 06")))))
+            (expect (plist-get (car results) :outcome) :to-be 'failed)
+            (expect (directory-files snapshot-dir nil "\\.json\\'")
+                    :to-be nil))))))
+
+  (it "writes no snapshot on a read-only course (#669)"
+    (with-delete-snapshot-dir
+      (test-delete-headings--with-file _file test-delete-headings--assignments
+        (let* ((org-canvas-delete-confirmed t)
+               (org-canvas-read-only t)
+               (results (org-canvas-delete-headings
+                         '((assignment . "Journal 06")))))
+          (expect (plist-get (car results) :outcome) :to-be 'failed)
+          (expect test-org-canvas-api-calls :to-be nil)
+          (expect (directory-files snapshot-dir nil "\\.json\\'")
+                  :to-be nil)))))
+
+  (it "writes no snapshot in a dry run (#669)"
+    (with-delete-snapshot-dir
+      (test-delete-headings--with-file _file test-delete-headings--assignments
+        (let ((org-canvas--dry-run t))
+          (org-canvas-delete-headings '((assignment . "Journal 06")))
+          (expect (directory-files snapshot-dir nil "\\.json\\'")
+                  :to-be nil)))))
 
   (it "stops on a feature with no delete before anything runs"
     (test-delete-headings--with-file _file test-delete-headings--assignments

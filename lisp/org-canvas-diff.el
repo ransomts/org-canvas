@@ -562,6 +562,17 @@ accepts."
 
 ;;;; Feature Check
 
+(defun org-canvas--diff-feature-options (feature props)
+  "Return the `org-canvas--diff-options' FEATURE's entries are compared by.
+PROPS is FEATURE's property registration.  The course-wide pass and
+the check of one heading (`org-canvas-diff-headings', issue #670)
+compare by the same options, so the row a heading gets is the same."
+  (org-canvas--diff-options
+   :specs (plist-get props :properties)
+   :props props
+   :modified-field (org-canvas--feature-modified-field feature)
+   :title-field (plist-get feature :title-field)))
+
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
 Returns a plist (:name :divergences :extra :notes :acknowledged
@@ -583,11 +594,7 @@ after this one (issue #177)."
          (title-field (plist-get feature :title-field))
          (props (org-canvas--diff-find-properties name))
          (specs (plist-get props :properties))
-         (compare (org-canvas--diff-options
-                   :specs specs
-                   :props props
-                   :modified-field (org-canvas--feature-modified-field feature)
-                   :title-field (plist-get feature :title-field)))
+         (compare (org-canvas--diff-feature-options feature props))
          (skip-fn (plist-get feature :skip-fn)))
     (condition-case err
         (let* ((items (append (org-canvas-api-request-all-pages

@@ -147,6 +147,27 @@ Falls back to a capitalized feature name when no entry is registered."
   (or (plist-get (gethash feature-name org-canvas--property-registry) :label)
       (capitalize (replace-regexp-in-string "-" " " feature-name))))
 
+(defun org-canvas--pull-rewrite-file (file feature entries insert-fn)
+  "Rewrite FILE whole: a title, then INSERT-FN called on each of ENTRIES.
+The title is FEATURE's label (`org-canvas--pull-label-for'); the
+#+LAST_SYNCED header follows it and the buffer is saved.  A pull-only
+file nothing is pushed from (question banks, quiz results, rubric
+results) is written fresh each time this way (issue #667)."
+  (org-canvas--create-file file)
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (erase-buffer)
+    (insert (format "#+TITLE: %s\n\n" (org-canvas--pull-label-for feature)))
+    (mapc insert-fn entries)
+    (org-canvas--pull-write-file-header)
+    (org-canvas--save-buffer)))
+
+(defun org-canvas--pull-fetch-section-names ()
+  "Return an alist of section id to name for the course."
+  (mapcar (lambda (s) (cons (alist-get 'id s) (alist-get 'name s)))
+          (append (org-canvas-api-request-all-pages
+                   'GET (org-canvas-api-course-endpoint "sections"))
+                  nil)))
+
 (defun org-canvas--pull-read-file-header ()
   "Return the #+LAST_SYNCED timestamp from the current buffer, or nil."
   (save-excursion
@@ -403,10 +424,13 @@ and any other unknown ID is fetched once, a failure remembered."
 DESC is the link's description, or nil for a bare link.  A bare link
 to an image stays bare — pandoc writes an `<img>' as one — so the
 next push sends it back as an image, not as a link labelled with its
-file name (issue #497); any other bare link is labelled so."
+file name (issue #497); any other bare link is labelled so.  The
+extension is compared without case: Canvas keeps a camera's `.JPG'
+\(issue #679)."
   (cond
    (desc (format "[[file:%s][%s]]" relpath desc))
-   ((member (file-name-extension relpath) org-canvas--image-extensions)
+   ((member (downcase (or (file-name-extension relpath) ""))
+            org-canvas--image-extensions)
     (format "[[file:%s]]" relpath))
    (t (format "[[file:%s][%s]]" relpath (file-name-nondirectory relpath)))))
 
@@ -457,12 +481,14 @@ Org text, or the empty string when HTML is nil or empty."
 
 (defun org-canvas--html-to-org-inline-with-rewrite (html)
   "Convert HTML to a single-line Org string with Canvas file URLs rewritten.
+No image alt line is written (`org-canvas--html-image-alts-inhibit').
 Returns the empty string for nil or empty HTML."
   (if (or (null html) (string-empty-p html))
       ""
-    (string-trim
-     (replace-regexp-in-string "[\n\r]+" " "
-                               (org-canvas--html-to-org-with-rewrite html)))))
+    (let ((org-canvas--html-image-alts-inhibit t))
+      (string-trim
+       (replace-regexp-in-string "[\n\r]+" " "
+                                 (org-canvas--html-to-org-with-rewrite html))))))
 
 ;;;; Heading Upsert and Body Insertion
 
@@ -537,6 +563,29 @@ instructions (issue #309) are this text."
       (skip-chars-backward " \t\n")
       (cons (point) end))))
 
+(defun org-canvas--pull-entry-text-bounds-before (regexp)
+  "Return (START . END) of the heading's text at point up to REGEXP.
+As `org-canvas--pull-entry-text-bounds', but END is the start of the
+first line in that text REGEXP matches, when one does; a nil REGEXP
+matches none.  A quiz question's prompt ends at its answer list this
+way (issue #667)."
+  (let* ((bounds (org-canvas--pull-entry-text-bounds))
+         (start (car bounds))
+         (end (cdr bounds)))
+    (save-excursion
+      (goto-char start)
+      (cons start
+            (if (and regexp (re-search-forward regexp end t))
+                (match-beginning 0)
+              end)))))
+
+(defun org-canvas--pull-entry-text (&optional regexp)
+  "Return the heading's text at point above its children, trimmed.
+With REGEXP, the text ends at the first line it matches, as
+`org-canvas--pull-entry-text-bounds-before' finds it."
+  (let ((bounds (org-canvas--pull-entry-text-bounds-before regexp)))
+    (string-trim (buffer-substring-no-properties (car bounds) (cdr bounds)))))
+
 (defun org-canvas--pull-set-timestamp-property (pos property iso8601)
   "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.
 Does nothing if ISO8601 is nil or conversion fails."
@@ -582,6 +631,12 @@ Returns a point in the buffer visiting FILE."
              level id-prop container-title
              (format "%s %s\n" (make-string level ?*) (or title "Untitled"))))))))
 
+(defvar-local org-canvas--pull-containers-written 0
+  "How many container headings a pull has written into this buffer.
+`org-canvas--pull-idless-entry-count' leaves them out, since a
+container is a level-1 heading without an id by design and not a
+body that split an entry (issue #673).")
+
 (defun org-canvas--pull-insert-at-level (level id-prop container-title text)
   "Insert TEXT where a heading at LEVEL belongs; return its start position.
 That is the end of the file's container heading, or the end of the file
@@ -592,7 +647,8 @@ than a container."
     (goto-char (or end (point-max)))
     (unless (bolp) (insert "\n"))
     (when (and (> level 1) (not end))
-      (insert (format "* %s\n" (or container-title "Untitled"))))
+      (insert (format "* %s\n" (or container-title "Untitled")))
+      (cl-incf org-canvas--pull-containers-written))
     (prog1 (point) (insert text))))
 
 (defun org-canvas--pull-lower-shallow-heading (id-prop canvas-id level
@@ -1255,8 +1311,13 @@ generated loop stays a two-branch dispatch."
       'processed))))
 
 (defun org-canvas--pull-idless-entry-count (id-property)
-  "Count the level-1 entries of the current buffer carrying no ID-PROPERTY."
-  (let ((n 0))
+  "Count the level-1 entries of the current buffer carrying no ID-PROPERTY.
+The containers a pull wrote into the buffer are left out (issue #673):
+the check compares two counts, so a container written between them
+would otherwise read as a split entry.  The result can go below zero
+when a container was written and later removed; only the difference
+between two counts means anything."
+  (let ((n (- org-canvas--pull-containers-written)))
     (org-map-entries
      (lambda () (unless (org-entry-get (point) id-property) (cl-incf n)))
      "LEVEL=1" 'file)

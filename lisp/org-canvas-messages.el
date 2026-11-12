@@ -144,24 +144,6 @@ record."
 Bound by the commands; nil outside a run, so validation never asks
 Canvas.")
 
-(defun org-canvas--message-lookup-file (var)
-  "Return the file VAR names when VAR is bound and the file exists, else nil.
-The people, sections and groups files belong to other feature modules,
-which this one must not require; it reads them by name when they exist."
-  (let ((file (and (boundp var) (symbol-value var))))
-    (and file (file-exists-p file) file)))
-
-(defun org-canvas--message-literal-id (text)
-  "Return the digits of TEXT when it is a literal #123, else nil."
-  (and (string-match "\\`#\\([0-9]+\\)\\'" text) (match-string 1 text)))
-
-(defun org-canvas--message-resolve-id (text var property match)
-  "Resolve TEXT, a heading title or #id, to PROPERTY of that heading.
-The heading is searched in the file VAR names, under MATCH."
-  (or (org-canvas--message-literal-id text)
-      (org-canvas--heading-property-by-title
-       (org-canvas--message-lookup-file var) text property match)))
-
 (defun org-canvas--message-conversations-url ()
   "Return the conversations collection URL under the instance.
 Conversations belong to the user, not the course: `context_code' names
@@ -184,7 +166,7 @@ what did not resolve: a message to half the people named would be a
 surprise, so it is all or nothing."
   (let* ((names (split-string text ";" t "[ \t]+"))
          (ids (mapcar (lambda (n)
-                        (org-canvas--message-resolve-id
+                        (org-canvas--resolve-title-or-id
                          n 'org-canvas-people-file "USER_ID" "LEVEL=2"))
                       names))
          (unresolved (cl-loop for n in names for id in ids unless id collect n)))
@@ -198,9 +180,9 @@ surprise, so it is all or nothing."
   "Resolve TEXT, a section or group title or #id, for KIND (`section' or `group').
 Returns (:recipients (CONTEXT) :label LABEL) or (:unresolved (TEXT))."
   (let ((id (if (eq kind 'section)
-                (org-canvas--message-resolve-id
+                (org-canvas--resolve-title-or-id
                  text 'org-canvas-sections-file "CANVAS_ID" "LEVEL=1")
-              (org-canvas--message-resolve-id
+              (org-canvas--resolve-title-or-id
                text 'org-canvas-groups-file "CANVAS_ID" "LEVEL=2"))))
     (if id
         (list :recipients (list (format "%s_%s" kind id))
@@ -668,16 +650,11 @@ in as it stands.  The body ends at the next heading of any level, so a
 reply never swallows what follows it."
   (save-excursion
     (goto-char pos)
-    (let* ((meta-end (save-excursion (org-end-of-meta-data t) (point)))
-           (next (save-excursion (outline-next-heading) (point)))
-           (body-start (save-excursion
-                         (goto-char (min meta-end next))
-                         (skip-chars-backward " \t\n")
-                         (point)))
+    (let* ((bounds (org-canvas--pull-entry-text-bounds))
            (clean (and text (not (string-empty-p text))
                        (string-trim (org-canvas--org-body-neutralize-headlines text)))))
-      (delete-region body-start next)
-      (goto-char body-start)
+      (delete-region (car bounds) (cdr bounds))
+      (goto-char (car bounds))
       (insert "\n")
       (when (and clean (not (string-empty-p clean)))
         (insert clean "\n")))))

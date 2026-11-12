@@ -2514,5 +2514,50 @@ Write about chapter one.
                   :to-be nil)
           (expect warnings :to-be nil))))))
 
+(describe "org-canvas--child-remote-list (issue #667)"
+  (it "reads nothing while every child heading carries its stamp"
+    (with-temp-org-buffer "* Quiz\n** One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (search-forward "One")
+      (let ((markers (list (point-marker)))
+            (asked nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (setq asked t) [])))
+          (expect (org-canvas--child-remote-list
+                   markers "CANVAS_ID" (lambda () (setq asked 'url) "u")
+                   "[T]" "the list" "child")
+                  :to-be nil)
+          (expect asked :to-be nil)))))
+
+  (it "reads the list at the URL when a child heading has no stamp"
+    (with-temp-org-buffer "* Quiz\n** One\n"
+      (search-forward "One")
+      (let ((markers (list (point-marker)))
+            (url nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (method u &rest _) (setq url (list method u))
+                     [((id . 9))])))
+          (expect (org-canvas--child-remote-list
+                   markers "CANVAS_ITEM_ID" (lambda () "https://x/items")
+                   "[T]" "the list" "child")
+                  :to-equal [((id . 9))])
+          (expect url :to-equal '(GET "https://x/items"))))))
+
+  (it "answers `unknown' with one warning naming the list when it cannot be read"
+    (with-temp-org-buffer "* Quiz\n** One\n"
+      (search-forward "One")
+      (let ((markers (list (point-marker)))
+            (warned nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (error "Boom")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warned))))
+          (expect (org-canvas--child-remote-list
+                   markers "CANVAS_ID" (lambda () "u")
+                   "[Question]" "quiz 7's questions" "question")
+                  :to-be 'unknown)
+          (expect warned :to-equal
+                  '("[Question] Could not list quiz 7's questions (Boom); an unstamped question is created rather than adopted")))))))
+
 (provide 'org-canvas-core-push-test)
 ;;; org-canvas-core-push-test.el ends here

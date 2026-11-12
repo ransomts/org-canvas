@@ -140,14 +140,6 @@ PROPS is the feature's property registration."
                        props pom item (car rule) (cdr rule)))
                     rules)))
 
-(defun org-canvas--heading-verify-title (entry item field)
-  "Return the title row of heading ENTRY against ITEM's FIELD."
-  (let ((org (org-canvas--diff-squeeze (plist-get entry :match-title)))
-        (canvas (org-canvas--diff-squeeze
-                 (org-canvas--diff-normalize-remote (alist-get field item)))))
-    (org-canvas--announcement-verify-row
-     "title" (equal org canvas) (format "%S" org) (format "%S" (or canvas "")))))
-
 ;;;; Assignments and Files
 
 (defun org-canvas--heading-verify-assignment-rows (feature props entry item)
@@ -156,7 +148,7 @@ FEATURE and PROPS are the assignment registry entries.  ITEM was read
 with `override_assignment_dates' false, so its dates are the base ones.
 The rubric the heading links is compared too (issue #567)."
   (append
-   (list (org-canvas--heading-verify-title entry item (plist-get feature :title-field)))
+   (list (org-canvas--announcement-verify-title entry item (plist-get feature :title-field)))
    (org-canvas--heading-verify-properties
     props (plist-get entry :pom) item org-canvas--heading-verify-assignment-props)
    (org-canvas--heading-verify-assignment-rubric-rows entry item)))
@@ -347,7 +339,7 @@ FEATURE is the modules registry entry."
   "Return the rows of module heading ENTRY against Canvas ITEM.
 FEATURE and PROPS are the modules registry entries."
   (let ((pom (plist-get entry :pom)))
-    (append (list (org-canvas--heading-verify-title entry item (plist-get feature :title-field)))
+    (append (list (org-canvas--announcement-verify-title entry item (plist-get feature :title-field)))
             (org-canvas--heading-verify-properties props pom item '(("PUBLISHED" . default)))
             (org-canvas--heading-verify-items feature pom (plist-get entry :id)))))
 
@@ -424,11 +416,7 @@ An entry naming a feature this command does not verify is a
   (dolist (result results)
     (insert (format "\n* %s: %s\n\n" (plist-get result :feature)
                     (org-canvas--announcement-verify-summary result)))
-    (dolist (row (plist-get result :rows))
-      (insert (format "- %-7s %-9s :: Org %s; Canvas %s\n"
-                      (if (plist-get row :ok) "ok" "DIFFERS")
-                      (plist-get row :field) (plist-get row :org)
-                      (plist-get row :canvas))))))
+    (org-canvas--announcement-verify-insert-rows (plist-get result :rows))))
 
 (defun org-canvas--heading-verify-ask ()
   "Read a feature and the title of one of its headings, as a heading entry."

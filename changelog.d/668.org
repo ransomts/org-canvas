@@ -1,0 +1,2 @@
+* Fixed
+- #668 A New Quiz matching item keeps a =- text= line with no = sign as a distractor: the push sends it as an extra answer choice that no prompt is scored against, where before it dropped the line silently.

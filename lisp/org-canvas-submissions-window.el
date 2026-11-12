@@ -99,15 +99,10 @@ their differences whatever zone Emacs runs in."
 
 ;;;; The Course's Sections and Windows
 
-(defun org-canvas--submissions-window-file (var)
-  "Return the file VAR names when VAR is bound and the file exists, else nil."
-  (let ((file (and (boundp var) (symbol-value var))))
-    (and file (file-exists-p file) file)))
-
 (defun org-canvas--submissions-window-people-sections ()
   "Return a hash table of USER_ID to the section keys people.org lists."
   (let ((table (make-hash-table :test 'equal))
-        (file (org-canvas--submissions-window-file 'org-canvas-people-file)))
+        (file (org-canvas--bound-file 'org-canvas-people-file)))
     (when file
       (with-current-buffer (org-canvas--find-file-noselect file)
         (org-map-entries
@@ -124,7 +119,7 @@ their differences whatever zone Emacs runs in."
 A MEETS that does not parse is left out with a warning in the log;
 validation names it too."
   (let ((table (make-hash-table :test 'equal))
-        (file (org-canvas--submissions-window-file 'org-canvas-sections-file)))
+        (file (org-canvas--bound-file 'org-canvas-sections-file)))
     (when file
       (with-current-buffer (org-canvas--find-file-noselect file)
         (org-map-entries

@@ -309,6 +309,8 @@ Each column may carry a `data' entry: the rows its data endpoint answers.")
   "The parameters of each course read, latest first.")
 (defvar test-gradebook--submissions-params nil
   "The parameters the last request for the submissions carried.")
+(defvar test-gradebook--groups-params nil
+  "The parameters the last request for the assignment groups carried.")
 
 (defun test-gradebook--request (_method url &rest args)
   "Answer a single request for URL: the course or its grading standard.
@@ -345,7 +347,9 @@ ARGS are the keyword arguments; a course read's :params are recorded."
     (let ((id (string-to-number (match-string 1 url))))
       (alist-get 'data (cl-find-if (lambda (c) (eql (alist-get 'id c) id))
                                    test-gradebook--columns))))
-   ((string-match "/assignment_groups" url) test-gradebook--groups)
+   ((string-match "/assignment_groups" url)
+    (setq test-gradebook--groups-params _params)
+    test-gradebook--groups)
    ((string-match "/students/submissions" url)
     (setq test-gradebook--submissions-params _params)
     (if (eq test-gradebook--submissions 'refuse)
@@ -429,7 +433,8 @@ The gradebook and roster files live in a temp directory."
           (test-gradebook--assignments nil)
           (test-gradebook--course nil)
           (test-gradebook--course-reads nil)
-          (test-gradebook--submissions-params nil))
+          (test-gradebook--submissions-params nil)
+          (test-gradebook--groups-params nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-gradebook--api)

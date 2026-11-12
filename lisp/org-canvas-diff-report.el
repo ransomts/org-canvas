@@ -398,7 +398,7 @@ override row to its table (`org-canvas-drift'), sending nothing;
 \\[org-canvas-diff-refresh] runs the report again;
 \\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row] move
 between rows."
-  (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff))))
+  (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff-refresh))))
 
 (defconst org-canvas--diff-key-legend
   "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt   k delete   p pull   s/S stamp moved   A adopt drift   = show in full   g refresh   TAB next row\n"
@@ -637,10 +637,15 @@ as the heading's baseline (`org-canvas-diff-adopt-stamp', issue #257)."
       (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
 
 
+(defvar-local org-canvas--diff-refresh-function nil
+  "Function rerunning the check this report buffer shows, or nil.
+Nil is the course-wide report, `org-canvas-diff'; a check of named
+headings sets it to check the same headings again (issue #670).")
+
 (defun org-canvas-diff-refresh ()
-  "Run the drift report again."
+  "Run this report's check again: the whole course, or the same headings."
   (interactive)
-  (org-canvas-diff))
+  (funcall (or org-canvas--diff-refresh-function #'org-canvas-diff)))
 
 (defun org-canvas--diff-row-start (pos)
   "Return where the row run containing POS begins.

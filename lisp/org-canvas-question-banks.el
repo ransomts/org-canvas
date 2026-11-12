@@ -268,18 +268,6 @@ bank shares, are named by their place, as a quiz pull names them."
     (goto-char (point-max))
     (insert "\n")))
 
-(defun org-canvas--question-banks-write (file entries)
-  "Rewrite FILE whole with one heading per entry of ENTRIES."
-  (org-canvas--create-file file)
-  (with-current-buffer (org-canvas--find-file-noselect file)
-    (erase-buffer)
-    (insert (format "#+TITLE: %s\n\n"
-                    (org-canvas--pull-label-for "question-banks")))
-    (dolist (entry entries)
-      (org-canvas--question-banks-insert-entry entry))
-    (org-canvas--pull-write-file-header)
-    (org-canvas--save-buffer)))
-
 ;;;; Pull
 
 (defun org-canvas--question-banks-report (entries refused)
@@ -321,7 +309,8 @@ groups that draw from each bank are current."
       (if (null entries)
           (org-canvas--pull-emit-empty-file
            file (org-canvas--pull-label-for "question-banks"))
-        (org-canvas--question-banks-write file entries)
+        (org-canvas--pull-rewrite-file
+         file "question-banks" entries #'org-canvas--question-banks-insert-entry)
         (org-canvas--pull-kill-fresh-buffer file was-fresh))
       (org-canvas--question-banks-report entries (cdr collected)))))
 

@@ -318,6 +318,24 @@ KEYS are doc ids, and a symbol `hash:X' for the file hash X."
               (goto-char (point-min))
               (expect (buffer-string) :to-match "^- \\[\\[https://canvas.example.com/files/a.pdf/download\\]\\[a.pdf\\]\\]$")
               (expect (buffer-string) :to-match "^- \\[\\[file:files/HW/Beta__Bob/b.pdf\\]\\[b.pdf\\]\\]")))))
+      (it "names a listed attachment whose name holds brackets (#676)"
+        (with-org-canvas-test-config
+          (with-uploads-file test-uploads-grading
+            (let ((sub (test-uploads-submission 5003 "Cruz, Cal" "Notes [final draft].pdf" 1)))
+              (setf (alist-get 'url (aref (alist-get 'attachments sub) 0))
+                    "https://canvas.example.com/files/9/download?verifier=x")
+              (expect (refresh (list sub))
+                      :to-match (regexp-quote "Cruz, Cal (Notes [final draft].pdf)"))))))
+      (it "names an Attachments line that does not parse (#676)"
+        (with-org-canvas-test-config
+          (with-uploads-file test-uploads-grading
+            (delete-directory (expand-file-name "files" dir) t)
+            (let ((sub (test-uploads-submission 5003 "Cruz, Cal" "new.pdf" 1)))
+              (setf (alist-get 'url (aref (alist-get 'attachments sub) 0))
+                    "canvas.example.com/files/9/download")
+              (expect (refresh (list sub))
+                      :to-match
+                      (regexp-quote "; 1 Attachments line(s) did not parse: Cruz, Cal ([[canvas.example.com/files/9/download][new.pdf]])"))))))
       (it "says nothing of a column nobody downloaded"
         (with-org-canvas-test-config
           (with-uploads-file test-uploads-grading

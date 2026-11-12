@@ -142,12 +142,12 @@ directory, DIR, which BODY may use."
         (expect (plist-get entry :rubric-id) :to-equal 507)
         (expect (plist-get entry :rows) :to-be nil)))))
 
-(describe "org-canvas--rubric-results-number"
+(describe "org-canvas--table-number"
   (it "renders a mean with one decimal, a count as an integer, and a dash for nothing"
-    (expect (org-canvas--rubric-results-number 3.333) :to-equal "3.3")
-    (expect (org-canvas--rubric-results-number 4) :to-equal "4")
-    (expect (org-canvas--rubric-results-number nil) :to-equal "-")
-    (expect (org-canvas--rubric-results-number "A") :to-equal "A")))
+    (expect (org-canvas--table-number 3.333) :to-equal "3.3")
+    (expect (org-canvas--table-number 4) :to-equal "4")
+    (expect (org-canvas--table-number nil) :to-equal "-")
+    (expect (org-canvas--table-number "A") :to-equal "A")))
 
 (describe "org-canvas-pull-rubric-results"
   (it "writes one heading per rubric assignment, in order, with its properties and table"

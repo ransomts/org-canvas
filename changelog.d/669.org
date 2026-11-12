@@ -1,0 +1,2 @@
+* Fixed
+- #669 A delete at point, and =org-canvas-delete-headings= behind =scripts/org-canvas delete FEATURE:TITLE=, reads the item and writes its JSON snapshot under =org-canvas-diff-delete-snapshot-directory= before the DELETE, as the drift report's delete and a delete-all already do, its file named by the same feature theirs are (=assignments=, not =assignment=), and names the file in its message. An empty read or a snapshot that cannot be written stops the delete, a read-only course is refused before anything is read, and a dry run still reads, writes and sends nothing.

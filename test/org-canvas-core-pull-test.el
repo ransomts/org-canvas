@@ -153,6 +153,9 @@
   (it "keeps a bare image link bare (issue #497)"
     (expect (org-canvas--rewrite-file-link "content/a.png" nil)
             :to-equal "[[file:content/a.png]]"))
+  (it "keeps a bare link to an upper-case image extension bare (issue #679)"
+    (expect (org-canvas--rewrite-file-link "content/x.JPG" nil)
+            :to-equal "[[file:content/x.JPG]]"))
   (it "labels a bare link to anything else with its file name"
     (expect (org-canvas--rewrite-file-link "content/r.pdf" nil)
             :to-equal "[[file:content/r.pdf][r.pdf]]")
@@ -257,6 +260,89 @@
                        "[[https://x.com/courses/1/files/30061566/preview]]")))
           (expect result :to-match
                   "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]"))))))
+
+(describe "Pulled image alt text (issue #679)"
+  ;; pandoc's own output for each <img>: a bare link, the alt gone.
+  (let ((pandoc-out
+         (concat "Intro\n\n"
+                 "[[https://x.com/courses/1/files/11/preview]]\n\n"
+                 "[[https://x.com/courses/1/files/12/preview]]"))
+        (html (concat "<p>Intro</p>"
+                      "<p><img src=\"https://x.com/courses/1/files/11/preview\""
+                      " alt=\"A screenshot of the grades page\"></p>"
+                      "<p><img src=\"https://x.com/courses/1/files/12/preview\""
+                      " alt=\"\"></p>")))
+    (it "writes Canvas's alt above each downloaded image, the link bare"
+      (let ((org-canvas--file-id-cache (make-hash-table :test 'equal)))
+        (puthash "11" "content/org-canvas-images/grades.png"
+                 org-canvas--file-id-cache)
+        (puthash "12" "content/org-canvas-images/rule.JPG"
+                 org-canvas--file-id-cache)
+        (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+                  ((symbol-function 'call-process-region)
+                   (lambda (start end &rest _)
+                     (delete-region start end)
+                     (insert pandoc-out)
+                     0)))
+          (expect (org-canvas--html-to-org-with-rewrite html)
+                  :to-equal
+                  (concat
+                   "Intro\n\n"
+                   "#+attr_html: :alt A screenshot of the grades page\n"
+                   "[[file:content/org-canvas-images/grades.png]]\n\n"
+                   "#+attr_html: :alt \"\"\n"
+                   "[[file:content/org-canvas-images/rule.JPG]]")))))))
+
+(describe "Image alt text round trip wherever the image sits (issue #679)"
+  ;; Real pandoc 3 output for the HTML below: every <img> a bare link.
+  (let ((pandoc-out
+         (concat "See [[https://x.com/courses/1/files/11/preview]] here and"
+                 " [[https://x.com/courses/1/files/12/preview]]\n\n"
+                 "- [[https://x.com/courses/1/files/11/preview]]\n"
+                 "- text [[https://x.com/courses/1/files/12/preview]]\n\n"
+                 "| [[https://x.com/courses/1/files/11/preview]] | x |"))
+        (html (concat
+               "<p>See <img src=\"https://x.com/courses/1/files/11/preview\""
+               " alt=\"A screenshot of the grades page\"> here and"
+               " <img src=\"https://x.com/courses/1/files/12/preview\" alt=\"\"></p>"
+               "<ul><li><img src=\"https://x.com/courses/1/files/11/preview\""
+               " alt=\"Grades again\"></li>"
+               "<li>text <img src=\"https://x.com/courses/1/files/12/preview\""
+               " alt=\"A rule\"></li></ul>"
+               "<table><tr><td><img src=\"https://x.com/courses/1/files/11/preview\""
+               " alt=\"In a cell\"></td><td>x</td></tr></table>")))
+    (it "sends back Canvas's alt for an image in text, a list or a table"
+      (let ((org-canvas--file-id-cache (make-hash-table :test 'equal))
+            (org-canvas--image-cache (make-hash-table :test 'equal)))
+        (puthash "11" "content/org-canvas-images/grades.png"
+                 org-canvas--file-id-cache)
+        (puthash "12" "content/org-canvas-images/rule.JPG"
+                 org-canvas--file-id-cache)
+        (puthash "grades.png" "https://x.com/courses/1/files/11/preview"
+                 org-canvas--image-cache)
+        (puthash "rule.JPG" "https://x.com/courses/1/files/12/preview"
+                 org-canvas--image-cache)
+        (let ((org (cl-letf (((symbol-function 'executable-find)
+                              (lambda (_) "pandoc"))
+                             ((symbol-function 'call-process-region)
+                              (lambda (start end &rest _)
+                                (delete-region start end)
+                                (insert pandoc-out)
+                                0)))
+                     (org-canvas--html-to-org-with-rewrite html))))
+          (expect org :not :to-match "^\\(See\\|- \\||\\).*\n#\\+attr")
+          (with-temp-buffer
+            (insert "* Page\n" org "\n")
+            (org-mode)
+            (goto-char (point-min))
+            (let ((out (org-canvas--export-subtree-body-to-html)))
+              (dolist (alt '("files/11/preview\" alt=\"A screenshot of the grades page\""
+                             "files/12/preview\" alt=\"\""
+                             "<li><img src=\"[^\"]+/files/11/preview\" alt=\"Grades again\""
+                             "<li>text <img src=\"[^\"]+/files/12/preview\" alt=\"A rule\""
+                             "<td[^>]*><img src=\"[^\"]+/files/11/preview\" alt=\"In a cell\""))
+                (expect out :to-match alt))
+              (expect out :not :to-match "alt=\"\\(grades\\.png\\|rule\\.JPG\\)\""))))))))
 
 (describe "org-canvas--html-to-org-inline-with-rewrite"
   (it "returns empty string for nil"
@@ -2088,7 +2174,63 @@ Keep these.
                   (goto-char (point-min))
                   (expect (how-many "^:CANVAS_ID:") :to-be 2))))
           (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
-          (delete-directory dir t))))))
+          (delete-directory dir t))))
+
+    (defun test-pull-groups-summary-errors (body)
+      "Pull two groups into an assignment-groups.org holding BODY.
+Return the error records the pull summary holds afterwards."
+      (let* ((dir (make-temp-file "upsert-673" t))
+             (file (expand-file-name "assignment-groups.org" dir))
+             (org-canvas-assignment-groups-file file)
+             (remote (vector '((id . 1) (name . "Labs") (group_weight . 40))
+                             '((id . 2) (name . "Quizzes")
+                               (group_weight . 60)))))
+        (org-canvas--pull-summary-reset)
+        (unwind-protect
+            (progn
+              (with-temp-file file (insert body))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _) (append remote nil)))
+                        ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                         #'ignore)
+                        ((symbol-function 'org-canvas--log-warning) #'ignore))
+                (org-canvas-pull-assignment-groups))
+              (org-canvas--pull-summary-records-of-kind 'error))
+          (org-canvas--pull-summary-reset)
+          (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
+          (delete-directory dir t))))
+
+    (it "reports no split for the container it writes (issue #673)"
+      (expect (test-pull-groups-summary-errors
+               (concat "* Labs\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                       "* Quizzes\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"))
+              :to-equal nil))
+
+    (it "reports no split for the container of a file without one (#673)"
+      (expect (test-pull-groups-summary-errors "#+TITLE: Groups\n")
+              :to-equal nil))))
+
+(describe "org-canvas--pull-idless-entry-count with a written container"
+  (it "still counts a heading that split an entry (issue #673)"
+    (let ((warnings nil))
+      (org-canvas--pull-summary-reset)
+      (unwind-protect
+          (with-temp-org-buffer "#+TITLE: Groups\n"
+            (let ((before (org-canvas--pull-idless-entry-count "CANVAS_ID")))
+              (org-canvas--pull-insert-at-level
+               2 "CANVAS_ID" "Assignment Groups"
+               "** Labs\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n")
+              (goto-char (point-max))
+              (insert "* Phantom\nlost text\n")
+              (cl-letf (((symbol-function 'org-canvas--log-warning)
+                         (lambda (_logger fmt &rest args)
+                           (push (apply #'format fmt args) warnings))))
+                (org-canvas--pull-check-entry-count
+                 "assignment-groups" "/x/assignment-groups.org" "CANVAS_ID"
+                 before 1))
+              (expect (length warnings) :to-equal 1)
+              (expect (car warnings) :to-match "1 level-1 entry without")))
+        (org-canvas--pull-summary-reset)))))
 
 (describe "org-canvas-define-pull"
   (it "signals error when :file is missing"
@@ -2889,6 +3031,27 @@ single-item URLs read."
                              (list "Not allowed (HTTP 404)")))))
           (expect (org-canvas--pull-item-read feature 5)
                   :to-throw 'org-canvas-permission-error))))))
+
+(describe "org-canvas--pull-entry-text (issue #667)"
+  (it "returns the text above the first child, trimmed"
+    (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n\nIntro text.\n\n** Child\nNot this.\n"
+      (search-forward "Quiz")
+      (expect (org-canvas--pull-entry-text) :to-equal "Intro text.")))
+
+  (it "stops at the first line REGEXP matches"
+    (with-temp-org-buffer "* Question\n\nWhat is it?\n\n- [X] This\n- [ ] That\n"
+      (search-forward "Question")
+      (expect (org-canvas--pull-entry-text "^[ \t]*[-*+] ") :to-equal "What is it?")
+      (expect (org-canvas--pull-entry-text "^NOPE") :to-match "- \\[ \\] That"))))
+
+(describe "org-canvas--pull-fetch-section-names (issue #667)"
+  (it "maps each section id to its name"
+    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+               (lambda (_method url &rest _)
+                 (expect url :to-match "/sections\\'")
+                 [((id . 1) (name . "A")) ((id . 2) (name . "B"))])))
+      (expect (org-canvas--pull-fetch-section-names)
+              :to-equal '((1 . "A") (2 . "B"))))))
 
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here

@@ -384,11 +384,11 @@ Return non-nil when the recomputed total differs from Canvas's."
     (insert (format "| %s |%s %s | %s |\n"
                     (org-canvas--gradebook-cell-text (plist-get student :name))
                     (mapconcat (lambda (pg)
-                                 (format " %s |" (org-canvas--gradebook-number
+                                 (format " %s |" (org-canvas--table-number
                                                   (org-canvas--gradebook-percent (cdr pg)))))
                                per-group "")
-                    (org-canvas--gradebook-number computed)
-                    (org-canvas--gradebook-number canvas)))
+                    (org-canvas--table-number computed)
+                    (org-canvas--table-number canvas)))
     (org-canvas--gradebook-differs-p computed canvas)))
 
 (defun org-canvas--gradebook-insert-groups (scores)

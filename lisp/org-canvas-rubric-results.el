@@ -164,13 +164,6 @@ Keys: :id, :name, :rubric-id, :submissions, :assessed and :rows, one
 
 ;;;; Rendering
 
-(defun org-canvas--rubric-results-number (value)
-  "Render VALUE for a table cell: one decimal for a mean, - when absent."
-  (cond ((null value) "-")
-        ((integerp value) (format "%d" value))
-        ((numberp value) (format "%.1f" value))
-        (t (format "%s" value))))
-
 (defun org-canvas--rubric-results-assignment-heading (assignment-id)
   "Return the assignments.org heading carrying ASSIGNMENT-ID, or nil.
 Nil as well when `org-canvas-assignments-file' is unset or missing."
@@ -197,8 +190,8 @@ A link to its assignments.org heading, else the name."
       (insert (format "| %s | %d | %s | %s | %s |\n"
                       (replace-regexp-in-string "[|\n]" " " (format "%s" (plist-get row :description)))
                       (plist-get row :assessed)
-                      (org-canvas--rubric-results-number (plist-get row :mean))
-                      (org-canvas--rubric-results-number (plist-get row :out-of))
+                      (org-canvas--table-number (plist-get row :mean))
+                      (org-canvas--table-number (plist-get row :out-of))
                       (plist-get row :ratings))))
     (save-excursion
       (goto-char start)
@@ -239,14 +232,8 @@ file out of a course repository all the same."
     (if (null assignments)
         (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "rubric-results"))
       (let ((entries (mapcar #'org-canvas--rubric-results-entry assignments)))
-        (org-canvas--create-file file)
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (erase-buffer)
-          (insert (format "#+TITLE: %s\n\n" (org-canvas--pull-label-for "rubric-results")))
-          (dolist (entry entries)
-            (org-canvas--rubric-results-insert-entry entry))
-          (org-canvas--pull-write-file-header)
-          (org-canvas--save-buffer))
+        (org-canvas--pull-rewrite-file
+         file "rubric-results" entries #'org-canvas--rubric-results-insert-entry)
         (org-canvas--pull-kill-fresh-buffer file was-fresh)
         (let ((assessed (cl-count-if (lambda (e) (> (plist-get e :assessed) 0)) entries)))
           (org-canvas--log-info org-canvas--logger

@@ -80,22 +80,15 @@ The result is what `org-table-to-lisp' gives; nil without a table."
       (when (looking-at-p org-table-line-regexp)
         (org-table-to-lisp)))))
 
-(defun org-canvas--accommodation-people-file ()
-  "Return people.org when the roster module is loaded and the file exists."
-  (let ((file (and (boundp 'org-canvas-people-file) org-canvas-people-file)))
-    (and file (file-exists-p file) file)))
-
 (defun org-canvas--accommodation-resolve-student (text)
   "Resolve TEXT, a person's heading title or #id, to a USER_ID string, or nil."
-  (if (string-match "\\`#\\([0-9]+\\)\\'" text)
-      (match-string 1 text)
-    (org-canvas--heading-property-by-title
-     (org-canvas--accommodation-people-file) text "USER_ID" "LEVEL=2")))
+  (org-canvas--resolve-title-or-id
+   text 'org-canvas-people-file "USER_ID" "LEVEL=2"))
 
 (defun org-canvas--accommodation-student-cell (user-id)
   "Render USER-ID as the person's heading title in people.org, or #id."
   (or (org-canvas--heading-title-by-property
-       (org-canvas--accommodation-people-file) "USER_ID" user-id "LEVEL=2")
+       (org-canvas--bound-file 'org-canvas-people-file) "USER_ID" user-id "LEVEL=2")
       (format "#%s" user-id)))
 
 (defun org-canvas--accommodation-columns (header)
@@ -103,14 +96,8 @@ The result is what `org-table-to-lisp' gives; nil without a table."
 Each column is found by its title (Extra attempts, Extra time,
 Unlocked, case aside); an unnamed one is absent (nil).  A header naming
 none falls back to positions 1, 2 and 3."
-  (let* ((titles (mapcar (lambda (cell) (downcase (string-trim cell))) header))
-         (specs '(("extra attempts" . 1) ("extra time" . 2) ("unlocked" . 3)))
-         (named (cl-some (lambda (spec) (member (car spec) titles)) specs)))
-    (mapcar (lambda (spec)
-              (if named
-                  (cl-position (car spec) titles :test #'string=)
-                (cdr spec)))
-            specs)))
+  (org-canvas--table-columns-by-title
+   header '(("extra attempts" . 1) ("extra time" . 2) ("unlocked" . 3))))
 
 (defun org-canvas--accommodation-number-cell (cell)
   "Return CELL as a non-negative integer; blank is 0.
