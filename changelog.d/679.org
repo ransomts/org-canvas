@@ -1,0 +1,3 @@
+* Fixed
+- #679 A pull writes each image's Canvas alt text back above it as =#+attr_html: :alt ...= (=:alt ""= for a decorative image), so a pull followed by a push no longer replaces written descriptions with file names.  An image that sits inside running text, a list or a table still comes back without it.
+- #679 A pulled image whose name ends in an upper-case extension such as =.JPG= stays a bare link, so it pushes back as an image rather than a link.

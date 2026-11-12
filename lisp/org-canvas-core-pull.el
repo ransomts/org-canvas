@@ -403,10 +403,13 @@ and any other unknown ID is fetched once, a failure remembered."
 DESC is the link's description, or nil for a bare link.  A bare link
 to an image stays bare — pandoc writes an `<img>' as one — so the
 next push sends it back as an image, not as a link labelled with its
-file name (issue #497); any other bare link is labelled so."
+file name (issue #497); any other bare link is labelled so.  The
+extension is compared without case: Canvas keeps a camera's `.JPG'
+\(issue #679)."
   (cond
    (desc (format "[[file:%s][%s]]" relpath desc))
-   ((member (file-name-extension relpath) org-canvas--image-extensions)
+   ((member (downcase (or (file-name-extension relpath) ""))
+            org-canvas--image-extensions)
     (format "[[file:%s]]" relpath))
    (t (format "[[file:%s][%s]]" relpath (file-name-nondirectory relpath)))))
 

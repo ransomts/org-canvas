@@ -917,7 +917,7 @@ A bare image link becomes an =<img>= in the pushed body, whose =src= is the imag
 [[file:images/scores.png]]
 #+end_src
 
-An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file, so a pull followed by a push sends it back as an image; pandoc drops an =<img>='s alt text, though, so a pull does not bring =#+ATTR_HTML= back.
+An image with no =:alt= gets its file name, as a local HTML export of the same Org would.  A /described/ image link, =[[file:scores.png][the scores chart]]=, stays a link to the image, as Org exports it.  A pull keeps a pulled =<img>= a bare link to the local file (=.JPG= as much as =.png=), so a pull followed by a push sends it back as an image, and it writes Canvas's alt text back above it as =#+attr_html: :alt ...=, =:alt ""= for a decorative image.  Only an image that begins its own paragraph has a line to carry it: one inside running text, a list or a table comes back without its alt, and the next push gives it its file name.
 
 *** Links to Other Local Files
 
