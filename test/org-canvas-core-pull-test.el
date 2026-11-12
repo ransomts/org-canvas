@@ -2890,5 +2890,26 @@ single-item URLs read."
           (expect (org-canvas--pull-item-read feature 5)
                   :to-throw 'org-canvas-permission-error))))))
 
+(describe "org-canvas--pull-entry-text (issue #667)"
+  (it "returns the text above the first child, trimmed"
+    (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n\nIntro text.\n\n** Child\nNot this.\n"
+      (search-forward "Quiz")
+      (expect (org-canvas--pull-entry-text) :to-equal "Intro text.")))
+
+  (it "stops at the first line REGEXP matches"
+    (with-temp-org-buffer "* Question\n\nWhat is it?\n\n- [X] This\n- [ ] That\n"
+      (search-forward "Question")
+      (expect (org-canvas--pull-entry-text "^[ \t]*[-*+] ") :to-equal "What is it?")
+      (expect (org-canvas--pull-entry-text "^NOPE") :to-match "- \\[ \\] That"))))
+
+(describe "org-canvas--pull-fetch-section-names (issue #667)"
+  (it "maps each section id to its name"
+    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+               (lambda (_method url &rest _)
+                 (expect url :to-match "/sections\\'")
+                 [((id . 1) (name . "A")) ((id . 2) (name . "B"))])))
+      (expect (org-canvas--pull-fetch-section-names)
+              :to-equal '((1 . "A") (2 . "B"))))))
+
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here

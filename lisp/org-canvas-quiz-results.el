@@ -316,14 +316,6 @@ and :rows nil.  :survey is non-nil for a survey, graded or not."
 
 ;;;; Rendering
 
-(defun org-canvas--quiz-results-number (value &optional decimals)
-  "Render VALUE for a table cell with DECIMALS places, - when absent.
-DECIMALS defaults to one; an integer keeps none."
-  (cond ((null value) "-")
-        ((integerp value) (format "%d" value))
-        ((numberp value) (format (format "%%.%df" (or decimals 1)) value))
-        (t (format "%s" value))))
-
 (defun org-canvas--quiz-results-quiz-heading (quiz-id)
   "Return the quizzes.org heading carrying QUIZ-ID, or nil.
 Nil as well when `org-canvas-quizzes-file' is unset or missing."
@@ -343,15 +335,15 @@ Nil as well when `org-canvas-quizzes-file' is unset or missing."
 (defun org-canvas--quiz-results-row-cells (row survey)
   "Return ROW's table cells as strings, without the scoring ones for a SURVEY."
   (append
-   (list (org-canvas--quiz-results-number (plist-get row :position))
+   (list (org-canvas--table-number (plist-get row :position))
          (plist-get row :text)
          (plist-get row :type)
          (format "%d" (plist-get row :answered)))
    (unless survey
      (list (let ((correct (plist-get row :correct)))
              (if correct (format "%d%%" (round correct)) "-"))
-           (org-canvas--quiz-results-number (plist-get row :difficulty) 2)
-           (org-canvas--quiz-results-number (plist-get row :discrimination) 2)))
+           (org-canvas--table-number (plist-get row :difficulty) 2)
+           (org-canvas--table-number (plist-get row :discrimination) 2)))
    (list (plist-get row :responses))))
 
 (defun org-canvas--quiz-results-insert-table (rows &optional survey)
@@ -380,7 +372,7 @@ and a graded one gives every taker full marks."
   (let ((score (unless (plist-get entry :survey)
                  (mapcar (lambda (prop)
                            (cons (car prop)
-                                 (org-canvas--quiz-results-number
+                                 (org-canvas--table-number
                                   (plist-get entry (cdr prop)))))
                          '(("MEAN" . :mean) ("HIGH" . :high)
                            ("LOW" . :low) ("STDEV" . :stdev))))))
@@ -442,23 +434,12 @@ but keep the file out of a course repository all the same."
            file (org-canvas--pull-label-for "quiz-results"))
           (org-canvas--quiz-results-report nil skipped))
       (let ((entries (org-canvas--quiz-results-entries quizzes)))
-        (org-canvas--quiz-results-write file entries)
+        (org-canvas--pull-rewrite-file
+         file "quiz-results" entries #'org-canvas--quiz-results-insert-entry)
         (org-canvas--pull-kill-fresh-buffer file was-fresh)
         (dotimes (_ (- (length quizzes) (length entries)))
           (setq skipped (org-canvas--quiz-results-count-skip 'refused skipped)))
         (org-canvas--quiz-results-report entries skipped)))))
-
-(defun org-canvas--quiz-results-write (file entries)
-  "Rewrite FILE whole with one heading per entry of ENTRIES."
-  (org-canvas--create-file file)
-  (with-current-buffer (org-canvas--find-file-noselect file)
-    (erase-buffer)
-    (insert (format "#+TITLE: %s\n\n"
-                    (org-canvas--pull-label-for "quiz-results")))
-    (dolist (entry entries)
-      (org-canvas--quiz-results-insert-entry entry))
-    (org-canvas--pull-write-file-header)
-    (org-canvas--save-buffer)))
 
 (defun org-canvas--quiz-results-skip-note (skipped)
   "Describe SKIPPED, an alist of reason to count, for the closing line.

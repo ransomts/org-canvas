@@ -248,30 +248,15 @@ Returns the CANVAS_ID string, or nil if the link cannot be resolved."
 (defconst org-canvas--override-students-regexp "\\`Students?:[ \t]*\\(.+?\\)[ \t]*\\'"
   "Match the first cell of a student override row; group 1 lists the people.")
 
-(defun org-canvas--override-lookup-file (var)
-  "Return the file VAR names when VAR is bound and the file exists, else nil.
-The groups and people files belong to other feature modules, which
-sections.el must not require; it reads them by name when they exist."
-  (let ((file (and (boundp var) (symbol-value var))))
-    (and file (file-exists-p file) file)))
-
-(defun org-canvas--override-literal-id (text)
-  "Return the digits of TEXT when it is a literal #123, else nil."
-  (and (string-match "\\`#\\([0-9]+\\)\\'" text) (match-string 1 text)))
-
 (defun org-canvas--override-resolve-group-id (text)
   "Resolve TEXT, a group heading title or #id, to a group's CANVAS_ID string."
-  (or (org-canvas--override-literal-id text)
-      (org-canvas--heading-property-by-title
-       (org-canvas--override-lookup-file 'org-canvas-groups-file)
-       text "CANVAS_ID" "LEVEL=2")))
+  (org-canvas--resolve-title-or-id
+   text 'org-canvas-groups-file "CANVAS_ID" "LEVEL=2"))
 
 (defun org-canvas--override-resolve-student-id (text)
   "Resolve TEXT, a person's heading title or #id, to a USER_ID string."
-  (or (org-canvas--override-literal-id text)
-      (org-canvas--heading-property-by-title
-       (org-canvas--override-lookup-file 'org-canvas-people-file)
-       text "USER_ID" "LEVEL=2")))
+  (org-canvas--resolve-title-or-id
+   text 'org-canvas-people-file "USER_ID" "LEVEL=2"))
 
 (defun org-canvas--override-parse-students (text)
   "Parse TEXT, names separated by `;', into a list of USER_ID strings.
@@ -396,13 +381,13 @@ that say nothing."
   "Render GROUP-ID as a `Group: <title>' cell, `Group: #id' when unresolved."
   (format "Group: %s"
           (or (org-canvas--heading-title-by-property
-               (org-canvas--override-lookup-file 'org-canvas-groups-file)
+               (org-canvas--bound-file 'org-canvas-groups-file)
                "CANVAS_ID" group-id "LEVEL=2")
               (format "#%s" group-id))))
 
 (defun org-canvas--override-students-cell (student-ids)
   "Render STUDENT-IDS as a `Students: <name>; <name>' cell, `#id' when unresolved."
-  (let ((file (org-canvas--override-lookup-file 'org-canvas-people-file)))
+  (let ((file (org-canvas--bound-file 'org-canvas-people-file)))
     (format "Students: %s"
             (mapconcat (lambda (id)
                          (or (org-canvas--heading-title-by-property
@@ -597,14 +582,8 @@ HEADER is the table's first row.  When it names any of the three
 title and an unnamed one is absent (nil): a pulled table drops a
 column no row fills, so position alone would read a lock date as a
 due date.  A header naming none falls back to positions 1, 2 and 3."
-  (let* ((titles (mapcar (lambda (cell) (downcase (string-trim cell))) header))
-         (specs '(("due at" . 1) ("unlock at" . 2) ("lock at" . 3)))
-         (named (cl-some (lambda (spec) (member (car spec) titles)) specs)))
-    (mapcar (lambda (spec)
-              (if named
-                  (cl-position (car spec) titles :test #'string=)
-                (cdr spec)))
-            specs)))
+  (org-canvas--table-columns-by-title
+   header '(("due at" . 1) ("unlock at" . 2) ("lock at" . 3))))
 
 (defun org-canvas--override-parse-table (table source-dir)
   "Parse an overrides TABLE into a list of override plists.
@@ -1335,7 +1314,7 @@ and two Org timestamp strings, Unlock At and Lock At (Due At when the
 row has no Lock At).  The table is the one under the level-1 heading
 of `org-canvas-assignments-file' whose CANVAS_ID is ASSIGNMENT-ID;
 nil when there is no such heading or table."
-  (let ((file (org-canvas--override-lookup-file 'org-canvas-assignments-file)))
+  (let ((file (org-canvas--bound-file 'org-canvas-assignments-file)))
     (when file
       (with-current-buffer (org-canvas--find-file-noselect file)
         (save-excursion
@@ -1372,7 +1351,7 @@ locks at the due time itself."
 In file order: the level-2 headings whose ROLE is student and which
 carry a USER_ID.  A missing people.org, or one naming no student, is
 a `user-error' that says to pull the roster."
-  (let* ((file (org-canvas--override-lookup-file 'org-canvas-people-file))
+  (let* ((file (org-canvas--bound-file 'org-canvas-people-file))
          (students
           (and file
                (with-current-buffer (org-canvas--find-file-noselect file)
@@ -1389,7 +1368,7 @@ a `user-error' that says to pull the roster."
 
 (defun org-canvas--extend-find-student (students name)
   "Return the entry of STUDENTS that NAME, a heading title or #USER_ID, names."
-  (let ((id (org-canvas--override-literal-id name)))
+  (let ((id (org-canvas--literal-id name)))
     (or (cl-find-if (lambda (s) (if id (equal (nth 1 s) id) (equal (car s) name)))
                     students)
         (user-error "No student %s in people.org" name))))
@@ -1698,9 +1677,9 @@ STUDENT a people.org title, or #USER_ID.  DUE and LOCK are dates as
 `org-read-date' reads them (\"2026-10-22 16:00\"); LOCK nil is DUE
 plus `org-canvas-extend-student-late-hours'.  Otherwise as
 `org-canvas-extend-student'; return what it returns."
-  (let* ((file (or (org-canvas--override-lookup-file 'org-canvas-assignments-file)
+  (let* ((file (or (org-canvas--bound-file 'org-canvas-assignments-file)
                    (user-error "No assignments.org in this course")))
-         (id (org-canvas--override-literal-id assignment))
+         (id (org-canvas--literal-id assignment))
          (person (org-canvas--extend-find-student (org-canvas--extend-students) student))
          (due-time (org-read-date t t due))
          (lock-time (if lock (org-read-date t t lock)

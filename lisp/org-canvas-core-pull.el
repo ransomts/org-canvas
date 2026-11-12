@@ -147,6 +147,27 @@ Falls back to a capitalized feature name when no entry is registered."
   (or (plist-get (gethash feature-name org-canvas--property-registry) :label)
       (capitalize (replace-regexp-in-string "-" " " feature-name))))
 
+(defun org-canvas--pull-rewrite-file (file feature entries insert-fn)
+  "Rewrite FILE whole: a title, then INSERT-FN called on each of ENTRIES.
+The title is FEATURE's label (`org-canvas--pull-label-for'); the
+#+LAST_SYNCED header follows it and the buffer is saved.  A pull-only
+file nothing is pushed from (question banks, quiz results, rubric
+results) is written fresh each time this way (issue #667)."
+  (org-canvas--create-file file)
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (erase-buffer)
+    (insert (format "#+TITLE: %s\n\n" (org-canvas--pull-label-for feature)))
+    (mapc insert-fn entries)
+    (org-canvas--pull-write-file-header)
+    (org-canvas--save-buffer)))
+
+(defun org-canvas--pull-fetch-section-names ()
+  "Return an alist of section id to name for the course."
+  (mapcar (lambda (s) (cons (alist-get 'id s) (alist-get 'name s)))
+          (append (org-canvas-api-request-all-pages
+                   'GET (org-canvas-api-course-endpoint "sections"))
+                  nil)))
+
 (defun org-canvas--pull-read-file-header ()
   "Return the #+LAST_SYNCED timestamp from the current buffer, or nil."
   (save-excursion
@@ -536,6 +557,29 @@ instructions (issue #309) are this text."
       (goto-char (min meta-end end))
       (skip-chars-backward " \t\n")
       (cons (point) end))))
+
+(defun org-canvas--pull-entry-text-bounds-before (regexp)
+  "Return (START . END) of the heading's text at point up to REGEXP.
+As `org-canvas--pull-entry-text-bounds', but END is the start of the
+first line in that text REGEXP matches, when one does; a nil REGEXP
+matches none.  A quiz question's prompt ends at its answer list this
+way (issue #667)."
+  (let* ((bounds (org-canvas--pull-entry-text-bounds))
+         (start (car bounds))
+         (end (cdr bounds)))
+    (save-excursion
+      (goto-char start)
+      (cons start
+            (if (and regexp (re-search-forward regexp end t))
+                (match-beginning 0)
+              end)))))
+
+(defun org-canvas--pull-entry-text (&optional regexp)
+  "Return the heading's text at point above its children, trimmed.
+With REGEXP, the text ends at the first line it matches, as
+`org-canvas--pull-entry-text-bounds-before' finds it."
+  (let ((bounds (org-canvas--pull-entry-text-bounds-before regexp)))
+    (string-trim (buffer-substring-no-properties (car bounds) (cdr bounds)))))
 
 (defun org-canvas--pull-set-timestamp-property (pos property iso8601)
   "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.

@@ -264,13 +264,6 @@ read-parameter contract test (issue #273).")
            org-canvas--gradebook-enrollment-params)
           nil))
 
-(defun org-canvas--gradebook-fetch-section-names ()
-  "Return an alist of section id to name for the course."
-  (mapcar (lambda (s) (cons (alist-get 'id s) (alist-get 'name s)))
-          (append (org-canvas-api-request-all-pages
-                   'GET (org-canvas-api-course-endpoint "sections"))
-                  nil)))
-
 (defun org-canvas--gradebook-fetch-summaries ()
   "Return an alist of user id to tardiness breakdown, or the symbol `refused'.
 The analytics endpoint is permission gated; a refusal is logged and
@@ -408,13 +401,6 @@ case :missing and :late are nil."
 
 ;;;; Rendering
 
-(defun org-canvas--gradebook-number (value)
-  "Render VALUE for a table cell: one decimal for a score, - when absent."
-  (cond ((null value) "-")
-        ((integerp value) (format "%d" value))
-        ((numberp value) (format "%.1f" value))
-        (t (format "%s" value))))
-
 (defun org-canvas--gradebook-roster-heading (user-id)
   "Return the people.org heading carrying USER-ID, or nil.
 Nil as well when `org-canvas-people-file' is unset or missing."
@@ -476,11 +462,11 @@ table column each after Last activity."
     (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s |%s\n"
                     (org-canvas--gradebook-student-cell row)
                     (org-canvas--gradebook-sections-cell row names)
-                    (org-canvas--gradebook-number (plist-get row :current))
-                    (org-canvas--gradebook-number (plist-get row :final))
-                    (org-canvas--gradebook-number (plist-get row :override))
-                    (if (eq summaries 'refused) "" (org-canvas--gradebook-number (plist-get row :missing)))
-                    (if (eq summaries 'refused) "" (org-canvas--gradebook-number (plist-get row :late)))
+                    (org-canvas--table-number (plist-get row :current))
+                    (org-canvas--table-number (plist-get row :final))
+                    (org-canvas--table-number (plist-get row :override))
+                    (if (eq summaries 'refused) "" (org-canvas--table-number (plist-get row :missing)))
+                    (if (eq summaries 'refused) "" (org-canvas--table-number (plist-get row :late)))
                     (or (org-canvas--iso8601-to-org-timestamp (plist-get row :last-activity)) "-")
                     (org-canvas--gradebook-custom-cells row columns))))
   (when (eq summaries 'refused)
@@ -501,12 +487,12 @@ SUMMARIES is `refused' when the Missing column is unavailable."
            (members (cl-remove-if-not (lambda (r) (memq sid (plist-get r :section-ids))) rows)))
       (insert (format "| %s | %d | %s | %s | %s |\n"
                       (cdr section) (length members)
-                      (org-canvas--gradebook-number
+                      (org-canvas--table-number
                        (org-canvas--gradebook-mean (mapcar (lambda (r) (plist-get r :current)) members)))
-                      (org-canvas--gradebook-number
+                      (org-canvas--table-number
                        (org-canvas--gradebook-mean (mapcar (lambda (r) (plist-get r :final)) members)))
                       (if (eq summaries 'refused) ""
-                        (org-canvas--gradebook-number
+                        (org-canvas--table-number
                          (apply #'+ (mapcar (lambda (r) (or (plist-get r :missing) 0)) members)))))))))
 
 (defun org-canvas--gradebook-stat (row key)
@@ -535,14 +521,14 @@ as CANVAS_ID, when `org-canvas-assignments-file' is set and holds it."
     (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n"
                     (org-canvas--gradebook-assignment-cell row)
                     (or (org-canvas--iso8601-to-org-timestamp (alist-get 'due_at row)) "-")
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'points_possible))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'min_score))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'first_quartile))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'median))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'third_quartile))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'max_score))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat tardiness 'missing))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat tardiness 'late))))))
+                    (org-canvas--table-number (org-canvas--gradebook-stat row 'points_possible))
+                    (org-canvas--table-number (org-canvas--gradebook-stat row 'min_score))
+                    (org-canvas--table-number (org-canvas--gradebook-stat row 'first_quartile))
+                    (org-canvas--table-number (org-canvas--gradebook-stat row 'median))
+                    (org-canvas--table-number (org-canvas--gradebook-stat row 'third_quartile))
+                    (org-canvas--table-number (org-canvas--gradebook-stat row 'max_score))
+                    (org-canvas--table-number (org-canvas--gradebook-stat tardiness 'missing))
+                    (org-canvas--table-number (org-canvas--gradebook-stat tardiness 'late))))))
 
 (defun org-canvas--gradebook-insert-assignments (assignments)
   "Insert the Assignments table for the analytics rows ASSIGNMENTS at point.
@@ -665,8 +651,8 @@ Undated assignments come last, then by name."
     (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s |\n"
                     (org-canvas--gradebook-self-title submission)
                     (or (org-canvas--iso8601-to-org-timestamp (alist-get 'due_at a)) "-")
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat a 'points_possible))
-                    (org-canvas--gradebook-number (org-canvas--gradebook-stat submission 'score))
+                    (org-canvas--table-number (org-canvas--gradebook-stat a 'points_possible))
+                    (org-canvas--table-number (org-canvas--gradebook-stat submission 'score))
                     (if grade (org-canvas--gradebook-cell-text (format "%s" grade)) "-")
                     (if (eq (alist-get 'excused submission) t) "excused"
                       (or (alist-get 'workflow_state submission) "-"))
@@ -680,7 +666,7 @@ KEY is `current' or `final'; - when Canvas hides the total."
                 enrollment (intern (format "computed_%s_score" key))))
         (letter (org-canvas--alist-get-non-null
                  (intern (format "computed_%s_grade" key)) enrollment)))
-    (concat (org-canvas--gradebook-number score)
+    (concat (org-canvas--table-number score)
             (if (stringp letter) (format " (%s)" letter) ""))))
 
 (defun org-canvas--gradebook-insert-self-comments (submissions)
@@ -823,7 +809,7 @@ itself once written."
       (dolist (row rows)
         (insert (format "| %s | %s |\n"
                         (org-canvas--gradebook-override-student-cell row)
-                        (org-canvas--gradebook-number (plist-get row :override)))))
+                        (org-canvas--table-number (plist-get row :override)))))
       (save-excursion
         (goto-char start)
         (forward-line 1)
@@ -855,17 +841,12 @@ heading or its table is missing."
 A header naming it by its title, case aside, reads by title; one
 naming none falls back to position 1.  The Student column is always
 first, as the pull writes it."
-  (let ((titles (mapcar (lambda (cell) (downcase (string-trim cell))) header)))
-    (or (cl-position "override" titles :test #'string=)
-        1)))
+  (car (org-canvas--table-columns-by-title header '(("override" . 1)))))
 
 (defun org-canvas--gradebook-overrides-resolve-student (text)
   "Resolve TEXT, a person's heading title or #id, to a USER_ID string."
-  (if (string-match "\\`#\\([0-9]+\\)\\'" text)
-      (match-string 1 text)
-    (org-canvas--heading-property-by-title
-     (and (boundp 'org-canvas-people-file) org-canvas-people-file)
-     text "USER_ID" "LEVEL=2")))
+  (org-canvas--resolve-title-or-id
+   text 'org-canvas-people-file "USER_ID" "LEVEL=2"))
 
 (defun org-canvas--gradebook-override-cell (cell)
   "Return CELL as an override percentage, or nil when it is blank.
@@ -941,7 +922,7 @@ and the other students still sent."
                 (alist-get 'user enrollment) (alist-get 'user_id enrollment)))
          (label (format "%s %s's final grade override to %s"
                         (if override "set" "clear") name
-                        (or (org-canvas--gradebook-number override) "none"))))
+                        (or (org-canvas--table-number override) "none"))))
     (condition-case err
         (let ((data (org-canvas--graphql-mutate
                      label org-canvas--gradebook-override-mutation
@@ -1124,7 +1105,7 @@ reuses it.  A My grades heading left by a student pull is removed."
           (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "gradebook"))
           nil)
       (let* ((summaries (org-canvas--gradebook-fetch-summaries))
-             (names (org-canvas--gradebook-fetch-section-names))
+             (names (org-canvas--pull-fetch-section-names))
              (columns (org-canvas--gradebook-fetch-columns))
              (assignments (org-canvas--gradebook-fetch-assignments))
              (rows (org-canvas--gradebook-rows enrollments summaries))
@@ -1184,8 +1165,8 @@ file or the heading is missing."
   "Return \"mean M, median D\" of the scores under KEY in ROWS."
   (let ((scores (mapcar (lambda (r) (plist-get r key)) rows)))
     (format "mean %s, median %s"
-            (org-canvas--gradebook-number (org-canvas--gradebook-mean scores))
-            (org-canvas--gradebook-number (org-canvas--gradebook-median scores)))))
+            (org-canvas--table-number (org-canvas--gradebook-mean scores))
+            (org-canvas--table-number (org-canvas--gradebook-median scores)))))
 
 (defun org-canvas-gradebook-summary-text (rows)
   "Return the class standing after a gradebook pull, as text to print.
@@ -1210,8 +1191,8 @@ row, the My grades heading and a line of their own totals (issue #488)."
     (concat (if body (concat body "\n\n") "")
             (format "Me: %d assignment%s, %d missing; current %s; final %s\n"
                     n (if (= n 1) "" "s") (plist-get row :missing)
-                    (org-canvas--gradebook-number (plist-get row :current))
-                    (org-canvas--gradebook-number (plist-get row :final))))))
+                    (org-canvas--table-number (plist-get row :current))
+                    (org-canvas--table-number (plist-get row :final))))))
 
 (provide 'org-canvas-gradebook)
 ;;; org-canvas-gradebook.el ends here

@@ -119,13 +119,6 @@ and :state; a number Canvas does not have is nil."
 
 ;;;; Rendering
 
-(defun org-canvas--quiz-submissions-number (value)
-  "Render VALUE for a table cell: one decimal for a score, - when absent."
-  (cond ((null value) "-")
-        ((integerp value) (format "%d" value))
-        ((numberp value) (format "%.1f" value))
-        (t (format "%s" value))))
-
 (defun org-canvas--quiz-submissions-duration (seconds)
   "Render SECONDS as h:mm, or - when there is no number."
   (if (numberp seconds)
@@ -146,7 +139,7 @@ and :state; a number Canvas does not have is nil."
     (if kept
         (concat line (format " | Mean kept score: %.1f"
                              (/ (apply #'+ kept) (float (length kept))))
-                (if possible (format " / %s" (org-canvas--quiz-submissions-number possible)) ""))
+                (if possible (format " / %s" (org-canvas--table-number possible)) ""))
       line)))
 
 (defun org-canvas--quiz-submissions-insert (quiz rows)
@@ -165,10 +158,10 @@ and :state; a number Canvas does not have is nil."
   (dolist (row rows)
     (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s |\n"
                     (plist-get row :name)
-                    (org-canvas--quiz-submissions-number (plist-get row :attempt))
-                    (org-canvas--quiz-submissions-number (plist-get row :kept))
-                    (org-canvas--quiz-submissions-number (plist-get row :latest))
-                    (org-canvas--quiz-submissions-number (plist-get row :possible))
+                    (org-canvas--table-number (plist-get row :attempt))
+                    (org-canvas--table-number (plist-get row :kept))
+                    (org-canvas--table-number (plist-get row :latest))
+                    (org-canvas--table-number (plist-get row :possible))
                     (org-canvas--quiz-submissions-duration (plist-get row :time))
                     (or (org-canvas--iso8601-to-org-timestamp (plist-get row :finished)) "-")
                     (plist-get row :state))))

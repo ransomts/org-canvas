@@ -100,18 +100,7 @@ Canvas uses short numeric strings like \"87146\" for matching question IDs."
 (defun org-canvas--new-quiz-parse-body-text ()
   "Get the body text of current heading, excluding subheadings.
 Returns the text between the current heading and the first subheading."
-  (save-excursion
-    (org-back-to-heading t)
-    (let ((start (save-excursion
-                   (org-end-of-meta-data t)
-                   (point)))
-          (end (save-excursion
-                 (outline-next-heading)
-                 (point))))
-      (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-        (when (> end subtree-end)
-          (setq end subtree-end)))
-      (string-trim (buffer-substring-no-properties start end)))))
+  (org-canvas--pull-entry-text))
 
 (defconst org-canvas--new-quiz-prompt-end-regexp "^[ \t]*[-*+] "
   "Regexp for the first answer line of an item, ending its prompt.")
@@ -164,16 +153,8 @@ of the answer list, as Q-TYPE ends it
 \(`org-canvas--new-quiz-prompt-end-regexp-for'), else the first child
 heading or the end of the subtree.  The push reads this region as the
 prompt and the pull writes it (issue #333)."
-  (let* ((bounds (org-canvas--pull-entry-text-bounds))
-         (start (car bounds))
-         (end (cdr bounds))
-         (re (org-canvas--new-quiz-prompt-end-regexp-for q-type)))
-    (save-excursion
-      (goto-char start)
-      (cons start
-            (if (and re (re-search-forward re end t))
-                (match-beginning 0)
-              end)))))
+  (org-canvas--pull-entry-text-bounds-before
+   (org-canvas--new-quiz-prompt-end-regexp-for q-type)))
 
 (defun org-canvas--new-quiz-parse-question-text (&optional q-type)
   "Get the question prompt text, excluding answer lists.
@@ -183,18 +164,6 @@ Q-TYPE in `org-canvas--new-quiz-prompt-only-types' has no answer
 list, so its prompt is all the text before the first child heading."
   (let ((bounds (org-canvas--new-quiz-item-prompt-bounds q-type)))
     (string-trim (buffer-substring-no-properties (car bounds) (cdr bounds)))))
-
-(defun org-canvas--new-quiz-parse-checkbox-list ()
-  "Parse a checkbox list under point, returning answer data.
-Returns a list of (text . is-correct) pairs."
-  (save-excursion
-    (let ((answers nil)
-          (bound (save-excursion (org-end-of-subtree t) (point))))
-      (while (re-search-forward "^[ \t]*- \\(\\[[ X]\\]\\) \\(.+\\)$" bound t)
-        (let ((checkbox (match-string 1))
-              (text (string-trim (match-string 2))))
-          (push (cons text (string= checkbox "[X]")) answers)))
-      (nreverse answers))))
 
 (defun org-canvas--new-quiz-parse-matching-list ()
   "Parse matching question format: left = right.
@@ -229,20 +198,6 @@ Returns alist of (category . (item1 item2 ...))."
               (items (split-string (match-string 2) "," t "[ \t]+")))
           (push (cons category items) categories)))
       (nreverse categories))))
-
-(defun org-canvas--new-quiz-parse-numerical-answer ()
-  "Parse numerical answer format.
-Supports: exact value, or [min, max] range."
-  (save-excursion
-    (let ((bound (save-excursion (org-end-of-subtree t) (point))))
-      (when (re-search-forward "^- \\[X\\] \\(.+\\)$" bound t)
-        (let ((text (string-trim (match-string 1))))
-          (if (string-match "\\[\\([0-9.-]+\\),[ ]*\\([0-9.-]+\\)\\]" text)
-              (list :type 'range
-                    :start (string-to-number (match-string 1 text))
-                    :end (string-to-number (match-string 2 text)))
-            (list :type 'exact
-                  :value (string-to-number text))))))))
 
 ;;;; Item/Question Parsing (Level 2)
 
@@ -475,14 +430,14 @@ scoring_data (string value), and scoring_algorithm Equivalence."
        . ((value . ,(vconcat entries)))))))
 
 (defconst org-canvas--new-quiz-interaction-dispatch
-  `(("choice"         ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-choice-data)
-    ("true-false"     ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-true-false-data)
-    ("multi-answer"   ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-choice-data)
-    ("short-answer"   ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-fill-blank-data)
+  `(("choice"         ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-choice-data)
+    ("true-false"     ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-true-false-data)
+    ("multi-answer"   ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-choice-data)
+    ("short-answer"   ,#'org-canvas--parse-checkbox-list                . ,#'org-canvas--new-quiz-item-build-fill-blank-data)
     ("matching"       ,#'org-canvas--new-quiz-parse-matching-list       . ,#'org-canvas--new-quiz-item-build-matching-data)
     ("ordering"       ,#'org-canvas--new-quiz-parse-ordering-list       . ,#'org-canvas--new-quiz-item-build-ordering-data)
     ("categorization" ,#'org-canvas--new-quiz-parse-categorization-list . ,#'org-canvas--new-quiz-item-build-categorization-data)
-    ("numerical"      ,#'org-canvas--new-quiz-parse-numerical-answer    . ,#'org-canvas--new-quiz-item-build-numerical-data))
+    ("numerical"      ,#'org-canvas--parse-numerical-answer             . ,#'org-canvas--new-quiz-item-build-numerical-data))
   "Dispatch table for new quiz interaction data: (TYPE PARSER . BUILDER).")
 
 (defun org-canvas--new-quiz-item-build-interaction-data (q-type)
@@ -611,18 +566,11 @@ avoid duplication in the API payload."
 
 (defun org-canvas--new-quiz-remote-items (quiz-id markers)
   "Return QUIZ-ID's items when a heading at MARKERS has no CANVAS_ITEM_ID.
-The list serves the twin adoption of `org-canvas--adopt-child-twin'
-\(issue #179); nothing is fetched while every item is stamped, and a
-list that could not be read is `unknown', which adopts nothing."
-  (when (cl-some (lambda (m) (not (org-entry-get m "CANVAS_ITEM_ID"))) markers)
-    (condition-case err
-        (org-canvas-api-request-all-pages
-         'GET (org-canvas--new-quiz-api-endpoint "quizzes/%s/items" quiz-id))
-      (error
-       (org-canvas--log-warning org-canvas--logger
-         "[New Quiz Item] Could not list quiz %s's items (%s); an unstamped item is created rather than adopted"
-         quiz-id (error-message-string err))
-       'unknown))))
+See `org-canvas--child-remote-list'."
+  (org-canvas--child-remote-list
+   markers "CANVAS_ITEM_ID"
+   (lambda () (org-canvas--new-quiz-api-endpoint "quizzes/%s/items" quiz-id))
+   "[New Quiz Item]" (format "quiz %s's items" quiz-id) "item"))
 
 (defun org-canvas--new-quiz-item-remote-body (item)
   "Return remote ITEM's body HTML, or nil for a reply without one.

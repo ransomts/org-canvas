@@ -401,12 +401,8 @@ and so is whether a new survey says it is anonymous (issue #349)."
   "Return the indexes of the Extra attempts and Extra time cells in HEADER.
 HEADER is the table's first row, as cells.  A header naming neither
 falls back to positions 1 and 2, as the sync does."
-  (let* ((titles (mapcar #'downcase header))
-         (attempts (cl-position "extra attempts" titles :test #'string=))
-         (time (cl-position "extra time" titles :test #'string=)))
-    (if (or attempts time)
-        (delq nil (list attempts time))
-      (list 1 2))))
+  (delq nil (org-canvas--table-columns-by-title
+             header '(("extra attempts" . 1) ("extra time" . 2)))))
 
 (defun org-canvas--validate-accommodation-row (cells columns row-loc)
   "Check one accommodations row, CELLS, and return its issues.
@@ -417,9 +413,8 @@ table).  ROW-LOC locates the row."
   (let ((student (or (nth 0 cells) ""))
         (issues nil))
     (unless (or (string-empty-p student)
-                (string-match-p "\\`#[0-9]+\\'" student)
-                (org-canvas--validate-override-lookup
-                 'org-canvas-people-file student "USER_ID"))
+                (org-canvas--resolve-title-or-id
+                 student 'org-canvas-people-file "USER_ID" "LEVEL=2"))
       (push (org-canvas--validate-push-only
              (org-canvas--validate-make-issue
               'warning row-loc nil

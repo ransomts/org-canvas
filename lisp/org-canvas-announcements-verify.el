@@ -80,11 +80,14 @@
 
 ;;;; Checks
 
-(defun org-canvas--announcement-verify-title (entry item)
-  "Return the title row of heading ENTRY against Canvas ITEM."
+(defun org-canvas--announcement-verify-title (entry item field)
+  "Return the title row of heading ENTRY against Canvas ITEM's FIELD.
+An announcement's title is its `title'; the heading verify reads an
+assignment's and a module's `name' the same way (issue #667)."
   (let ((org (org-canvas--diff-squeeze (plist-get entry :match-title)))
         (canvas (org-canvas--diff-squeeze
-                 (org-canvas--diff-normalize-remote (alist-get 'title item)))))
+                 (org-canvas--diff-normalize-remote
+                  (alist-get field item)))))
     (org-canvas--announcement-verify-row
      "title" (equal org canvas) (format "%S" org) (format "%S" (or canvas "")))))
 
@@ -166,7 +169,7 @@ nothing is uploaded; an export that fails is a difference, unchecked."
 (defun org-canvas--announcement-verify-rows (entry item now)
   "Return every row of heading ENTRY, its :pom set, against ITEM at NOW."
   (let ((pom (plist-get entry :pom)))
-    (list (org-canvas--announcement-verify-title entry item)
+    (list (org-canvas--announcement-verify-title entry item 'title)
           (org-canvas--announcement-verify-published pom item)
           (org-canvas--announcement-verify-posting pom item now)
           (org-canvas--announcement-verify-comments pom item)
@@ -239,16 +242,21 @@ is read."
           (or (plist-get result :error)
               (format "%d difference(s)" (plist-get result :differences)))))
 
+(defun org-canvas--announcement-verify-insert-rows (rows)
+  "Insert ROWS, a heading's report rows, one list item each.
+The heading verify reports its rows the same way (issue #667)."
+  (dolist (row rows)
+    (insert (format "- %-7s %-9s :: Org %s; Canvas %s\n"
+                    (if (plist-get row :ok) "ok" "DIFFERS")
+                    (plist-get row :field) (plist-get row :org)
+                    (plist-get row :canvas)))))
+
 (defun org-canvas--announcement-verify-render (results)
   "Insert the verification report on RESULTS, one section per heading."
   (insert "#+TITLE: Announcement verification\n")
   (dolist (result results)
     (insert (format "\n* %s\n\n" (org-canvas--announcement-verify-summary result)))
-    (dolist (row (plist-get result :rows))
-      (insert (format "- %-7s %-9s :: Org %s; Canvas %s\n"
-                      (if (plist-get row :ok) "ok" "DIFFERS")
-                      (plist-get row :field) (plist-get row :org)
-                      (plist-get row :canvas))))))
+    (org-canvas--announcement-verify-insert-rows (plist-get result :rows))))
 
 (defun org-canvas--announcement-verify-ask ()
   "Read the title of an announcement heading to verify, as a heading entry."
