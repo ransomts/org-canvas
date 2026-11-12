@@ -284,14 +284,18 @@ checked (issue #402)."
                "LEVEL=1" 'file))))))
     (nreverse issues)))
 
+(declare-function org-canvas--validate-module-reach "org-canvas-validate" (loc))
+
 (defun org-canvas--validate-assignment-structure (loc)
   "Check the LTI tool, grading period, posting schedule and override table.
-LOC is a (:file :line :heading) plist."
+Also when students can first reach the column through its modules
+\(issue #675).  LOC is a (:file :line :heading) plist."
   (let ((late-window (org-canvas--validate-late-window-defaults)))
     (nconc (org-canvas--validate-external-tool loc)
            (org-canvas--validate-due-in-grading-period loc)
            (org-canvas--validate-post-schedule loc)
            (org-canvas--validate-heading-late-window loc late-window)
+           (org-canvas--validate-module-reach loc)
            (org-canvas--validate-override-table loc late-window))))
 
 (cl-defun org-canvas--validate-override-table (loc &optional late-window)

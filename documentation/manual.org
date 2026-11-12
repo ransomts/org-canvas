@@ -1969,6 +1969,24 @@ for a course whose =modules.org= is missing or links to nothing.
 and a =files.org= heading link both count, a hidden file is left out),
 or set it to nil to turn the check off.
 
+*** Columns a Module Keeps Locked
+
+Canvas keeps an item locked while a module holding it is locked, whatever the item's own dates say. A published assignment whose module item sits in a week module that unlocks the day it is due reads as open in =assignments.org= and in the drift report, while students have hours to reach it. =org-canvas-validate= reads each published assignment not yet due against the modules in =modules.org= that hold it (#675):
+
+#+begin_example
+assignments.org:140: warning: Module 'Week 13' unlocks <2026-11-17 Tue 00:00>, not before the due date <2026-11-16 Mon 23:59>: Canvas keeps the column locked until the module opens, whatever its own dates say; move its module item to a module that opens in time
+assignments.org:152: warning: Reachable 1.0 day(s) before it is due: students first reach it <2026-11-16 Mon 00:00>, when module 'Week 12' unlocks, and it is due <2026-11-16 Mon 23:59>; the course wants 7 day(s) (move its module item to a module that opens in time)
+#+end_example
+
+A module that unlocks at or after the due date is always a warning. A short window is a course's rule, off by default: =org-canvas-validate-min-reach-days= is the fewest days a column must be reachable before it is due, and =org-canvas-validate-reach-groups= narrows it to the assignment groups named (nil covers every assignment). The column is first reachable at the later of its own =UNLOCK_AT= and the latest =UNLOCK_AT= of the modules holding it, counted by the clock. Under the rule, a module that waits on =PREREQUISITE_MODULE_IDS= is a note, since its release is no date.
+
+#+begin_src emacs-lisp
+(setq org-canvas-validate-min-reach-days 7
+      org-canvas-validate-reach-groups '("Global Challenge Essay"))
+#+end_src
+
+An unpublished column, one already past due, and an item or module Canvas deleted are left out. The findings describe the course rather than a push, so a read-only course hears them too; they are check =module-reach=, which a heading can accept with a reason (see [[*Accepting a Finding With a Reason][Accepting a Finding With a Reason]]). The check reads only the Org files and makes no request.
+
 *** Example
 
 #+begin_src org
@@ -5604,6 +5622,7 @@ read whole.  The checks that can be accepted:
 | =date-order=     | dates out of order: unlock, due, lock (a heading's or a row's)         |
 | =lock-window=    | a lock date missing, or off =org-canvas-validate-lock-after-due-hours= |
 | =require-unlock= | no unlock date where =org-canvas-validate-require-unlock= asks for one |
+| =module-reach=   | a column its module keeps locked until after, or near, its due date    |
 
 An accept covers that check on that heading only: any other finding
 on the heading still prints, and so does the same check on the
@@ -6694,7 +6713,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
-| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent |
 | =POST_POLICY= | enum | automatic, manual |  | Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit |
 | =POST_GRADES_AT= | timestamp |  |  | When Canvas posts the grades (needs POST_COMMENTS_AT and manual posting); omit to keep Canvas's schedule |
 | =POST_COMMENTS_AT= | timestamp |  |  | When Canvas posts the comments, no later than POST_GRADES_AT; omit to keep Canvas's schedule |
@@ -6755,7 +6774,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether the discussion is visible to students (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
-| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent |
 | =DISCUSSION_TYPE= | enum | side_comment, threaded |  | side_comment, threaded |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | points, percent (for graded) |
 | =POINTS= | number |  |  | Points possible (for graded) |
@@ -6966,7 +6985,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  | The kind of quiz |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =NO_MODULE= | boolean | true, false |  | Kept out of every module on purpose: validate does not warn that no modules.org item links to it; never sent |
-| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock); several as VALIDATE_ACCEPT+ lines; never sent |
+| =VALIDATE_ACCEPT= | string |  |  | A validate finding kept on purpose: a check id, then the reason (date-order, lock-window, require-unlock, module-reach); several as VALIDATE_ACCEPT+ lines; never sent |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
 | =ALLOWED_ATTEMPTS= | number |  |  | Max attempts (-1 = unlimited) |

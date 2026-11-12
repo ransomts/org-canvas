@@ -85,7 +85,8 @@ next.  Nil ISSUE passes through, so a check can wrap its result."
 (defconst org-canvas--validate-checks
   '((date-order . "dates out of order (unlock, due, lock)")
     (lock-window . "a lock date missing or off the course's late window")
-    (require-unlock . "an unlock date missing where the course requires one"))
+    (require-unlock . "an unlock date missing where the course requires one")
+    (module-reach . "a column its module keeps locked until near its due date"))
   "Checks a course may accept the findings of, by id, each with its subject.")
 
 (defconst org-canvas--validate-accept-property "VALIDATE_ACCEPT"

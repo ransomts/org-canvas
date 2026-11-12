@@ -132,6 +132,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/validation-and-verify.org::*Cross-Course Links Are the Validator's Business (issue #172)][Cross-Course Links Are the Validator's Business (issue #172)]]
 - [[file:decisions/validation-and-verify.org::*Validation Is Read-Only Aware (issue #168)][Validation Is Read-Only Aware (issue #168)]]
 - [[file:decisions/validation-and-verify.org::*A Published Heading No Module Holds Is a Validate Note (issue #413)][A Published Heading No Module Holds Is a Validate Note (issue #413)]]
+- [[file:decisions/validation-and-verify.org::*A Column Its Module Keeps Locked Is a Validate Warning (issue #675)][A Column Its Module Keeps Locked Is a Validate Warning (issue #675)]]
 - [[file:decisions/validation-and-verify.org::*An Announcement Is Verified Through the Existing =verify= (issue #502)][An Announcement Is Verified Through the Existing =verify= (issue #502)]]
 - [[file:decisions/validation-and-verify.org::*Assignments, Modules and Files Are Verified Through the Same =verify= (issue #524)][Assignments, Modules and Files Are Verified Through the Same =verify= (issue #524)]]
 - [[file:decisions/validation-and-verify.org::*Validate Accepts One Check With a Reason (issue #538)][Validate Accepts One Check With a Reason (issue #538)]]
