@@ -530,7 +530,7 @@ One of `scored', `excused', `awaiting' (submitted, no grade yet),
   "Return ROW's bucket at NOW as a table cell; a dash without a ROW."
   (pcase (and row (org-canvas--gradebook-hurdle-bucket row now))
     ('nil "-")
-    ('scored (org-canvas--gradebook-number (nth 1 (plist-get row :item))))
+    ('scored (org-canvas--table-number (nth 1 (plist-get row :item))))
     ('nothing-in "nothing in")
     (bucket (symbol-name bucket))))
 
@@ -639,13 +639,13 @@ COLUMNS are the group's assignments; CONTEXT the report's plist."
           (format "| %s | %s | %s | %s | %s | %s | %s |%s\n"
                   (org-canvas--gradebook-cell-text (plist-get student :name))
                   (org-canvas--gradebook-sections-cell student (plist-get context :names))
-                  (org-canvas--gradebook-number
+                  (org-canvas--table-number
                    (org-canvas--gradebook-percent
                     (org-canvas--gradebook-group-sums
                      (delq nil (mapcar (lambda (r) (plist-get r :item)) present)) group)))
-                  (org-canvas--gradebook-number zeroed)
-                  (org-canvas--gradebook-number best)
-                  (org-canvas--gradebook-number
+                  (org-canvas--table-number zeroed)
+                  (org-canvas--table-number best)
+                  (org-canvas--table-number
                    (org-canvas--gradebook-hurdle-needed present group now required))
                   verdict
                   (mapconcat (lambda (r) (format " %s |" (org-canvas--gradebook-hurdle-cell r now)))
@@ -671,7 +671,7 @@ REQUIRED is a percent, or nil for none; CONTEXT is the report's plist."
     (insert (format "* %s\n" (org-canvas--gradebook-cell-text (plist-get group :name))))
     (insert (format "%s%s.\n"
                     (if required
-                        (format "Hurdle %s%%" (org-canvas--gradebook-number required))
+                        (format "Hurdle %s%%" (org-canvas--table-number required))
                       "No hurdle set")
                     (if (string-empty-p drops) "" (concat ", " drops))))
     (insert (format "| Student | Section | Now | Past due as 0 | At best | Needed | Verdict |%s\n"
@@ -715,7 +715,7 @@ is written."
   (let ((raw-groups (org-canvas--gradebook-fetch-groups)))
     (list :targets targets
           :students (org-canvas--gradebook-rows (org-canvas--gradebook-fetch-enrollments) nil)
-          :names (org-canvas--gradebook-fetch-section-names)
+          :names (org-canvas--pull-fetch-section-names)
           :raw-groups raw-groups
           :assignments (org-canvas--gradebook-assignment-map raw-groups)
           :overrides (org-canvas--gradebook-override-map raw-groups)
