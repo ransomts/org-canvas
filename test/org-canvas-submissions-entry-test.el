@@ -993,7 +993,32 @@ the header.  Return the path."
                    (lambda (_url _dir filename) (push filename downloaded)))
                   ((symbol-function 'make-directory) (lambda (_dir &rest _) nil)))
           (org-canvas-submissions-download-all-attachments))
-        (expect (sort downloaded #'string<) :to-equal '("a.pdf" "c.pdf"))))))
+        (expect (sort downloaded #'string<) :to-equal '("a.pdf" "c.pdf")))))
+  (it "names a student whose Attachments lines do not parse (#676)"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][a.pdf]]\n\n"
+                               "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n\n"
+                               "* Cruz, Cal\n:PROPERTIES:\n:USER_ID: 5003\n:END:\n\n** Attachments\n- [[example.com/files/2/download][c.pdf]]\n\n"
+                               "* Diaz, Dee\n:PROPERTIES:\n:USER_ID: 5004\n:END:\n\n** Attachments\n- [[https://example.com/files/3/download][d.pdf]]\n- [[example.com/files/4/download][e.pdf]]\n")
+      (let ((downloaded nil) (said nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-download-file)
+                   (lambda (_url _dir filename) (push filename downloaded)))
+                  ((symbol-function 'make-directory) (lambda (_dir &rest _) nil))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+          (org-canvas-submissions-download-all-attachments))
+        (expect (sort downloaded #'string<) :to-equal '("a.pdf" "d.pdf"))
+        (expect said :to-match "^Downloaded attachments for 2 student(s); ")
+        (expect said :to-match
+                (regexp-quote "2 Attachments line(s) did not parse and were not downloaded: Cruz, Cal ([[example.com/files/2/download][c.pdf]]); Diaz, Dee ([[example.com/files/4/download][e.pdf]])"))
+        (expect said :not :to-match "Beta"))))
+  (it "says why a student's only Attachments line was not downloaded (#676)"
+    (with-grading-file (concat test-grading-file-header
+                               "* Cruz, Cal\n:PROPERTIES:\n:USER_ID: 5003\n:END:\n\n** Attachments\n- [[example.com/files/2/download][c.pdf]]\n")
+      (org-canvas--submissions-goto-user 5003)
+      (expect (org-canvas-submissions-download-attachments)
+              :to-throw 'user-error
+              '("No attachment of Cruz, Cal could be read; 1 Attachments line(s) did not parse: [[example.com/files/2/download][c.pdf]]")))))
 
 (describe "download rewrites attachment entries"
   (it "links the local copy after downloading and skips it next time"

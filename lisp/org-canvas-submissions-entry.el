@@ -363,7 +363,8 @@ PREVIOUS supplies the PULLED_AT the no-change line names.  Each kind
 present is counted; the students who left say how many headings were
 kept for the work under them.  FOUND's :conflicted, the headings left
 marked CONFLICT, are named (issue #440), and so are its :undownloaded,
-the attachments listed and not on disk (issue #457)."
+the attachments listed and not on disk (issue #457), and its :unparsed,
+the Attachments lines no entry could be read from (issue #676)."
   (let ((parts nil))
     (dolist (label org-canvas--submissions-change-labels)
       (when-let* ((pairs (plist-get found (car label))))
@@ -378,7 +379,8 @@ the attachments listed and not on disk (issue #457)."
        (format "Refreshed %s: no changes since %s" name
                (or (plist-get previous :pulled-at) "the last pull")))
      (org-canvas--submissions-describe-conflicted (plist-get found :conflicted))
-     (org-canvas--submissions-describe-undownloaded (plist-get found :undownloaded)))))
+     (org-canvas--submissions-describe-undownloaded (plist-get found :undownloaded))
+     (org-canvas--submissions-describe-unparsed (plist-get found :unparsed)))))
 
 (defun org-canvas--submissions-describe-conflicted (conflicted)
   "Return the refresh line's note naming CONFLICTED students, or \"\".
@@ -428,6 +430,42 @@ every refresh would say otherwise (issue #457)."
           (forward-line 1)))
       missing)))
 
+(defun org-canvas--submissions-unparsed-attachments ()
+  "Return the Attachments lines of this grading file that do not parse.
+A list of (STUDENT . LINE) over the students still enrolled, LINE
+without its list bullet.  Whatever reads entries cannot see such a
+line, so it is named rather than left silently out (issue #676)."
+  (let ((found nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (when (and (org-entry-get (point) "USER_ID")
+                   (not (org-canvas--submissions-left-p)))
+          (setq found (append found (org-canvas--submissions-unparsed-at-point))))
+        (forward-line 1)))
+    found))
+
+(defun org-canvas--submissions-unparsed-at-point ()
+  "Return the student at point's unparsed Attachments lines.
+A list of (STUDENT . LINE), LINE without its list bullet; see
+`org-canvas--submissions-unparsed-attachment-lines'."
+  (let ((name (org-get-heading t t t t)))
+    (mapcar (lambda (line) (cons name (string-remove-prefix "- " line)))
+            (org-canvas--submissions-unparsed-attachment-lines))))
+
+(defun org-canvas--submissions-describe-unparsed (unparsed &optional consequence)
+  "Return a closing note naming UNPARSED Attachments lines, or \"\".
+UNPARSED is a list of (STUDENT . LINE), as
+`org-canvas--submissions-unparsed-attachments' returns it.
+CONSEQUENCE, when given, follows \"did not parse\" (issue #676)."
+  (if unparsed
+      (format "; %d Attachments line(s) did not parse%s: %s"
+              (length unparsed) (or consequence "")
+              (mapconcat (lambda (u) (format "%s (%s)" (car u) (cdr u)))
+                         unparsed "; "))
+    ""))
+
 (defun org-canvas--submissions-describe-undownloaded (missing)
   "Return the refresh line's note naming MISSING attachments, or \"\".
 MISSING is a list of (STUDENT FILENAME OLDER), as
@@ -470,6 +508,8 @@ Return the summary line, or nil on a first pull."
                                (org-canvas--submissions-conflicted-headings)))
       (setq changes (plist-put changes :undownloaded
                                (org-canvas--submissions-undownloaded name)))
+      (setq changes (plist-put changes :unparsed
+                               (org-canvas--submissions-unparsed-attachments)))
       (org-canvas--submissions-log-changes changes)
       (when assignment-id
         (org-canvas--submissions-report-attempts
@@ -574,7 +614,7 @@ Entries already downloaded are skipped."
            (entries (org-canvas--submissions-attachment-entries))
            (fetched 0))
       (unless entries
-        (user-error "No attachments found for %s" user-name))
+        (org-canvas--submissions-no-attachments-error user-name))
       (make-directory dir t)
       (dolist (e entries)
         (unless (plist-get e :local)
@@ -588,7 +628,21 @@ Entries already downloaded are skipped."
           (org-canvas--submissions-rewrite-attachments entries))
         (when buffer-file-name
           (save-buffer)))
-      (message "Downloaded %d file(s) to %s" fetched dir))))
+      (org-canvas--user-message
+       "Downloaded %d file(s) to %s%s" fetched dir
+       (org-canvas--submissions-describe-unparsed
+        (org-canvas--submissions-unparsed-at-point))))))
+
+(defun org-canvas--submissions-no-attachments-error (user-name)
+  "Signal that USER-NAME, the student at point, has nothing to download.
+An Attachments list whose lines all fail to parse is not a student with
+nothing uploaded, and the error names the lines (issue #676)."
+  (let ((lines (org-canvas--submissions-unparsed-attachment-lines)))
+    (if lines
+        (user-error "No attachment of %s could be read; %d Attachments line(s) did not parse: %s"
+                    user-name (length lines)
+                    (mapconcat (lambda (l) (string-remove-prefix "- " l)) lines "; "))
+      (user-error "No attachments found for %s" user-name))))
 
 ;;;; Completion Rule
 
@@ -666,23 +720,30 @@ POINTS_POSSIBLE as the default."
 ;;;###autoload
 (defun org-canvas-submissions-download-all-attachments ()
   "Download every student's attachments in this grading file.
-Students without attachments are skipped; the count is reported."
+Students without attachments are skipped; the count is reported.  An
+Attachments line that does not parse is not a student with nothing
+uploaded: the closing message names each one, with its student, as
+not downloaded (issue #676).  Return the closing message."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
   (org-canvas--submissions-ensure-context)
   (unless (eq org-canvas-submissions--current-view 'detail)
     (user-error "Switch to detail view first (press v)"))
-  (let ((students 0))
+  (let ((students 0)
+        (unparsed nil))
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward "^\\* " nil t)
-        (when (condition-case nil
-                  (progn (org-canvas-submissions-download-attachments) t)
-                (user-error nil))
+        (setq unparsed (append unparsed (org-canvas--submissions-unparsed-at-point)))
+        (when (org-canvas--submissions-attachment-entries)
+          (org-canvas-submissions-download-attachments)
           (cl-incf students))
         (org-end-of-subtree t)))
-    (message "Downloaded attachments for %d student(s)" students)))
+    (org-canvas--user-message
+     "Downloaded attachments for %d student(s)%s" students
+     (org-canvas--submissions-describe-unparsed
+      unparsed " and were not downloaded"))))
 
 (defun org-canvas--submissions-download-file (url directory filename)
   "Download URL to DIRECTORY as FILENAME using the token query parameter.

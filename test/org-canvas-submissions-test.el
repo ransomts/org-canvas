@@ -265,6 +265,17 @@
      (org-back-to-heading)
      (expect (plist-get (car (org-canvas--submissions-attachment-entries)) :local)
              :to-equal "files/HW/Adams__Alice/a [b.pdf")))
+  (it "lists the Attachments lines that do not parse, and only those (#676)"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][a.pdf]]\n- [[example.com/files/2/download][b.pdf]]\n\n** Comments\n"
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-unparsed-attachment-lines)
+             :to-equal '("- [[example.com/files/2/download][b.pdf]]"))))
+  (it "has no unparsed lines without an Attachments list (#676)"
+    (with-temp-org-buffer
+     "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n"
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-unparsed-attachment-lines) :to-be nil)))
   (it "renders a downloaded attachment with the local link first"
     (let* ((dir (make-temp-file "org-canvas-subs-" t))
            (org-canvas-submissions-directory dir)

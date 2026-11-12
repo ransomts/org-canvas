@@ -928,6 +928,24 @@ Each has :name, :url, and :local (the downloaded copy's link path or nil)."
                 entries))))
     (nreverse entries)))
 
+(defun org-canvas--submissions-unparsed-attachment-lines ()
+  "Return the Attachments lines of the heading at point that do not parse.
+Each is the line's text, trimmed; a blank line is no entry and is left
+out.  An entry `org-canvas--submissions-attachment-entries' cannot read
+is otherwise invisible to everything that walks the list: the download
+skips it and a refresh does not name it (issue #676).  Nil when the
+heading has no Attachments list."
+  (let ((region (org-canvas--submissions-attachments-region))
+        (lines nil))
+    (when region
+      (dolist (line (split-string (buffer-substring-no-properties
+                                   (car region) (cdr region))
+                                  "\n"))
+        (unless (or (string-match-p "\\`[ \t]*\\'" line)
+                    (string-match-p org-canvas--submissions-attachment-line-re line))
+          (push (string-trim line) lines))))
+    (nreverse lines)))
+
 (defun org-canvas--submissions-rewrite-attachments (entries)
   "Replace the Attachments list of the heading at point with ENTRIES."
   (let ((region (org-canvas--submissions-attachments-region)))
