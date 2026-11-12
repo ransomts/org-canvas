@@ -74,6 +74,7 @@ with sub-sections lists those under it, indented.
 - [[file:decisions/drift-report.org::*The Drift Report Compares Overrides Tables (issue #411)][The Drift Report Compares Overrides Tables (issue #411)]]
 - [[file:decisions/drift-report.org::*New Quizzes Join the Drift Report Through Their Pull-Only Entry (issue #313)][New Quizzes Join the Drift Report Through Their Pull-Only Entry (issue #313)]]
 - [[file:decisions/drift-report.org::*New Quiz Items in the Drift Report, Paired as the Sync Adopts Them (issue #322)][New Quiz Items in the Drift Report, Paired as the Sync Adopts Them (issue #322)]]
+- [[file:decisions/drift-report.org::*A Heading Is Checked for Drift on Its Own, With the Full Report's Row (issue #670)][A Heading Is Checked for Drift on Its Own, With the Full Report's Row (issue #670)]]
 
 ** Grading and Submissions
 [[file:decisions/grading-and-submissions.org][decisions/grading-and-submissions.org]]

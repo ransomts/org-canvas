@@ -237,6 +237,7 @@ ARGS=, which is also the line to use without it.  =--json= before
 | =extend ASSIGNMENT STUDENT DUE [LOCK]= | =org-canvas-extend-student-named=: the student's row written, that override alone sent (=-n=: a dry run) | the override was not sent |
 | =quiz-regrade QUIZ QUESTION-TEXT [--score N] [--dry-run]= | =org-canvas-quiz-regrade=: every attempt that drew the question scored with N (the default =full=, the question's points) and read back | an attempt failed to send or read back at another score |
 | =diff=                        | =org-canvas-diff= (=--json=: one JSON object)      | anything drifted   |
+| =diff FEATURE:TITLE...=       | =org-canvas-diff-headings=: only the named headings, one read each, writing nothing (=--json=: one JSON object) | a named heading drifted or could not be checked |
 | =adopt [--body] [--overrides] --all= or =adopt ... FEATURE:TITLE...= | =org-canvas-diff-adopt-drifts= (=-n=: a dry run), nothing sent | a row was held back, not found or failed |
 | =show FEATURE:TITLE...=       | =org-canvas-show-headings=, writing nothing        |                    |
 | =search REGEXP= | =org-canvas-search-live=: every match of REGEXP in the live course's text, with its object, field and context |   |
@@ -4486,6 +4487,21 @@ their row.
 After stamping, the next report shows each item as a RELOCATE row, and the
 next sync moves it into its new module, keeping its id.
 
+** Checking Named Headings Before a Push
+
+The full report is one list request per feature and every row, which is a lot to pay before pushing two assignments and a file by heading.  =M-x org-canvas-diff-at-point= checks the heading at point alone, and =org-canvas-diff-headings= the headings named as =org-canvas-pull-headings= names them, =(("assignment" . "Lab 1") ("file" "4412" canvas-id))= (#670).  From the shell, =diff= with headings checks only those, and its exit status can gate the push:
+
+#+begin_src sh
+scripts/org-canvas diff "assignment:Closer 07" "assignment:Closer 08" "file#4412" \
+  && scripts/org-canvas push "assignment:Closer 07" "assignment:Closer 08" "file#4412"
+#+end_src
+
+Each heading's object is read on its own, by the id its drawer holds now, and compared exactly as the full report compares it, so the row is the one the full report would give that heading: CHANGED with the fields that differ and Canvas's stamp when it is newer than the heading's baseline, MISSING when Canvas no longer holds the id, a NOTE, or PENDING for a heading with no id yet.  Because the id is read from the drawer each time, a file re-uploaded by the last push is checked under its new id.  A quiz question is checked as its quiz, which a push sends whole.
+
+What only a list can show stays the full report's: EXTRA, UNCLAIMED and MOVED rows, module items, New Quiz items and assignment overrides.
+
+The commands return, and =diff= exits with, the number of divergences plus one for each heading that could not be checked (not found, found twice, or the read failed), so a non-zero answer means "do not push yet".  PENDING and NOTE rows are shown and not counted.  Nothing is written, locally or on Canvas.  Interactively the rows land in the report's mode, so the row verbs work on them, and =g= checks the same headings again.  Under =--json= the object has the full report's keys, with =headings= (each heading's =feature=, =title=, =canvas_id=, =state= =checked= or =error=, and =error=) in place of =features=, =acknowledged= and =referenced=.
+
 ** Cost and Safety
 
 One list request per feature.  The report writes nothing, locally or on
@@ -6124,6 +6140,8 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found (Lisp and batch) |
+| =org-canvas-diff-at-point=        | The drift report's row for the heading at point alone, one read, writing nothing (see [[*Checking Named Headings Before a Push][Checking Named Headings Before a Push]]) |
+| =org-canvas-diff-headings=        | The same for headings named by title or Canvas id (Lisp and batch) |
 | =org-canvas-browse-at-point=      | Open the heading at point on Canvas in a browser; =C-u= for the edit page (no API calls) |
 | =org-canvas-browse-edit-at-point= | Open the heading's edit page on Canvas         |
 | =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= / =-stamp-move= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |

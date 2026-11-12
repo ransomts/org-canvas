@@ -318,15 +318,15 @@
             :to-equal '("--download" "Essay")))
 
   (it "refuses malformed command lines"
-    (dolist (args '(("-x" "diff") ("-C") ("frobnicate") ("diff" "extra")
+    (dolist (args '(("-x" "diff") ("-C") ("frobnicate") ("overview" "extra")
                     ("push") ("validate" "--all" "more")))
       (expect (org-canvas-batch-parse-args args)
               :to-throw 'org-canvas-batch-usage-error)))
 
   (it "names what a command takes when its arguments are wrong"
-    (expect (condition-case err (org-canvas-batch-parse-args '("diff" "x"))
+    (expect (condition-case err (org-canvas-batch-parse-args '("overview" "x"))
               (org-canvas-batch-usage-error (cadr err)))
-            :to-equal "diff takes no arguments")
+            :to-equal "overview takes no arguments")
     (expect (condition-case err (org-canvas-batch-parse-args '("push"))
               (org-canvas-batch-usage-error (cadr err)))
             :to-equal "push takes [--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE...")))

@@ -6,6 +6,7 @@
 #   scripts/org-canvas push [--conflict push|pull|skip] [--prune-overrides] FEATURE:TITLE...
 #   scripts/org-canvas delete --yes | --dry-run FEATURE:TITLE...
 #   scripts/org-canvas search REGEXP | search-dates
+#   scripts/org-canvas diff [FEATURE:TITLE...]
 #   scripts/org-canvas cleanup-orphans [--yes]
 #
 # --help lists every command.  push's --conflict sets
@@ -16,6 +17,8 @@
 # cleanup-orphans' --yes answers its own confirmation the same way, and
 # without it the report prints and nothing is deleted (issue #554).
 # --json makes validate and diff print one JSON object (issue #531).
+# diff with headings checks only those, one read each, and exits 1 on
+# drift or a heading it could not check (issue #670).
 #
 # The course directory defaults to the current one; its
 # org-canvas-credentials.el is loaded.  EMACS names the Emacs to run
