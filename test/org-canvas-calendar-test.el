@@ -653,7 +653,13 @@ Drop by.
                  ((symbol-function 'display-buffer) (lambda (_) nil))
                  ((symbol-function 'save-buffer) (lambda () nil)))
          (with-delete-snapshot-dir
-           (org-canvas-delete-calendar-event-at-point))
+           (org-canvas-delete-calendar-event-at-point)
+           ;; The file is named as the drift report's and delete-all's
+           ;; are, by the plural feature (#669)
+           (expect (length (directory-files
+                            snapshot-dir nil
+                            "\\`[0-9T]+-calendar-events-42\\.json\\'"))
+                   :to-equal 1))
          (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
          (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
