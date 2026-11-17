@@ -883,13 +883,28 @@ REPLIES is the mock API's response alist."
           "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SUBMISSION_ID: 50001\n"
           (apply #'concat props) ":END:\n"))
 
+(defun test-late--read-back (_method url &rest _)
+  "Answer a request to URL as Canvas would a read-back of the file's student.
+The submission's score is the CANVAS_SCORE the grading file holds by
+then, so a read-back finds what the push recorded (issue #665)."
+  (when (string-match "submissions/\\([0-9]+\\)\\'" url)
+    (let ((uid (string-to-number (match-string 1 url))))
+      (save-excursion
+        (org-canvas--submissions-goto-user uid)
+        (let ((score (org-entry-get (point) "CANVAS_SCORE")))
+          `((user_id . ,uid)
+            ,@(and score `((entered_score . ,(string-to-number score))
+                           (score . ,(string-to-number score))))))))))
+
 (defun test-late--push (reply &optional live)
   "Push the current grading file; the mutation answers REPLY.
 REPLY is a function of the variables, or a value.  LIVE is the
-student's live baseline for the conflict check, nil to skip it."
+student's live baseline for the conflict check, nil to skip it.  A
+read-back finds the score the file records (`test-late--read-back')."
   (setq test-late--mutations nil
         test-late--warnings nil)
-  (let ((org-canvas-submissions-check-conflicts (and live t)))
+  (let ((org-canvas-submissions-check-conflicts (and live t))
+        (test-org-canvas-api-handler #'test-late--read-back))
     (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
                (lambda (_what document variables)
                  (push (cons document variables) test-late--mutations)
@@ -966,13 +981,14 @@ student's live baseline for the conflict check, nil to skip it."
               :to-throw 'user-error))))
 
 (describe "pushing a late status with S"
-  (it "sends a status-only change through the mutation and nothing over REST"
+  (it "sends a status-only change through the mutation and writes nothing over REST"
     (with-test-api
       (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
                                              ":DAYS_LATE: 3\n:SCORE: 92\n:CANVAS_SCORE: 92\n"
                                              ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
         (test-late--push (test-late--stored "extended" 0))
-        (expect (test-org-canvas-api-call-count) :to-equal 0)
+        (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(GET))
+        (expect-api-called 'GET "assignments/1001/submissions/5001")
         (expect (length test-late--mutations) :to-equal 1)
         (expect (caar test-late--mutations) :to-be org-canvas--submissions-late-status-mutation)
         (expect (cdar test-late--mutations)
@@ -1118,6 +1134,118 @@ student's live baseline for the conflict check, nil to skip it."
                                     '((late_policy_status . "late")))))))
       (expect (nth 3 (alist-get 5001 (org-canvas--submissions-live-baselines "1001")))
               :to-equal "late"))))
+
+(defun test-readback--push (reply read-back)
+  "Push the current grading file with conflicts unchecked.
+The mutation answers REPLY; a GET of a student's submission answers
+READ-BACK, a function of the user id, and every other request nil.
+Return the closing message; the warnings land in `test-late--warnings'."
+  (setq test-late--warnings nil)
+  (let ((messages nil)
+        (org-canvas-submissions-check-conflicts nil)
+        (test-org-canvas-api-handler
+         (lambda (method url &rest _)
+           (when (and (eq method 'GET) (string-match "submissions/\\([0-9]+\\)\\'" url))
+             (funcall read-back (string-to-number (match-string 1 url)))))))
+    (cl-letf (((symbol-function 'org-canvas--confirm) #'always)
+              ((symbol-function 'org-canvas--graphql-mutate)
+               (lambda (_what _doc variables)
+                 (if (functionp reply) (funcall reply variables) reply)))
+              ((symbol-function 'org-canvas--submissions-await-progress)
+               (lambda (&rest _) (list :state 'completed)))
+              ((symbol-function 'org-canvas--log-warning)
+               (lambda (_logger fmt &rest args)
+                 (push (apply #'format fmt args) test-late--warnings)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (org-canvas-submissions-push-grades))
+    (car messages)))
+
+(describe "reading the score back after a late status (issue #665)"
+  (it "records the score Canvas's late policy leaves when a status and a grade go together"
+    (with-test-api
+      (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                             ":SCORE: 10\n:CANVAS_SCORE: 6\n:LATE_STATUS: late\n")
+        (let ((message (test-readback--push
+                        (test-late--stored "late" 129)
+                        (lambda (uid) `((user_id . ,uid) (entered_score . 10) (score . 8))))))
+          (expect message :to-match "late policy lowers 1 score(s), see FINAL_SCORE"))
+        (expect-api-called 'GET "assignments/1001/submissions/5001")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "10")
+        (expect (org-entry-get (point) "FINAL_SCORE") :to-equal "8")
+        (expect test-late--warnings :to-be nil)
+        (expect (buffer-modified-p) :to-be nil))))
+  (it "brings back the score a status-only change made Canvas recompute"
+    (with-test-api
+      (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                             ":SCORE: 10\n:CANVAS_SCORE: 10\n:FINAL_SCORE: 8\n"
+                                             ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: late\n")
+        (let ((message (test-readback--push
+                        (test-late--stored "none")
+                        (lambda (uid) `((user_id . ,uid) (entered_score . 10) (score . 10))))))
+          (expect message :not :to-match "late policy"))
+        (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(GET))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "FINAL_SCORE") :to-be nil)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "10")
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
+  (it "follows a grade Canvas set itself, and says so"
+    (with-test-api
+      (with-grading-file (test-late--heading ":LATE_STATUS: missing\n")
+        (test-readback--push (test-late--stored "missing")
+                             (lambda (uid) `((user_id . ,uid) (entered_score . 0) (score . 0))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "0")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "0")
+        (expect test-late--warnings
+                :to-equal '("[Submissions] Adams, Alice: Canvas holds score 0 where the file had no score"))
+        (expect (alist-get 5001 org-canvas-submissions--original-scores) :to-equal "0"))))
+  (it "keeps the recorded baseline and warns when the read-back fails"
+    (with-test-api
+      (with-grading-file (test-late--heading ":SCORE: 10\n:CANVAS_SCORE: 6\n:LATE_STATUS: late\n")
+        (let ((message (test-readback--push
+                        (test-late--stored "late")
+                        (lambda (_uid) (signal 'org-canvas-api-error '("boom"))))))
+          (expect message :to-match "Pushed 1 grade(s), 1 late status(es)"))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "10")
+        (expect (length test-late--warnings) :to-equal 1)
+        (expect (car test-late--warnings) :to-match "Score of Adams, Alice not read back: .*boom"))))
+  (it "refuses a reply that is not the student's submission"
+    (with-test-api
+      (with-grading-file (test-late--heading ":SCORE: 10\n:CANVAS_SCORE: 6\n:LATE_STATUS: late\n")
+        (test-readback--push (test-late--stored "late")
+                             (lambda (_uid) '((id . 12345) (entered_score . 3))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "10")
+        (expect (car test-late--warnings) :to-match "Score of Adams, Alice not read back"))))
+  (it "reads nothing back for a row without a late status sent, or under a dry run"
+    (with-test-api
+      (with-grading-file (test-late--heading ":SCORE: 10\n:CANVAS_SCORE: 6\n")
+        (test-readback--push nil (lambda (_uid) (error "No read-back expected")))
+        (expect (test-org-canvas-api-called-p 'GET "submissions/5001") :to-be nil)))
+    (with-test-api
+      (with-grading-file (test-late--heading ":SCORE: 10\n:CANVAS_SCORE: 6\n:LATE_STATUS: late\n")
+        (let ((org-canvas--dry-run t))
+          (test-readback--push (test-late--stored "late")
+                               (lambda (_uid) (error "No read-back expected"))))
+        (expect (test-org-canvas-api-called-p 'GET "submissions/5001") :to-be nil))))
+  (it "reads back only the status-only rows when the grades did not land"
+    (with-test-api
+      (with-grading-file (concat (test-late--heading ":SCORE: 10\n:CANVAS_SCORE: 6\n:LATE_STATUS: late\n")
+                                 "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SUBMISSION_ID: 50002\n"
+                                 ":SCORE: 7\n:CANVAS_SCORE: 7\n:LATE_STATUS: none\n:END:\n"
+                                 "* Cole, Cara\n:PROPERTIES:\n:USER_ID: 5003\n:SUBMISSION_ID: 50003\n"
+                                 ":SCORE: 9\n:CANVAS_SCORE: 5\n:END:\n")
+        (cl-letf (((symbol-function 'org-canvas--submissions-send-grades)
+                   (lambda (&rest _) (list :state 'failed :message "job failed"))))
+          (test-readback--push (lambda (variables) (test-late--stored (alist-get 'status variables)))
+                               (lambda (uid) `((user_id . ,uid) (entered_score . 7) (score . 7)))))
+        (expect (test-org-canvas-api-called-p 'GET "submissions/5001") :to-be nil)
+        (expect-api-called 'GET "assignments/1001/submissions/5002")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "6")))))
 
 (describe "a re-pull keeps a typed late status"
   (it "keeps it against an unmoved baseline, and asks nothing"
