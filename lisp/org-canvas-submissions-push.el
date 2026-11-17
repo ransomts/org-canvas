@@ -47,6 +47,8 @@
                   (count outcome))
 (declare-function org-canvas--submissions-grading-file-path "org-canvas-submissions-entry"
                   (file))
+(declare-function org-canvas--submissions-lowered-note "org-canvas-submissions-conflict"
+                  (lowered))
 (declare-function org-canvas--submissions-left-p "org-canvas-submissions-entry"
                   ())
 (declare-function org-canvas--submissions-only-note "org-canvas-submissions-conflict"
@@ -61,10 +63,8 @@
                   (assignment-id))
 (declare-function org-canvas--submissions-push-current "org-canvas-submissions-conflict"
                   (ask &optional only))
-(declare-function org-canvas--submissions-record-late-only "org-canvas-submissions-conflict"
-                  (diffs late))
-(declare-function org-canvas--submissions-record-pushed "org-canvas-submissions-conflict"
-                  (diffs &optional late))
+(declare-function org-canvas--submissions-record-all "org-canvas-submissions-conflict"
+                  (assignment-id diffs late applied))
 (declare-function org-canvas--submissions-refused-note "org-canvas-submissions-comment-items"
                   (refused))
 (declare-function org-canvas--submissions-rubric-change-at-point "org-canvas-submissions-comment-items"
@@ -102,7 +102,9 @@
 ;; the grade lands under the status the grader asked for.  REST's
 ;; single PUT takes `late_policy_status' beside the grade, but the bulk
 ;; `update_grades' endpoint does not, so the order is the one rule for
-;; both.
+;; both.  What the policy leaves of the grade is Canvas's to compute,
+;; so each row whose status was stored is read back afterwards
+;; (`org-canvas--submissions-read-back-scores').
 
 (defconst org-canvas--submissions-late-statuses
   '("late" "missing" "extended" "none")
@@ -946,7 +948,9 @@ says per student what would be sent (issue #441).  Every baseline is
 recorded only once the grades have landed: a bulk push waits for
 Canvas's background job, and one that failed or ran out of time
 records no score or rubric baseline, so the next push sends them
-again (issue #382).
+again (issue #382).  Every row whose late status Canvas stored is
+then read back, so the file holds the score Canvas's late policy left
+\(`org-canvas--submissions-read-back-scores', issue #665).
 
 Return a plist: :pushed, the grades Canvas stored (0 when they did not
 land); :state, the grade send's (`completed', `failed', `unconfirmed',
@@ -969,17 +973,17 @@ to the caller."
          (edited (org-canvas--submissions-apply-comment-edits assignment-id (car comments)))
          (posted (org-canvas--submissions-post-drafts assignment-id drafts))
          (saved (and bank (org-canvas--submissions-push-bank assignment-id)))
-         (applied (org-canvas--submissions-grades-applied-p outcome)))
-    (cond (org-canvas--dry-run nil)
-          (applied (org-canvas--submissions-record-pushed changes (car late)))
-          (t (org-canvas--submissions-record-late-only changes (car late))))
+         (applied (org-canvas--submissions-grades-applied-p outcome))
+         (lowered (org-canvas--submissions-record-all
+                   assignment-id changes (car late) applied)))
     (org-canvas--user-message
-     "%s%s and %d comment(s)%s%s%s%s%s"
+     "%s%s and %d comment(s)%s%s%s%s%s%s"
      (org-canvas--submissions-grades-note (length grading) outcome)
      (if (car late) (format ", %d late status(es)" (length (car late))) "")
      posted
      (org-canvas--submissions-comment-edits-note edited (cdr comments))
      (org-canvas--submissions-late-note (cdr late))
+     (org-canvas--submissions-lowered-note lowered)
      (org-canvas--submissions-describe-bank saved bank)
      (org-canvas--submissions-conflicts-note (plist-get plan :conflicts))
      (org-canvas--submissions-only-note plan))

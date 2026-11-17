@@ -605,6 +605,16 @@ of the blank lines that leaves collapses to one."
                               "\n[ \t]*\n\\(?:[ \t]*\n\\)+" "\n\n" org))))
       (and (not (string-empty-p org)) org))))
 
+(defun org-canvas--submissions-final-score (submission)
+  "Return SUBMISSION's FINAL_SCORE as the grading file spells it, or nil.
+Present only when Canvas's late policy made the recorded `score'
+differ from the entered one; nil for an excused submission."
+  (let ((entered (org-canvas--submissions-entered-score submission))
+        (final (alist-get 'score submission)))
+    (when (and entered (not (org-canvas--submissions-excused-p submission))
+               (numberp final) (/= final entered))
+      (org-canvas--submissions-format-number final))))
+
 (defun org-canvas--submissions-render-detail-entry (submission &optional assignment-name assignment-id criteria)
   "Render a single SUBMISSION as an Org heading with properties.
 SCORE is the editable grade (a number, or EX for excused); CANVAS_SCORE
@@ -627,10 +637,8 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
         (user-id (org-canvas--submissions-user-id submission))
         (sub-id (alist-get 'id submission))
         (status (org-canvas--submissions-normalize-status submission))
-        (entered (org-canvas--submissions-entered-score submission))
         (shown (org-canvas--submissions-shown-score submission))
         (days-late (org-canvas--submissions-days-late submission))
-        (final (alist-get 'score submission))
         (attempt (alist-get 'attempt submission))
         (submitted-at (org-canvas--submissions-format-submitted-at submission))
         (body (alist-get 'body submission))
@@ -655,9 +663,8 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
     (when-let* ((digest (org-canvas--submissions-rubric-digest
                          (org-canvas--submissions-assessment-triples rubric))))
       (insert (format ":CANVAS_RUBRIC: %s\n" digest)))
-    (when (and entered (not (equal shown "EX")) (numberp final) (/= final entered))
-      (insert (format ":FINAL_SCORE: %s\n"
-                      (org-canvas--submissions-format-number final))))
+    (when-let* ((final (org-canvas--submissions-final-score submission)))
+      (insert (format ":FINAL_SCORE: %s\n" final)))
     (when (numberp attempt)
       (insert (format ":ATTEMPT: %s\n" attempt)))
     (when (not (string-empty-p submitted-at))

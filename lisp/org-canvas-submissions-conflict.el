@@ -50,6 +50,8 @@
                   (edits))
 (declare-function org-canvas--submissions-describe-late "org-canvas-submissions-push"
                   (change))
+(declare-function org-canvas--submissions-final-score "org-canvas-submissions-render"
+                  (submission))
 (declare-function org-canvas--submissions-grade-fields "org-canvas-submissions-push"
                   (change))
 (declare-function org-canvas--submissions-grading-file-path "org-canvas-submissions-entry"
@@ -482,6 +484,96 @@ LATE is the alist of late statuses sent, (USER-ID . STORED) each; see
     (org-canvas--submissions-refresh-links))
   (when buffer-file-name
     (save-buffer)))
+
+;;;; Reading the Score Back (issue #665)
+;;
+;; Canvas applies its late policy when a status or a grade is written,
+;; so the score it holds after a late status changed is Canvas's, not
+;; the push's: the entered grade may stand while the late policy takes
+;; a share off it (FINAL_SCORE), a status-only change recomputes that
+;; share without any grade being sent, and a missing status can give
+;; an ungraded row a grade.  Every row whose late status Canvas stored
+;; is read again once the push has recorded it, and the file takes what
+;; Canvas holds.
+
+(defun org-canvas--submissions-read-back-changes (diffs late applied)
+  "Return those of DIFFS whose score is read back after the push.
+LATE is the alist of `org-canvas--submissions-send-late-statuses'; a
+diff qualifies when Canvas stored its late status.  APPLIED says the
+grades landed; when they did not, only a diff that sends no grade is
+read back, since the others keep their old baseline for the next push."
+  (seq-filter (lambda (ch)
+                (let ((entry (assoc (plist-get ch :user-id) late)))
+                  (and entry (not (eq (cdr entry) 'dry-run))
+                       (or applied (not (org-canvas--submissions-grade-fields ch))))))
+              diffs))
+
+(defun org-canvas--submissions-record-read-back (change submission)
+  "Make SUBMISSION, Canvas's copy read back after CHANGE, the entry at point's.
+CANVAS_SCORE follows Canvas's entered score, SCORE too when they
+differ (logged, since Canvas then set a grade the push did not send),
+and FINAL_SCORE what the late policy leaves of it.  Return CHANGE's
+name when the late policy lowered the score, else nil.  A reply that
+is not the student's submission signals `org-canvas-api-error'."
+  (let ((user-id (plist-get change :user-id))
+        (name (plist-get change :name)))
+    (unless (equal (format "%s" (alist-get 'user_id submission)) (format "%s" user-id))
+      (org-canvas--signal 'org-canvas-api-error
+        "Canvas answered no submission for user %s" user-id))
+    (let ((shown (org-canvas--submissions-shown-score submission))
+          (recorded (org-entry-get (point) "CANVAS_SCORE"))
+          (final (org-canvas--submissions-final-score submission)))
+      (unless (equal shown recorded)
+        (org-canvas--log-warning org-canvas--logger
+          "[Submissions] %s: Canvas holds score %s where the file had %s"
+          name (or shown "none") (or recorded "no score"))
+        (org-canvas--submissions-put-or-delete "CANVAS_SCORE" shown)
+        (org-canvas--submissions-put-or-delete "SCORE" shown)
+        (setf (alist-get user-id org-canvas-submissions--original-scores) shown))
+      (org-canvas--submissions-put-or-delete "FINAL_SCORE" final)
+      (and final name))))
+
+(defun org-canvas--submissions-read-back-scores (assignment-id diffs)
+  "Read each of DIFFS back from ASSIGNMENT-ID and record Canvas's copy.
+Return the names of the students whose score the late policy lowered.
+A read that fails is one warning, and that heading keeps the baseline
+the push recorded; the file is saved once at the end."
+  (let ((lowered nil))
+    (save-excursion
+      (dolist (ch diffs)
+        (when (org-canvas--submissions-goto-user (plist-get ch :user-id))
+          (condition-case err
+              (when-let* ((name (org-canvas--submissions-record-read-back
+                                 ch (org-canvas--submissions-fetch-student
+                                     assignment-id (plist-get ch :user-id)))))
+                (push name lowered))
+            (error
+             (org-canvas--log-warning org-canvas--logger
+               "[Submissions] Score of %s not read back: %s"
+               (plist-get ch :name) (error-message-string err)))))))
+    (when buffer-file-name
+      (org-canvas--save-buffer))
+    (nreverse lowered)))
+
+(defun org-canvas--submissions-record-all (assignment-id diffs late applied)
+  "Record DIFFS pushed to ASSIGNMENT-ID, then read back their late rows.
+LATE is the alist of `org-canvas--submissions-send-late-statuses' and
+APPLIED whether the grades landed: the full baseline when they did,
+the late statuses alone when not.  Return the names
+`org-canvas--submissions-read-back-scores' gives; under
+`org-canvas--dry-run' nothing is recorded or read, and nil."
+  (unless org-canvas--dry-run
+    (if applied
+        (org-canvas--submissions-record-pushed diffs late)
+      (org-canvas--submissions-record-late-only diffs late))
+    (org-canvas--submissions-read-back-scores
+     assignment-id (org-canvas--submissions-read-back-changes diffs late applied))))
+
+(defun org-canvas--submissions-lowered-note (lowered)
+  "Return the push message note for the LOWERED scores, or \"\"."
+  (if lowered
+      (format "; late policy lowers %d score(s), see FINAL_SCORE" (length lowered))
+    ""))
 
 (defun org-canvas--submissions-post-draft (assignment-id draft)
   "Post DRAFT to ASSIGNMENT-ID and record it under its student's Comments.

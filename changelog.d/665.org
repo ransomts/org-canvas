@@ -1,2 +1,3 @@
 * Fixed
 - #665 A grading push that changes a student's late status and grade together now sets the late status first, so the grade lands under the status you typed: clearing a late status while raising the grade no longer leaves Canvas applying the late deduction you meant to take away.
+- #665 After a grading push sets a late status, the student's score is read back from Canvas: =FINAL_SCORE= shows what the late policy leaves of the grade, the closing message counts the scores it lowered, and a change of =LATE_STATUS= alone now brings the recomputed score into the file instead of leaving it until the next pull.
